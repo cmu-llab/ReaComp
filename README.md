@@ -10,17 +10,53 @@ An agentic reasoning system that solves symbolic inductive reasoning tasks by:
 
 ## Architecture
 
-```
-Controller
-    │
-    ├── SSL Agent  (Symbolic Search & Library)
-    │       Retrieve → Reuse / Compose / Create functions
-    │
-    ├── BCR Agent  (Bottom-up Conceptual Reasoning)
-    │       Solve directly → or Decompose into sub-tasks
-    │
-    └── Reporting Agent
-            Translate solution to required output format
+```mermaid
+flowchart TD
+    CLI["main.py\n─────────────────────\n--task / --tasks-file\n--model / --base-url / --budget"]
+
+    CLI --> CTRL
+
+    subgraph CTRL["Controller  ·  controller.py"]
+        LOOP["for step in MAX_STEPS\n  should_call_ssl()  →  SSL Agent\n  else               →  BCR Agent\n─────────────────────────────────\nwhen solved  →  Reporting Agent"]
+    end
+
+    CTRL -->|"library update"| SSL
+    CTRL -->|"solve or decompose"| BCR
+    CTRL -->|"format answer"| RPT
+
+    subgraph SSL["SSL Agent  ·  ssl_agent.py"]
+        SSL_OPS["reuse_function\ncompose_functions\ncreate_function"]
+    end
+
+    subgraph BCR["BCR Agent  ·  bcr_agent.py"]
+        BCR_OPS["solve_task\ndecompose_task"]
+    end
+
+    subgraph RPT["Reporting Agent  ·  reporting_agent.py"]
+        RPT_OPS["format_solution"]
+    end
+
+    SSL_OPS -->|"add / update"| FLIB
+    BCR_OPS -->|"lookup"| FLIB
+    SSL_OPS -->|"record cost"| CT
+    BCR_OPS -->|"record reuse"| CT
+    BCR_OPS -->|"execute & verify"| EX
+
+    FLIB["FunctionLibrary  ·  library.py\n─────────────────────────────────\nShared across all tasks in a session\nRetrieves by Jaccard similarity + usage boost"]
+
+    CT["CostTracker  ·  costs.py\n─────────────────────────────────\nα·NewFuncs + β·Length\n+ γ·Redundancy − δ·Reuse\nObjective = TaskLoss + λ·TotalCost"]
+
+    EX["Executor  ·  executor.py\n─────────────────────────────────\nSandboxed exec\nForbidden-import checks"]
+
+    SSL_OPS -->|"tool call"| LC
+    BCR_OPS -->|"tool call"| LC
+    RPT_OPS -->|"tool call"| LC
+
+    subgraph LC["LLMClient  ·  llm_client.py"]
+        direction LR
+        ANT["Anthropic API\nclaude-*"]
+        VLLM["vLLM / OpenAI-compat.\ngpt-oss-120b  ·  --base-url"]
+    end
 ```
 
 ### State Object
