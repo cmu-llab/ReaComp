@@ -7,8 +7,6 @@ or create a new one.  Prefers reuse over invention.
 import logging
 from typing import Dict
 
-import anthropic
-
 from .costs import CostTracker
 from .executor import safe_exec
 from .library import FunctionLibrary
@@ -106,7 +104,7 @@ Rules:
 
 
 class SSLAgent:
-    def __init__(self, client: anthropic.Anthropic, model: str = "claude-sonnet-4-5"):
+    def __init__(self, client, model: str = "claude-sonnet-4-5"):
         self.client = client
         self.model = model
 
@@ -130,7 +128,7 @@ class SSLAgent:
             "or create a new one.  Prefer reuse > compose > create."
         )
 
-        response = self.client.messages.create(
+        response = self.client.create(
             model=self.model,
             max_tokens=1024,
             system=_SYSTEM,

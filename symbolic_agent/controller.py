@@ -4,11 +4,10 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-import anthropic
-
 from .bcr_agent import BCRAgent
 from .costs import CostTracker
 from .library import FunctionLibrary
+from .llm_client import LLMClient
 from .models import make_state
 from .reporting_agent import ReportingAgent
 from .ssl_agent import SSLAgent
@@ -39,15 +38,37 @@ class Controller:
         self,
         api_key: Optional[str] = None,
         model: str = "claude-sonnet-4-5",
-        reporting_model: str = "claude-haiku-4-5-20251001",
+        reporting_model: Optional[str] = None,
+        base_url: Optional[str] = None,
     ):
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        self.client = anthropic.Anthropic(api_key=key)
+        """
+        Parameters
+        ----------
+        api_key : str, optional
+            Anthropic API key (ignored when base_url is set; vLLM needs any non-empty string).
+        model : str
+            Model name to use for SSL and BCR agents.
+        reporting_model : str, optional
+            Model for the reporting agent.  Defaults to `model`.
+        base_url : str, optional
+            If set, use an OpenAI-compatible endpoint (e.g. a local vLLM server).
+            Example: "http://localhost:8000/v1"
+        """
+        if base_url:
+            backend = "openai"
+            key = api_key or os.environ.get("VLLM_API_KEY", "EMPTY")
+        else:
+            backend = "anthropic"
+            key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+
+        client = LLMClient(backend=backend, base_url=base_url, api_key=key)
+        report_model = reporting_model or model
+
         self.library = FunctionLibrary()
         self.cost_tracker = CostTracker()
-        self.ssl_agent = SSLAgent(self.client, model)
-        self.bcr_agent = BCRAgent(self.client, model)
-        self.reporting_agent = ReportingAgent(self.client, reporting_model)
+        self.ssl_agent = SSLAgent(client, model)
+        self.bcr_agent = BCRAgent(client, model)
+        self.reporting_agent = ReportingAgent(client, report_model)
 
     # ------------------------------------------------------------------
     # Routing logic

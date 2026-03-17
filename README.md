@@ -97,6 +97,7 @@ symbolic-library-agent/
 │   ├── library.py          # FunctionLibrary (add, retrieve, format)
 │   ├── costs.py            # CostTracker
 │   ├── executor.py         # Safe Python code execution
+│   ├── llm_client.py       # Unified LLM adapter (Anthropic + OpenAI/vLLM)
 │   ├── ssl_agent.py        # SSL agent (library management)
 │   ├── bcr_agent.py        # BCR agent (solve / decompose)
 │   ├── reporting_agent.py  # Reporting agent (format output)
@@ -126,6 +127,8 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ## Usage
 
+### Anthropic API
+
 ```bash
 # List available example tasks
 python main.py --list
@@ -142,6 +145,34 @@ python main.py --stats
 # Use a specific model
 python main.py --model claude-opus-4-6 --task 0
 ```
+
+### Local vLLM
+
+The system supports any OpenAI-compatible endpoint via `--base-url`.  No
+Anthropic API key is required when using this mode.
+
+```bash
+# Start a vLLM server (example)
+vllm serve gpt-oss-120b --port 8000
+
+# Run a single task against it
+python main.py --base-url http://localhost:8000/v1 --model gpt-oss-120b --task 0
+
+# Batch run with stats
+python main.py --base-url http://localhost:8000/v1 --model gpt-oss-120b --stats
+```
+
+If the vLLM server requires an API key, set it in your environment:
+
+```bash
+export VLLM_API_KEY=your-key
+```
+
+**How it works:** `symbolic_agent/llm_client.py` is a thin adapter that
+translates the Anthropic tool-use schema (`input_schema`, `tool_choice`) to
+the OpenAI function-calling schema (`parameters`, `tool_choice="required"`)
+and maps the response back to the same interface the agents expect.  The
+agents themselves are backend-agnostic.
 
 ---
 

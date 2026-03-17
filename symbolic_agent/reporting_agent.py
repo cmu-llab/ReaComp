@@ -7,8 +7,6 @@ No new reasoning is permitted here.
 import logging
 from typing import Any, Dict
 
-import anthropic
-
 from .executor import execute_with_library
 from .library import FunctionLibrary
 
@@ -46,7 +44,7 @@ _SYSTEM = (
 
 
 class ReportingAgent:
-    def __init__(self, client: anthropic.Anthropic, model: str = "claude-haiku-4-5-20251001"):
+    def __init__(self, client, model: str = "claude-haiku-4-5-20251001"):
         self.client = client
         self.model = model
 
@@ -94,7 +92,7 @@ class ReportingAgent:
             "Format the final answer."
         )
 
-        response = self.client.messages.create(
+        response = self.client.create(
             model=self.model,
             max_tokens=512,
             system=_SYSTEM,

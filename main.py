@@ -84,8 +84,14 @@ def main() -> None:
     parser.add_argument("--task", type=int, default=None, help="Run a single task by index")
     parser.add_argument("--list", action="store_true", help="List example tasks")
     parser.add_argument("--stats", action="store_true", help="Print library stats after run")
-    parser.add_argument("--model", default="claude-sonnet-4-5", help="Claude model to use")
+    parser.add_argument("--model", default="claude-sonnet-4-5", help="Model name to use")
     parser.add_argument("--budget", type=float, default=15.0, help="Step budget per task")
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help="OpenAI-compatible base URL for local vLLM (e.g. http://localhost:8000/v1). "
+             "When set, ANTHROPIC_API_KEY is not required.",
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -95,12 +101,16 @@ def main() -> None:
             print(f"  [{i}]  type={t['type']:20s}  {desc}")
         return
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        print("ERROR: ANTHROPIC_API_KEY is not set.  Add it to .env or export it.", file=sys.stderr)
-        sys.exit(1)
+    if args.base_url:
+        api_key = os.environ.get("VLLM_API_KEY", "EMPTY")
+        logger.info("Using vLLM backend at %s with model %s", args.base_url, args.model)
+    else:
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            print("ERROR: ANTHROPIC_API_KEY is not set.  Add it to .env or export it.", file=sys.stderr)
+            sys.exit(1)
 
-    controller = Controller(api_key=api_key, model=args.model)
+    controller = Controller(api_key=api_key, model=args.model, base_url=args.base_url)
 
     if args.task is not None:
         if args.task >= len(TASKS):

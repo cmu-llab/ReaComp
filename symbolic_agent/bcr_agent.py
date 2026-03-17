@@ -7,8 +7,6 @@ If that is not possible, decomposes the task into simpler sub-problems.
 import logging
 from typing import Dict
 
-import anthropic
-
 from .costs import CostTracker
 from .library import FunctionLibrary
 
@@ -99,7 +97,7 @@ Rules:
 
 
 class BCRAgent:
-    def __init__(self, client: anthropic.Anthropic, model: str = "claude-sonnet-4-5"):
+    def __init__(self, client, model: str = "claude-sonnet-4-5"):
         self.client = client
         self.model = model
 
@@ -118,7 +116,7 @@ class BCRAgent:
             "Solve the task directly using library functions, or decompose if necessary."
         )
 
-        response = self.client.messages.create(
+        response = self.client.create(
             model=self.model,
             max_tokens=2048,
             system=_SYSTEM,
