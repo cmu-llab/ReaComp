@@ -2,10 +2,11 @@
 Entry point for the Symbolic Library Agent.
 
 Usage:
-    python main.py                  # run all example tasks in batch
-    python main.py --task 0         # run a single task by index
-    python main.py --list           # list available example tasks
-    python main.py --stats          # print library stats after a batch run
+    python main.py                        # run all built-in example tasks in batch
+    python main.py --task 0               # run a single built-in task by index
+    python main.py --list                 # list built-in example tasks
+    python main.py --stats                # print library stats after a batch run
+    python main.py --tasks-file tasks.jsonl   # run tasks from a JSON/JSONL file
 """
 
 import argparse
@@ -13,6 +14,8 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
+from typing import List, Dict
 
 from dotenv import load_dotenv
 
@@ -59,6 +62,62 @@ def _print_result(result: dict, task_index: int) -> None:
         print(f"  step={t.get('step',0)}  agent={agent}  {action}")
 
 
+def _load_tasks_file(path: str) -> List[Dict]:
+    """
+    Load tasks from a JSON or JSONL file.
+
+    Supported formats:
+    - JSON:  a single array of task objects  ([ {...}, {...} ])
+    - JSONL: one JSON object per line        ({ ... }\\n{ ... }\\n...)
+
+    Each record must have a "prompt" key.  Optional keys:
+    - "type"  : task category label (default: "symbolic")
+    - any other fields are passed through to the agents as context
+    """
+    p = Path(path)
+    if not p.exists():
+        print(f"ERROR: file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    text = p.read_text(encoding="utf-8").strip()
+    records: List[Dict] = []
+
+    # Try JSON array first, then fall back to JSONL
+    if text.startswith("["):
+        try:
+            records = json.loads(text)
+        except json.JSONDecodeError as e:
+            print(f"ERROR: could not parse {path} as JSON: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        for lineno, line in enumerate(text.splitlines(), 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError as e:
+                print(f"ERROR: line {lineno} in {path} is not valid JSON: {e}", file=sys.stderr)
+                sys.exit(1)
+
+    if not records:
+        print(f"ERROR: no records found in {path}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate and normalise
+    tasks = []
+    for i, rec in enumerate(records):
+        if "prompt" not in rec:
+            print(f"ERROR: record {i} in {path} is missing required key 'prompt'", file=sys.stderr)
+            sys.exit(1)
+        # Build a task_input dict the agents can work with
+        task_input = {k: v for k, v in rec.items() if k != "type"}
+        task_input.setdefault("description", rec["prompt"])
+        tasks.append({"input": task_input, "type": rec.get("type", "symbolic")})
+
+    return tasks
+
+
 def _print_library_stats(controller: Controller) -> None:
     stats = controller.library_stats()
     print(f"\n{'='*60}")
@@ -81,8 +140,8 @@ def main() -> None:
     load_dotenv()
 
     parser = argparse.ArgumentParser(description="Symbolic Library Agent")
-    parser.add_argument("--task", type=int, default=None, help="Run a single task by index")
-    parser.add_argument("--list", action="store_true", help="List example tasks")
+    parser.add_argument("--task", type=int, default=None, help="Run a single built-in task by index")
+    parser.add_argument("--list", action="store_true", help="List built-in example tasks")
     parser.add_argument("--stats", action="store_true", help="Print library stats after run")
     parser.add_argument("--model", default="claude-sonnet-4-5", help="Model name to use")
     parser.add_argument("--budget", type=float, default=15.0, help="Step budget per task")
@@ -92,10 +151,18 @@ def main() -> None:
         help="OpenAI-compatible base URL for local vLLM (e.g. http://localhost:8000/v1). "
              "When set, ANTHROPIC_API_KEY is not required.",
     )
+    parser.add_argument(
+        "--tasks-file",
+        default=None,
+        metavar="FILE",
+        help="Path to a JSON or JSONL file of tasks.  Each record must have a 'prompt' key. "
+             "Optional keys: 'type' (task category, default 'symbolic'). "
+             "Runs all records in batch mode, sharing one library across tasks.",
+    )
     args = parser.parse_args()
 
     if args.list:
-        print("Available example tasks:")
+        print("Available built-in example tasks:")
         for i, t in enumerate(TASKS):
             desc = t["input"].get("description", str(t["input"])[:60])
             print(f"  [{i}]  type={t['type']:20s}  {desc}")
@@ -112,7 +179,15 @@ def main() -> None:
 
     controller = Controller(api_key=api_key, model=args.model, base_url=args.base_url)
 
-    if args.task is not None:
+    if args.tasks_file:
+        tasks = _load_tasks_file(args.tasks_file)
+        logger.info("Loaded %d tasks from %s", len(tasks), args.tasks_file)
+        results = controller.solve_batch(tasks)
+        for i, result in enumerate(results):
+            _print_result(result, i)
+        if args.stats:
+            _print_library_stats(controller)
+    elif args.task is not None:
         if args.task >= len(TASKS):
             print(f"Task index {args.task} out of range (0–{len(TASKS)-1}).", file=sys.stderr)
             sys.exit(1)
@@ -122,8 +197,8 @@ def main() -> None:
         if args.stats:
             _print_library_stats(controller)
     else:
-        # Batch run: all tasks share the same library
-        logger.info("Running %d tasks in batch mode", len(TASKS))
+        # Batch run: all built-in tasks share the same library
+        logger.info("Running %d built-in tasks in batch mode", len(TASKS))
         results = controller.solve_batch(TASKS)
         for i, result in enumerate(results):
             _print_result(result, i)

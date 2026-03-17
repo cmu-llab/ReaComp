@@ -174,6 +174,44 @@ the OpenAI function-calling schema (`parameters`, `tool_choice="required"`)
 and maps the response back to the same interface the agents expect.  The
 agents themselves are backend-agnostic.
 
+### Running tasks from a file
+
+Pass a JSON or JSONL file with `--tasks-file`.  All tasks in the file share
+one library, so functions learned on early tasks can be reused on later ones.
+
+```bash
+python main.py --tasks-file tasks.jsonl
+python main.py --tasks-file tasks.json --stats
+# combine with vLLM
+python main.py --tasks-file tasks.jsonl --base-url http://localhost:8000/v1 --model gpt-oss-120b
+```
+
+**JSON format** — a single array of task objects:
+
+```json
+[
+  {"prompt": "Given a list of integers, return only the even numbers.", "type": "list_transform"},
+  {"prompt": "Reverse a list.", "type": "list_transform"},
+  {"prompt": "Return the sum of all elements in a list."}
+]
+```
+
+**JSONL format** — one JSON object per line:
+
+```jsonl
+{"prompt": "Given a list of integers, return only the even numbers.", "type": "list_transform"}
+{"prompt": "Reverse a list.", "type": "list_transform"}
+{"prompt": "Return the sum of all elements in a list."}
+```
+
+**Record schema:**
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `prompt` | yes | The task description passed to the agents |
+| `type` | no | Task category label (default: `"symbolic"`) |
+| any other keys | no | Passed through to agents as additional context |
+
 ---
 
 ## Key Behaviours
