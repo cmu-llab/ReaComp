@@ -219,6 +219,14 @@ def main() -> None:
              "task_NNNN/ is created containing trajectory.json (full agent trace) and "
              "response.json (final answer for evaluation).",
     )
+    parser.add_argument(
+        "--debug-dir",
+        default=None,
+        metavar="DIR",
+        help="Directory to write per-call LLM debug logs (request, raw response including "
+             "chain-of-thought, extracted tool calls).  Each run creates a timestamped "
+             "subdirectory so logs from multiple runs are never overwritten.",
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -237,7 +245,7 @@ def main() -> None:
             print("ERROR: ANTHROPIC_API_KEY is not set.  Add it to .env or export it.", file=sys.stderr)
             sys.exit(1)
 
-    controller = Controller(api_key=api_key, model=args.model, base_url=args.base_url)
+    controller = Controller(api_key=api_key, model=args.model, base_url=args.base_url, debug_dir=args.debug_dir)
 
     if args.tasks_file:
         tasks = _load_tasks_file(args.tasks_file)

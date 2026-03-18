@@ -22,8 +22,10 @@ when tool_calls is empty, so these models work without any agent changes.
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -69,8 +71,20 @@ class LLMClient:
         backend: str = "anthropic",
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
+        debug_dir: Optional[str] = None,
     ):
         self.backend = backend
+        self._call_counter = 0
+
+        # Create a timestamped sub-directory for this run so multiple runs
+        # never overwrite each other and logs survive mid-run crashes.
+        if debug_dir:
+            run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            self._debug_dir: Optional[str] = os.path.join(debug_dir, f"run_{run_ts}")
+            os.makedirs(self._debug_dir, exist_ok=True)
+            logger.info("Debug logs → %s", self._debug_dir)
+        else:
+            self._debug_dir = None
 
         if backend == "anthropic":
             import anthropic
@@ -98,17 +112,18 @@ class LLMClient:
         messages: List[Dict],
         tools: List[Dict],
         tool_choice: Optional[Dict] = None,
+        tag: str = "",
     ) -> UnifiedResponse:
         if self.backend == "anthropic":
-            return self._create_anthropic(model, max_tokens, system, messages, tools, tool_choice)
+            return self._create_anthropic(model, max_tokens, system, messages, tools, tool_choice, tag)
         else:
-            return self._create_openai(model, max_tokens, system, messages, tools)
+            return self._create_openai(model, max_tokens, system, messages, tools, tag)
 
     # ------------------------------------------------------------------
     # Backend implementations
     # ------------------------------------------------------------------
 
-    def _create_anthropic(self, model, max_tokens, system, messages, tools, tool_choice):
+    def _create_anthropic(self, model, max_tokens, system, messages, tools, tool_choice, tag=""):
         response = self._client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -122,9 +137,29 @@ class LLMClient:
             for b in response.content
             if b.type == "tool_use"
         ]
+        self._write_debug_log(
+            tag=tag,
+            model=model,
+            request={
+                "system": system,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": tool_choice or {"type": "any"},
+                "max_tokens": max_tokens,
+            },
+            response={
+                "stop_reason": response.stop_reason,
+                "content": [
+                    {"type": b.type, **({"text": b.text} if b.type == "text" else {"name": b.name, "input": b.input})}
+                    for b in response.content
+                ],
+                "usage": {"input_tokens": response.usage.input_tokens, "output_tokens": response.usage.output_tokens},
+            },
+            blocks=blocks,
+        )
         return UnifiedResponse(blocks)
 
-    def _create_openai(self, model, max_tokens, system, messages, tools):
+    def _create_openai(self, model, max_tokens, system, messages, tools, tag=""):
         oai_messages = [{"role": "system", "content": system}] + messages
         oai_tools = self._to_openai_tools(tools)
 
@@ -181,7 +216,63 @@ class LLMClient:
                     content[:300],
                 )
 
+        self._write_debug_log(
+            tag=tag,
+            model=model,
+            request={
+                "system": system,
+                "messages": messages,
+                "tools": oai_tools,
+                "tool_choice": "required",
+                "max_tokens": max_tokens,
+            },
+            response={
+                "finish_reason": response.choices[0].finish_reason,
+                "content": content,
+                "reasoning_content": reasoning,
+                "tool_calls_raw": [
+                    {"name": tc.function.name, "arguments": tc.function.arguments}
+                    for tc in (msg.tool_calls or [])
+                ],
+            },
+            blocks=blocks,
+        )
         return UnifiedResponse(blocks)
+
+    # ------------------------------------------------------------------
+    # Debug logging
+    # ------------------------------------------------------------------
+
+    def _write_debug_log(
+        self,
+        tag: str,
+        model: str,
+        request: Dict,
+        response: Dict,
+        blocks: List[ToolUseBlock],
+    ) -> None:
+        """Write one JSON file per LLM call to the debug directory."""
+        if not self._debug_dir:
+            return
+        self._call_counter += 1
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%f")
+        label = f"{tag}_" if tag else ""
+        fname = f"{self._call_counter:04d}_{label}{ts}.json"
+        path = os.path.join(self._debug_dir, fname)
+        data = {
+            "call_index": self._call_counter,
+            "timestamp": ts,
+            "tag": tag,
+            "model": model,
+            "request": request,
+            "response": response,
+            "extracted_blocks": [{"name": b.name, "input": b.input} for b in blocks],
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, default=str)
+        except Exception as exc:
+            logger.warning("Could not write debug log %s: %s", path, exc)
 
     # ------------------------------------------------------------------
     # Schema conversion

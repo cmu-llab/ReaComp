@@ -110,6 +110,7 @@ class TaskParser:
                 messages=[{"role": "user", "content": f"Parse this task:\n\n{prompt}"}],
                 tools=_TOOLS,
                 tool_choice={"type": "any"},
+                tag="task_parser",
             )
             for block in response.content:
                 if block.type == "tool_use" and block.name == "parse_task":

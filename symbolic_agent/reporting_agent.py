@@ -106,6 +106,7 @@ class ReportingAgent:
             messages=[{"role": "user", "content": user_msg}],
             tools=_TOOLS,
             tool_choice={"type": "any"},
+            tag="reporting",
         )
 
         for block in response.content:

@@ -54,6 +54,7 @@ class Controller:
         api_key: Optional[str] = None,
         model: str = "claude-sonnet-4-5",
         base_url: Optional[str] = None,
+        debug_dir: Optional[str] = None,
     ):
         """
         Parameters
@@ -72,7 +73,7 @@ class Controller:
             backend = "anthropic"
             key = api_key or os.environ.get("ANTHROPIC_API_KEY")
 
-        client = LLMClient(backend=backend, base_url=base_url, api_key=key)
+        client = LLMClient(backend=backend, base_url=base_url, api_key=key, debug_dir=debug_dir)
 
         self.library = FunctionLibrary()
         self.cost_tracker = CostTracker()

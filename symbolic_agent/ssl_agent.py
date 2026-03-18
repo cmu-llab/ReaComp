@@ -153,6 +153,7 @@ class SSLAgent:
             messages=[{"role": "user", "content": user_msg}],
             tools=_TOOLS,
             tool_choice={"type": "any"},
+            tag="ssl",
         )
 
         actions: list = []

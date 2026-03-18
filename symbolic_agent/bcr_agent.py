@@ -150,6 +150,7 @@ class BCRAgent:
             messages=[{"role": "user", "content": user_msg}],
             tools=_TOOLS,
             tool_choice={"type": "any"},
+            tag="bcr",
         )
 
         for block in response.content:
