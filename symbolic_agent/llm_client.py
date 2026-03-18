@@ -152,23 +152,34 @@ class LLMClient:
         # tool call as JSON in the message content instead of tool_calls.
         if not blocks:
             content = getattr(msg, "content", "") or ""
-            # Also check reasoning_content, which some vLLM reasoning models populate
             reasoning = getattr(msg, "reasoning_content", "") or ""
-            text = content + "\n" + reasoning
-            if text.strip():
-                blocks = self._extract_tool_calls_from_text(text, oai_tools)
+
+            # Try content first — it holds the final committed answer.
+            # Only fall back to reasoning_content if content yields nothing,
+            # because reasoning_content contains chain-of-thought drafts that
+            # produce false-positive JSON matches.
+            blocks = self._extract_tool_calls_from_text(content, oai_tools) if content.strip() else []
+
+            if not blocks and reasoning.strip():
+                blocks = self._extract_tool_calls_from_text(reasoning, oai_tools)
                 if blocks:
                     logger.info(
-                        "Extracted %d tool call(s) from response text (reasoning model fallback)",
+                        "Extracted %d tool call(s) from reasoning_content (reasoning model fallback)",
                         len(blocks),
                     )
-                else:
-                    logger.warning(
-                        "Response returned no tool calls and text extraction found nothing.\n"
-                        "finish_reason=%s  content=%s",
-                        response.choices[0].finish_reason,
-                        content[:300],
-                    )
+            elif blocks:
+                logger.info(
+                    "Extracted %d tool call(s) from content (reasoning model fallback)",
+                    len(blocks),
+                )
+
+            if not blocks:
+                logger.warning(
+                    "Response returned no tool calls and text extraction found nothing.\n"
+                    "finish_reason=%s  content=%s",
+                    response.choices[0].finish_reason,
+                    content[:300],
+                )
 
         return UnifiedResponse(blocks)
 
