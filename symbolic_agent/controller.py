@@ -53,7 +53,6 @@ class Controller:
         self,
         api_key: Optional[str] = None,
         model: str = "claude-sonnet-4-5",
-        reporting_model: Optional[str] = None,
         base_url: Optional[str] = None,
     ):
         """
@@ -62,9 +61,7 @@ class Controller:
         api_key : str, optional
             Anthropic API key (or any non-empty string for local vLLM).
         model : str
-            Model name used for SSL, BCR, and Task Parser agents.
-        reporting_model : str, optional
-            Model for the Reporting agent (defaults to haiku for speed).
+            Model used for all agents (TaskParser, SSL, BCR, Reporting).
         base_url : str, optional
             OpenAI-compatible base URL for local vLLM, e.g. "http://localhost:8000/v1".
         """
@@ -76,14 +73,13 @@ class Controller:
             key = api_key or os.environ.get("ANTHROPIC_API_KEY")
 
         client = LLMClient(backend=backend, base_url=base_url, api_key=key)
-        report_model = reporting_model or "claude-haiku-4-5-20251001"
 
         self.library = FunctionLibrary()
         self.cost_tracker = CostTracker()
-        self.task_parser = TaskParser(client, model="claude-haiku-4-5-20251001")
+        self.task_parser = TaskParser(client, model=model)
         self.ssl_agent = SSLAgent(client, model)
         self.bcr_agent = BCRAgent(client, model)
-        self.reporting_agent = ReportingAgent(client, report_model)
+        self.reporting_agent = ReportingAgent(client, model)
 
     # ------------------------------------------------------------------
     # Routing logic
