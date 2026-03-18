@@ -1,10 +1,6 @@
 # Symbolic Library Agent
 
-An agentic reasoning system that solves symbolic inductive reasoning tasks by:
-
-1. **Constructing and reusing a shared library of functions** across tasks
-2. **Minimising complexity via reuse** (Occam's razor)
-3. **Iteratively decomposing problems** using learned abstractions
+An agentic system for symbolic inductive reasoning that builds and reuses a shared library of Python functions across tasks — inspired by DreamCoder.
 
 ---
 
@@ -14,21 +10,21 @@ An agentic reasoning system that solves symbolic inductive reasoning tasks by:
 flowchart TD
     NL["Natural Language Prompt"]
 
-    NL -->|"parse"| PARSE["Task Parser\ndomain · I/O types · op hints"]
-    NL -->|"original prompt"| RPT
+    NL -->|parse| PARSE["Task Parser\ndomain · I/O types · op hints"]
+    NL -->|original prompt| RPT
 
-    PARSE -->|"task spec"| LOOP
+    PARSE -->|TaskSpec| LOOP
 
     subgraph LOOP["Solve Loop  (SSL → BCR × MAX_STEPS)"]
         direction LR
         SSL["SSL Agent\nreuse · compose · create"]
         BCR["BCR Agent\nsolve · decompose"]
-        SSL -->|"write"| LIB[("Function Library\ndomain-aware · type-matched")]
-        LIB -->|"retrieve"| SSL
-        LIB -->|"retrieve"| BCR
+        SSL -->|write| LIB[("Function Library\ndomain-aware · type-matched")]
+        LIB -->|retrieve| SSL
+        LIB -->|retrieve| BCR
     end
 
-    LOOP -->|"solution"| RPT
+    LOOP -->|solution| RPT
     RPT["Reporting Agent\nformat using original prompt"]
     RPT --> ANS(["Answer"])
 
@@ -43,67 +39,7 @@ flowchart TD
     end
 ```
 
-### State Object
-
-```python
-State = {
-    "task_input":     ...,   # task description + examples
-    "task_type":      "",    # e.g. "list_transform", "sequence"
-    "working_memory": None,  # active functions, sub-tasks
-    "library":        [],    # snapshot of library at task start
-    "trace":          [],    # step-by-step agent log
-    "budget":         15.0,  # remaining step budget
-    "steps":          0,
-    "solved":         False,
-    "solution":       None,
-}
-```
-
-### Function Representation
-
-```python
-@dataclass
-class Function:
-    name: str
-    code: str
-    description: str = ""
-    usage_count: int = 0
-    creation_cost: float = 0.0
-
-    def usefulness(self):
-        return usage_count / (creation_cost + 1e-6)
-```
-
-### Controller Loop
-
-```python
-for step in range(MAX_STEPS):
-    if solved(state): break
-
-    if should_call_ssl(state):
-        state = SSL_agent(state)   # update library
-    else:
-        state = BCR_agent(state)   # attempt solution
-
-state = Reporting_agent(state)
-```
-
-### Cost Function
-
-```
-TotalCost = α·NumNewFunctions + β·TotalFunctionLength
-          + γ·RedundancyPenalty − δ·ReuseReward
-
-Objective = TaskLoss + λ·TotalCost
-```
-
-| Weight | Symbol | Default |
-|--------|--------|---------|
-| NumNewFunctions | α | 1.0 |
-| TotalFunctionLength | β | 0.05 |
-| RedundancyPenalty | γ | 2.0 |
-| ReuseReward | δ | 0.5 |
-| Regularisation | λ | 0.3 |
+All agents communicate with the LLM via **plain JSON responses** — no tool-calling API. Each agent's expected output schema is embedded in its system prompt. The OpenAI backend uses `response_format={"type":"json_object"}` for hard JSON guarantees; both Anthropic and OpenAI paths work identically from the agent's perspective.
 
 ---
 
@@ -113,18 +49,22 @@ Objective = TaskLoss + λ·TotalCost
 symbolic-library-agent/
 ├── symbolic_agent/
 │   ├── __init__.py
-│   ├── models.py           # Function, make_state
-│   ├── library.py          # FunctionLibrary (add, retrieve, format)
-│   ├── costs.py            # CostTracker
-│   ├── executor.py         # Safe Python code execution
-│   ├── llm_client.py       # Unified LLM adapter (Anthropic + OpenAI/vLLM)
+│   ├── models.py           # Function dataclass, make_state()
+│   ├── library.py          # FunctionLibrary — add, retrieve, format
+│   ├── costs.py            # CostTracker — α·NewFuncs + β·Length + γ·Redundancy − δ·Reuse
+│   ├── executor.py         # safe_exec, execute_with_library (sandboxed Python)
+│   ├── llm_client.py       # LLMClient — Anthropic + OpenAI/vLLM, returns parsed dicts
 │   ├── task_parser.py      # NL → TaskSpec (domain, I/O types, hints)
-│   ├── ssl_agent.py        # SSL agent (library management)
-│   ├── bcr_agent.py        # BCR agent (solve / decompose)
-│   ├── reporting_agent.py  # Reporting agent (format output)
+│   ├── ssl_agent.py        # SSL agent — library management
+│   ├── bcr_agent.py        # BCR agent — solve / decompose
+│   ├── reporting_agent.py  # Reporting agent — format final answer
 │   └── controller.py       # Main controller loop
 ├── examples/
-│   └── tasks.py            # Example symbolic reasoning tasks
+│   └── tasks.py            # Built-in example tasks
+├── scripts/
+│   ├── mock_tasks.jsonl    # Sample JSONL task file for testing
+│   └── test_vllm.sh        # Quick vLLM smoke-test
+├── docs/                   # Detailed documentation
 ├── main.py                 # CLI entry point
 ├── requirements.txt
 └── .env                    # ANTHROPIC_API_KEY (not committed)
@@ -138,7 +78,7 @@ symbolic-library-agent/
 pip install -r requirements.txt
 ```
 
-Create a `.env` file:
+Create a `.env` file for Anthropic:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
@@ -151,20 +91,23 @@ ANTHROPIC_API_KEY=sk-ant-...
 ### Anthropic API
 
 ```bash
-# List available example tasks
+# List built-in example tasks
 python main.py --list
 
-# Run a single task (e.g. task 0)
+# Run a single built-in task
 python main.py --task 0
 
-# Run all tasks in batch (library is shared across tasks)
+# Run all built-in tasks in batch (library shared across tasks)
 python main.py
 
-# Run all tasks and print final library stats
-python main.py --stats
+# Run tasks from a JSONL file
+python main.py --tasks-file scripts/mock_tasks.jsonl
 
 # Write per-task output files for evaluation
-python main.py --output-dir results/
+python main.py --tasks-file tasks.jsonl --output-dir results/
+
+# Print library stats after the run
+python main.py --stats
 
 # Use a specific model
 python main.py --model claude-opus-4-6 --task 0
@@ -172,165 +115,123 @@ python main.py --model claude-opus-4-6 --task 0
 
 ### Local vLLM
 
-The system supports any OpenAI-compatible endpoint via `--base-url`.  No
-Anthropic API key is required when using this mode.
-
 ```bash
-# Start a vLLM server (example)
-vllm serve gpt-oss-120b --port 8000
+# Start a vLLM server
+vllm serve openai/gpt-oss-120b --port 8002
 
-# Run a single task against it
-python main.py --base-url http://localhost:8000/v1 --model gpt-oss-120b --task 0
+# Run against it
+python main.py --base-url http://localhost:8002/v1 \
+               --model openai/gpt-oss-120b \
+               --tasks-file scripts/mock_tasks.jsonl
 
-# Batch run with stats
-python main.py --base-url http://localhost:8000/v1 --model gpt-oss-120b --stats
+# Quick smoke-test
+bash scripts/test_vllm.sh
 ```
 
-If the vLLM server requires an API key, set it in your environment:
+If your vLLM server requires an API key:
 
 ```bash
 export VLLM_API_KEY=your-key
 ```
 
-**How it works:** `symbolic_agent/llm_client.py` is a thin adapter that
-translates the Anthropic tool-use schema (`input_schema`, `tool_choice`) to
-the OpenAI function-calling schema (`parameters`, `tool_choice="required"`)
-and maps the response back to the same interface the agents expect.  The
-agents themselves are backend-agnostic.
+### All CLI flags
 
-#### Test script
+| Flag | Default | Description |
+|---|---|---|
+| `--task N` | — | Run a single built-in task by index |
+| `--list` | — | List built-in example tasks |
+| `--tasks-file FILE` | — | Run tasks from a JSON or JSONL file |
+| `--model NAME` | `claude-sonnet-4-5` | LLM model name |
+| `--base-url URL` | — | OpenAI-compatible endpoint (enables vLLM mode) |
+| `--budget FLOAT` | `15.0` | Step budget per task |
+| `--output-dir DIR` | — | Write `trajectory.json` + `response.json` per task |
+| `--debug-dir DIR` | — | Write per-call LLM debug logs (request, CoT, parsed result) |
+| `--stats` | — | Print library and cost stats after the run |
 
-`scripts/test_vllm.sh` runs the agent against a local vLLM server using
-`scripts/mock_tasks.jsonl` as the task file:
+---
 
-```bash
-bash scripts/test_vllm.sh
-```
+## Task File Formats
 
-To use a different server or model, edit the arguments at the top of the script directly.
-
-### Running tasks from a file
-
-Pass a JSON or JSONL file with `--tasks-file`.  All tasks in the file share
-one library, so functions learned on early tasks can be reused on later ones.
-
-```bash
-python main.py --tasks-file tasks.jsonl
-python main.py --tasks-file tasks.json --stats
-# combine with vLLM
-python main.py --tasks-file tasks.jsonl --base-url http://localhost:8000/v1 --model gpt-oss-120b
-```
-
-**JSON format** — a single array of task objects:
-
-```json
-[
-  {"prompt": "Given a list of integers, return only the even numbers.", "type": "list_transform"},
-  {"prompt": "Reverse a list.", "type": "list_transform"},
-  {"prompt": "Return the sum of all elements in a list."}
-]
-```
-
-**JSONL format** — one JSON object per line:
-
+**JSONL** (one object per line):
 ```jsonl
 {"prompt": "Given a list of integers, return only the even numbers.", "type": "list_transform"}
 {"prompt": "Reverse a list.", "type": "list_transform"}
 {"prompt": "Return the sum of all elements in a list."}
 ```
 
-**Record schema:**
+**JSON** (array):
+```json
+[
+  {"prompt": "Given a list of integers, return only the even numbers.", "type": "list_transform"},
+  {"prompt": "Reverse a list."}
+]
+```
 
-| Key | Required | Description |
-|-----|----------|-------------|
-| `prompt` | yes | The task description passed to the agents |
-| `type` | no | Task category label (default: `"symbolic"`) |
-| any other keys | no | Passed through to agents as additional context |
+Each record requires a `prompt` key. The optional `type` key is a metadata label; the internal domain is inferred from the prompt content by the TaskParser.
 
-### Output files for evaluation
+---
 
-Pass `--output-dir <DIR>` to write two JSON files per task:
+## Output Files
+
+`--output-dir results/` writes two files per task:
 
 ```
 results/
-  task_0000/
-    trajectory.json   # full agent trace for analysis
-    response.json     # final answer for evaluation
-  task_0001/
-    ...
+├── task_0000/
+│   ├── trajectory.json   # full agent trace, solution code, library snapshot, costs
+│   └── response.json     # answer, explanation, confidence, execution result
 ```
 
-**`trajectory.json`** — everything needed to analyse the agent's reasoning:
+`--debug-dir debug_logs/` writes one JSON file per LLM call, including the model's chain-of-thought (`reasoning_content`) and parsed result. Files are written immediately so they survive crashes:
 
-```json
-{
-  "task_index": 0,
-  "task_type": "list_transform",
-  "original_prompt": "Given a list of integers, return only the even numbers.",
-  "task_spec": { "domain": "list_manipulation", "input_types": ["list[int]"], "output_type": "list[int]", "operation_hints": ["filter"], "symbolic_inputs": "lst = [1, 2, 3, 4]" },
-  "solved": true,
-  "steps_taken": 2,
-  "trace": [ { "step": 0, "agent": "SSL", "actions": [...] }, { "step": 1, "agent": "BCR", "action": "solve", "reasoning": "..." } ],
-  "solution": { "code": "def solve(lst): ...", "function": "solve", "functions_used": ["filter_even"] },
-  "library_snapshot": [ { "name": "filter_even", "domain": "list_manipulation", "usage_count": 1, ... } ],
-  "cost_summary": { "num_new_functions": 1, "reuse_count": 1, "total_cost": 1.15, ... }
-}
+```
+debug_logs/run_20260318T060621/
+├── 0001_task_parser_...json
+├── 0002_ssl_...json
+├── 0003_bcr_...json
+└── 0004_reporting_...json
 ```
 
-**`response.json`** — minimal record for task-level evaluation:
+---
 
-```json
-{
-  "task_index": 0,
-  "task_type": "list_transform",
-  "original_prompt": "Given a list of integers, return only the even numbers.",
-  "solved": true,
-  "answer": "[2, 4]",
-  "explanation": "Filtered the list using the filter_even library function.",
-  "confidence": 0.95,
-  "execution_result": [2, 4]
-}
+## Cost Function
+
+```
+TotalCost = α·NumNewFunctions + β·TotalFunctionLength
+          + γ·RedundancyPenalty − δ·ReuseReward
+
+Objective = TaskLoss + λ·TotalCost
 ```
 
-Works with all input modes:
-
-```bash
-python main.py --output-dir results/
-python main.py --task 0 --output-dir results/
-python main.py --tasks-file tasks.jsonl --output-dir results/
-python main.py --tasks-file tasks.jsonl --base-url http://localhost:8000/v1 --model gpt-oss-120b --output-dir results/
-```
+| Weight | Symbol | Default |
+|---|---|---|
+| NumNewFunctions | α | 1.0 |
+| TotalFunctionLength | β | 0.05 |
+| RedundancyPenalty | γ | 2.0 |
+| ReuseReward | δ | 0.5 |
+| Regularisation | λ | 0.3 |
 
 ---
 
 ## Key Behaviours
 
-- **Reuse over invention**: the SSL agent checks the library before creating anything new.
-- **Composition**: new functions are built from existing ones where possible.
-- **Shared library**: running tasks in batch mode lets the library grow across tasks, so later tasks can reuse functions from earlier ones.
-- **Cost tracking**: every new function and every reuse is logged; total cost and objective are reported after each task.
-- **Safe execution**: generated Python code is run in a sandboxed namespace with forbidden-import checks.
+- **Reuse over invention** — SSL checks the library before creating anything new
+- **Domain-aware retrieval** — functions are scored by text similarity, domain affinity, type overlap, and usage count; a `list_manipulation` function transfers to `sequence` tasks but not to `math` or `chess`
+- **Cross-task library sharing** — batch mode accumulates a growing library; later tasks can reuse primitives built for earlier ones
+- **Robust JSON parsing** — agents tolerate imperfect model output: markdown fences are stripped, common field-name aliases are accepted, function names are inferred from `def` lines
+- **Safe execution** — generated code runs in a sandboxed namespace; dangerous imports (`os`, `sys`, `subprocess`, etc.) are blocked at the AST level
 
 ---
 
-## Example Output
+## Documentation
 
-```
-============================================================
-Task 0  type=list_transform
-============================================================
-Solved : True
-Answer : [2, 4, 6]
-Explain: Doubled each element using the map_double library function.
-Conf.  : 0.95
-Exec   : [2, 4, 6]
+Detailed documentation is in the [`docs/`](docs/) folder:
 
-Cost summary:
-  num_new_functions            : 1
-  total_function_length        : 3
-  reuse_count                  : 0
-  redundancy_penalty           : 0.0
-  reuse_reward                 : 0.0
-  total_cost                   : 1.15
-  objective                    : 0.345
-```
+- [Architecture and control flow](docs/architecture.md)
+- [Agent reference (schemas, inputs/outputs, fallbacks)](docs/agents.md)
+- [Data structures (State, Function, TaskSpec, CostTracker)](docs/data-structures.md)
+- [LLM client (backends, JSON mode, debug logging)](docs/llm-client.md)
+- [Library retrieval (scoring, domain affinity matrix)](docs/library-retrieval.md)
+- [Code execution (sandbox, safe_exec)](docs/execution.md)
+- [Debugging guide (debug logs, output files, failure modes)](docs/debugging.md)
+- [Adding tasks (formats, prompt guidelines, evaluation)](docs/adding-tasks.md)
