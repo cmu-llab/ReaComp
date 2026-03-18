@@ -105,13 +105,23 @@ class ReportingAgent:
         return state
 
     def _infer_args(self, task) -> list:
+        """
+        Best-effort extraction of call arguments from the task description.
+        Returns [] when no concrete input data can be found — execution is
+        optional and the reporting agent handles None results gracefully.
+        """
         if isinstance(task, dict):
+            # Built-in task format: {"description": "...", "examples": [...]}
+            if "examples" in task:
+                ex = task["examples"][0] if task["examples"] else {}
+                return [ex["input"]] if "input" in ex else []
+            # Some task formats carry a direct "input" value
             if "input" in task:
                 inp = task["input"]
                 return [inp] if not isinstance(inp, list) else [inp]
-            if "examples" in task:
-                ex = task["examples"][0] if task["examples"] else {}
-                return [ex.get("input")] if "input" in ex else []
+            # Prompt-only dict (e.g. JSONL tasks) — no concrete args available
+            return []
         if isinstance(task, list):
             return [task]
-        return [task]
+        # Plain string prompt — no concrete args
+        return []
