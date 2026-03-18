@@ -163,6 +163,9 @@ python main.py
 # Run all tasks and print final library stats
 python main.py --stats
 
+# Write per-task output files for evaluation
+python main.py --output-dir results/
+
 # Use a specific model
 python main.py --model claude-opus-4-6 --task 0
 ```
@@ -232,6 +235,60 @@ python main.py --tasks-file tasks.jsonl --base-url http://localhost:8000/v1 --mo
 | `prompt` | yes | The task description passed to the agents |
 | `type` | no | Task category label (default: `"symbolic"`) |
 | any other keys | no | Passed through to agents as additional context |
+
+### Output files for evaluation
+
+Pass `--output-dir <DIR>` to write two JSON files per task:
+
+```
+results/
+  task_0000/
+    trajectory.json   # full agent trace for analysis
+    response.json     # final answer for evaluation
+  task_0001/
+    ...
+```
+
+**`trajectory.json`** — everything needed to analyse the agent's reasoning:
+
+```json
+{
+  "task_index": 0,
+  "task_type": "list_transform",
+  "original_prompt": "Given a list of integers, return only the even numbers.",
+  "task_spec": { "domain": "list_manipulation", "input_types": ["list[int]"], "output_type": "list[int]", "operation_hints": ["filter"], "symbolic_inputs": "lst = [1, 2, 3, 4]" },
+  "solved": true,
+  "steps_taken": 2,
+  "trace": [ { "step": 0, "agent": "SSL", "actions": [...] }, { "step": 1, "agent": "BCR", "action": "solve", "reasoning": "..." } ],
+  "solution": { "code": "def solve(lst): ...", "function": "solve", "functions_used": ["filter_even"] },
+  "library_snapshot": [ { "name": "filter_even", "domain": "list_manipulation", "usage_count": 1, ... } ],
+  "cost_summary": { "num_new_functions": 1, "reuse_count": 1, "total_cost": 1.15, ... }
+}
+```
+
+**`response.json`** — minimal record for task-level evaluation:
+
+```json
+{
+  "task_index": 0,
+  "task_type": "list_transform",
+  "original_prompt": "Given a list of integers, return only the even numbers.",
+  "solved": true,
+  "answer": "[2, 4]",
+  "explanation": "Filtered the list using the filter_even library function.",
+  "confidence": 0.95,
+  "execution_result": [2, 4]
+}
+```
+
+Works with all input modes:
+
+```bash
+python main.py --output-dir results/
+python main.py --task 0 --output-dir results/
+python main.py --tasks-file tasks.jsonl --output-dir results/
+python main.py --tasks-file tasks.jsonl --base-url http://localhost:8000/v1 --model gpt-oss-120b --output-dir results/
+```
 
 ---
 

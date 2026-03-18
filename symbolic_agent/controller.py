@@ -138,6 +138,13 @@ class Controller:
         task_spec: Optional[TaskSpec] = self.task_parser.parse(original_prompt)
         if task_spec:
             logger.info("Task spec: %s", task_spec.summary())
+            state["task_spec"] = {
+                "domain": task_spec.domain,
+                "input_types": task_spec.input_types,
+                "output_type": task_spec.output_type,
+                "operation_hints": task_spec.operation_hints,
+                "symbolic_inputs": task_spec.symbolic_inputs,
+            }
 
         for step in range(MAX_STEPS):
             if state["solved"]:

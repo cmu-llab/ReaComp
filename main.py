@@ -2,11 +2,12 @@
 Entry point for the Symbolic Library Agent.
 
 Usage:
-    python main.py                        # run all built-in example tasks in batch
-    python main.py --task 0               # run a single built-in task by index
-    python main.py --list                 # list built-in example tasks
-    python main.py --stats                # print library stats after a batch run
-    python main.py --tasks-file tasks.jsonl   # run tasks from a JSON/JSONL file
+    python main.py                             # run all built-in example tasks in batch
+    python main.py --task 0                    # run a single built-in task by index
+    python main.py --list                      # list built-in example tasks
+    python main.py --stats                     # print library stats after a batch run
+    python main.py --tasks-file tasks.jsonl    # run tasks from a JSON/JSONL file
+    python main.py --output-dir results/       # write per-task output to a directory
 """
 
 import argparse
@@ -118,6 +119,57 @@ def _load_tasks_file(path: str) -> List[Dict]:
     return tasks
 
 
+def _save_task_output(result: dict, task_index: int, output_dir: str) -> None:
+    """
+    Write two files to {output_dir}/task_{task_index:04d}/:
+
+    trajectory.json — full agent trace for downstream analysis:
+        original_prompt, task_spec, solved, steps_taken,
+        trace (per-step agent actions), solution code, library snapshot, cost summary.
+
+    response.json — final reporting-agent output for evaluation:
+        original_prompt, solved, answer, explanation, confidence, execution_result.
+    """
+    task_dir = Path(output_dir) / f"task_{task_index:04d}"
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    # ---- trajectory.json ------------------------------------------------
+    trajectory = {
+        "task_index": task_index,
+        "task_type": result.get("task_type", ""),
+        "original_prompt": result.get("original_prompt", ""),
+        "task_spec": result.get("task_spec"),
+        "solved": result.get("solved", False),
+        "steps_taken": result.get("steps", 0),
+        "trace": result.get("trace", []),
+        "solution": result.get("solution"),
+        "library_snapshot": result.get("library_snapshot", []),
+        "cost_summary": result.get("cost_summary", {}),
+    }
+    (task_dir / "trajectory.json").write_text(
+        json.dumps(trajectory, indent=2, default=str), encoding="utf-8"
+    )
+
+    # ---- response.json --------------------------------------------------
+    final = result.get("final_output", {})
+    response = {
+        "task_index": task_index,
+        "task_type": result.get("task_type", ""),
+        "original_prompt": result.get("original_prompt", ""),
+        "solved": result.get("solved", False),
+        "answer": final.get("answer"),
+        "explanation": final.get("explanation"),
+        "confidence": final.get("confidence"),
+        "execution_result": final.get("execution_result"),
+        "error": final.get("error"),
+    }
+    (task_dir / "response.json").write_text(
+        json.dumps(response, indent=2, default=str), encoding="utf-8"
+    )
+
+    logger.info("Saved task %d output → %s", task_index, task_dir)
+
+
 def _print_library_stats(controller: Controller) -> None:
     stats = controller.library_stats()
     print(f"\n{'='*60}")
@@ -159,6 +211,14 @@ def main() -> None:
              "Optional keys: 'type' (task category, default 'symbolic'). "
              "Runs all records in batch mode, sharing one library across tasks.",
     )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="DIR",
+        help="Directory to write per-task output files.  For each task a subdirectory "
+             "task_NNNN/ is created containing trajectory.json (full agent trace) and "
+             "response.json (final answer for evaluation).",
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -185,6 +245,8 @@ def main() -> None:
         results = controller.solve_batch(tasks)
         for i, result in enumerate(results):
             _print_result(result, i)
+            if args.output_dir:
+                _save_task_output(result, i, args.output_dir)
         if args.stats:
             _print_library_stats(controller)
     elif args.task is not None:
@@ -194,6 +256,8 @@ def main() -> None:
         task = TASKS[args.task]
         result = controller.solve(task["input"], task_type=task["type"], budget=args.budget)
         _print_result(result, args.task)
+        if args.output_dir:
+            _save_task_output(result, args.task, args.output_dir)
         if args.stats:
             _print_library_stats(controller)
     else:
@@ -202,6 +266,8 @@ def main() -> None:
         results = controller.solve_batch(TASKS)
         for i, result in enumerate(results):
             _print_result(result, i)
+            if args.output_dir:
+                _save_task_output(result, i, args.output_dir)
         if args.stats:
             _print_library_stats(controller)
 
