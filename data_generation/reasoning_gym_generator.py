@@ -2,6 +2,8 @@ import os
 import json
 import reasoning_gym
 import random
+from tqdm import tqdm
+from fractions import Fraction
 
 DATASET_METADATA = {
     "ab": True,
@@ -25,7 +27,7 @@ DATASET_METADATA = {
     "coin_flip": True,
     "color_cube_rotation": True,
     "complex_arithmetic": True,
-    "composite": False,
+    # "composite": False,
     "count_bits": True,
     "count_primes": True,
     "countdown": True,
@@ -155,9 +157,41 @@ ALL_DATASETS = [
     "word_sequence_reversal","word_sorting","zebra_puzzles"
 ]
 
-import reasoning_gym
-import random
+def seralize_variable(value):
+    if isinstance(value, Fraction):
+        return repr(value)
+    return value
 
+def serialize_gsm_symbolic_variables(rec: dict) -> dict:
+    """ GSM symbolic example (from reasoning-gym/datasets/gsm_symbolic.py) sometimes has non-serializable variables (e.g. Fraction), so we convert them to strings for JSON serialization.
+    {
+        'question': 'A hospital has a capacity of 5600 wards with 1/4 occupied. Due to the pandemic, 90 patients are admitted into the hospital each day. Calculate the total number of unoccupied wards in the hospital after 4 weeks. Give the result as your final answer. Do not include units.', 
+        'answer': '1680', 
+        'metadata': {
+            'difficulty': 1.0, 
+            'answer_value': 1680, 
+            'answer_cot': 'If 1/4 of the total capacity of the hospital wards is occupied, it means 1/4 * 5600 = 1400 wards have patients using them.\nThe total number of wards in the hospital without new admissions is 5600 wards - 1400 wards = 4200 wards.\nIf 90 people are admitted each day, the total number of patients in the hospital after one week is 90 patients/day * 7 days/week = 630 patients.\nAfter 4 weeks, the total number of patients admitted into the hospital is 630 patients/week * 4 weeks = 2520 patients, who each use one ward.\nIf there were 4200 unoccupied wards in the hospital before the new admissions, the total number is reduced to 4200 wards - 2520 wards = 1680 unoccupied wards.\n#### 1680', 
+            'variables': {
+                'facility': 'hospital', 
+                'total_capacity': 5600, 
+                'item': 'ward', 
+                'initial_fraction': Fraction(1, 4), 
+                'event': 'pandemic', 
+                'daily_patients': 90, 
+                'period_weeks': 4, 
+                'initial_occupied': 1400, 
+                'initial_empty': 4200, 
+                'total_admitted': 2520
+            }, 
+            'source_dataset': 'gsm_symbolic', 
+            'source_index': 21
+        }, 
+        'task': 'gsm_symbolic'
+    }
+    """
+    rec['metadata']['variables'] = {k: seralize_variable(v) for k, v in rec['metadata']['variables'].items()}
+
+    return rec
 
 def build_rg_split_with_difficulty(
     N=20,
@@ -173,8 +207,10 @@ def build_rg_split_with_difficulty(
     test_data = []
 
     test_size = max(1, int(f * N))
+    dataset_list = get_all_datasets()
+    pbar = tqdm(enumerate(dataset_list), total=len(dataset_list), desc="Building RG split")
 
-    for i, name in enumerate(get_all_datasets()):
+    for i, name in pbar:
         train_seed = seed + i * 2
         test_seed = seed + i * 2 + 1
 
@@ -246,18 +282,20 @@ def build_rg_split(
     test_data = []
 
     test_size = max(1, int(f * N))
+    dataset_list = get_all_datasets()
+    pbar = tqdm(enumerate(dataset_list), total=len(dataset_list), desc="Building RG split")
 
-    for i, name in enumerate(datasets):
+    for i, name in pbar:
         train_seed = seed + i * 2
         test_seed = seed + i * 2 + 1
 
         try:
-            train_ds = reasoning_gym.create_dataset(
+            train_ds = list(reasoning_gym.create_dataset(
                 name, size=N, seed=train_seed
-            )
-            test_ds = reasoning_gym.create_dataset(
+            ))
+            test_ds = list(reasoning_gym.create_dataset(
                 name, size=test_size, seed=test_seed
-            )
+            ))
         except Exception as e:
             if skip_failures:
                 print(f"[WARN] Skipping {name}: {e}")
@@ -268,11 +306,21 @@ def build_rg_split(
         # annotate task name
         for x in train_ds:
             x["task"] = name
+            x = serialize_gsm_symbolic_variables(x) if name == "gsm_symbolic" else x
         for x in test_ds:
             x["task"] = name
+            x = serialize_gsm_symbolic_variables(x) if name == "gsm_symbolic" else x
 
         train_data.extend(train_ds)
         test_data.extend(test_ds)
+
+        # # TODO: DEBUG - check for JSON serialization issues immediately after dataset creation, to identify which dataset(s) cause issues
+        # for rec in train_ds:
+        #     try: json.dumps(rec)
+        #     except TypeError as e:
+        #         print(rec, train_seed)
+        #         print(f"Serialization error in train_ds for task {rec['task']}: {e}")
+        #         exit()
 
     if shuffle:
         rng.shuffle(train_data)
@@ -280,9 +328,21 @@ def build_rg_split(
 
     return train_data, test_data
 
+def write_jsonl(data, filename: str):
+    with open(filename, "w") as f:
+        for item in data:
+            json.dump(item, f)
+            f.write("\n")
+
 # main
 if __name__ == "__main__":
-    train, test = build_rg_split(N=20, f=0.25, seed=42, shuffle=True)
+    train_path = "data/reasoning_gym/train.jsonl"
+    test_path = "data/reasoning_gym/test.jsonl"
+    train, test = build_rg_split(N=100, f=0.25, seed=42, shuffle=True)
 
-    print(len(train))  # ~2000
-    print(len(test))   # ~500
+    print(len(train))  # ~10000
+    print(len(test))   # ~2500
+    if not os.path.exists(train_path):
+        write_jsonl(train, train_path)
+    if not os.path.exists(test_path):
+        write_jsonl(test, test_path)
