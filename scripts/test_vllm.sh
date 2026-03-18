@@ -17,10 +17,11 @@ set -euo pipefail
 # =============================================================================
 
 # vLLM server endpoint (OpenAI-compatible)
+BASE_URL="http://localhost:8002/v1"
 BASE_URL="${BASE_URL:-http://localhost:8000/v1}"
 
 # Model name as registered in vLLM (must match --served-model-name)
-MODEL="${MODEL:-gpt-oss-120b}"
+MODEL="${MODEL:-openai/gpt-oss-120b}"
 
 # API key for the vLLM server ("EMPTY" works for most local deployments)
 VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
