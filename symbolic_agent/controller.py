@@ -75,6 +75,7 @@ class Controller:
 
         client = LLMClient(backend=backend, base_url=base_url, api_key=key, debug_dir=debug_dir)
 
+        self.client = client
         self.library = FunctionLibrary()
         self.cost_tracker = CostTracker()
         self.task_parser = TaskParser(client, model=model)
@@ -119,6 +120,7 @@ class Controller:
         budget: float = DEFAULT_BUDGET,
     ) -> Dict:
         """Run the main solve loop for a single task."""
+        self.client.reset_task_log()
         original_prompt = _extract_prompt(task_input)
         state = make_state(
             task_input=task_input,
@@ -175,6 +177,7 @@ class Controller:
 
         state["cost_summary"] = self.cost_tracker.summary(self.library.functions)
         state["library_snapshot"] = [f.to_dict() for f in self.library.functions]
+        state["agent_messages"] = self.client.get_task_log()
         return state
 
     def solve_batch(self, tasks: List[Dict]) -> List[Dict]:

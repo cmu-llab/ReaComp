@@ -97,14 +97,33 @@ Task 3 should automatically reuse the functions created in tasks 1 and 2.
 
 ## Evaluating results
 
-Use `--output-dir results/` to write `trajectory.json` and `response.json` per task. The `response.json` files are suitable for automated evaluation:
+Use `--output-file results.jsonl` to write each completed task as a single JSON line immediately after it finishes. The file contains one record per task with response, trajectory, and all agent LLM messages combined.
 
-```python
-import json, pathlib
-
-for task_dir in sorted(pathlib.Path("results").iterdir()):
-    r = json.loads((task_dir / "response.json").read_text())
-    print(r["task_index"], r["solved"], r["answer"])
+```bash
+python main.py --tasks-file tasks.jsonl --output-file results.jsonl
 ```
 
-See [debugging.md](debugging.md#per-task-output-files---output-dir) for the full schema.
+Reading results for evaluation:
+
+```python
+import json
+
+with open("results.jsonl") as f:
+    for line in f:
+        r = json.loads(line)
+        print(r["task_index"], r["solved"], r["answer"])
+```
+
+Extracting agent messages for training data:
+
+```python
+import json
+
+with open("results.jsonl") as f:
+    for line in f:
+        r = json.loads(line)
+        for msg in r["agent_messages"]:
+            print(msg["tag"], msg["request"]["messages"], msg["response"]["content"])
+```
+
+See [debugging.md](debugging.md#per-task-output-file---output-file) for the full record schema.

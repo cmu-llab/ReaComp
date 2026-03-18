@@ -2,12 +2,12 @@
 Entry point for the Symbolic Library Agent.
 
 Usage:
-    python main.py                             # run all built-in example tasks in batch
-    python main.py --task 0                    # run a single built-in task by index
-    python main.py --list                      # list built-in example tasks
-    python main.py --stats                     # print library stats after a batch run
-    python main.py --tasks-file tasks.jsonl    # run tasks from a JSON/JSONL file
-    python main.py --output-dir results/       # write per-task output to a directory
+    python main.py                               # run all built-in example tasks in batch
+    python main.py --task 0                      # run a single built-in task by index
+    python main.py --list                        # list built-in example tasks
+    python main.py --stats                       # print library stats after a batch run
+    python main.py --tasks-file tasks.jsonl      # run tasks from a JSON/JSONL file
+    python main.py --output-file results.jsonl   # append each task result live to a JSONL file
 """
 
 import argparse
@@ -119,25 +119,21 @@ def _load_tasks_file(path: str) -> List[Dict]:
     return tasks
 
 
-def _save_task_output(result: dict, task_index: int, output_dir: str) -> None:
+def _append_task_output(result: dict, task_index: int, output_file: str) -> None:
     """
-    Write two files to {output_dir}/task_{task_index:04d}/:
+    Append one JSON line to {output_file} immediately after a task completes.
 
-    trajectory.json — full agent trace for downstream analysis:
-        original_prompt, task_spec, solved, steps_taken,
-        trace (per-step agent actions), solution code, library snapshot, cost summary.
-
-    response.json — final reporting-agent output for evaluation:
-        original_prompt, solved, answer, explanation, confidence, execution_result.
+    Each line is a self-contained record combining:
+      - response fields  (answer, explanation, confidence, execution_result)
+      - trajectory fields (task_spec, trace, solution, library_snapshot, cost_summary)
+      - agent_messages   (every LLM call's request + response, suitable for agentic training)
     """
-    task_dir = Path(output_dir) / f"task_{task_index:04d}"
-    task_dir.mkdir(parents=True, exist_ok=True)
-
-    # ---- trajectory.json ------------------------------------------------
-    trajectory = {
+    final = result.get("final_output", {})
+    record = {
         "task_index": task_index,
         "task_type": result.get("task_type", ""),
         "original_prompt": result.get("original_prompt", ""),
+        # trajectory
         "task_spec": result.get("task_spec"),
         "solved": result.get("solved", False),
         "steps_taken": result.get("steps", 0),
@@ -145,29 +141,19 @@ def _save_task_output(result: dict, task_index: int, output_dir: str) -> None:
         "solution": result.get("solution"),
         "library_snapshot": result.get("library_snapshot", []),
         "cost_summary": result.get("cost_summary", {}),
-    }
-    (task_dir / "trajectory.json").write_text(
-        json.dumps(trajectory, indent=2, default=str), encoding="utf-8"
-    )
-
-    # ---- response.json --------------------------------------------------
-    final = result.get("final_output", {})
-    response = {
-        "task_index": task_index,
-        "task_type": result.get("task_type", ""),
-        "original_prompt": result.get("original_prompt", ""),
-        "solved": result.get("solved", False),
+        # response
         "answer": final.get("answer"),
         "explanation": final.get("explanation"),
         "confidence": final.get("confidence"),
         "execution_result": final.get("execution_result"),
         "error": final.get("error"),
+        # all component-agent LLM calls (request + response) for training data
+        "agent_messages": result.get("agent_messages", []),
     }
-    (task_dir / "response.json").write_text(
-        json.dumps(response, indent=2, default=str), encoding="utf-8"
-    )
-
-    logger.info("Saved task %d output → %s", task_index, task_dir)
+    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, default=str) + "\n")
+    logger.info("Appended task %d → %s", task_index, output_file)
 
 
 def _print_library_stats(controller: Controller) -> None:
@@ -212,12 +198,12 @@ def main() -> None:
              "Runs all records in batch mode, sharing one library across tasks.",
     )
     parser.add_argument(
-        "--output-dir",
+        "--output-file",
         default=None,
-        metavar="DIR",
-        help="Directory to write per-task output files.  For each task a subdirectory "
-             "task_NNNN/ is created containing trajectory.json (full agent trace) and "
-             "response.json (final answer for evaluation).",
+        metavar="FILE",
+        help="Path to a JSONL file where each completed task is appended immediately as "
+             "a single JSON line.  Each record contains the response, full trajectory, "
+             "and all component-agent LLM messages (request + response) for training data.",
     )
     parser.add_argument(
         "--debug-dir",
@@ -250,11 +236,15 @@ def main() -> None:
     if args.tasks_file:
         tasks = _load_tasks_file(args.tasks_file)
         logger.info("Loaded %d tasks from %s", len(tasks), args.tasks_file)
-        results = controller.solve_batch(tasks)
-        for i, result in enumerate(results):
+        for i, task in enumerate(tasks):
+            task_input = task.get("input", task)
+            task_type = task.get("type", "symbolic")
+            logger.info("--- Task %d/%d ---", i + 1, len(tasks))
+            result = controller.solve(task_input, task_type)
             _print_result(result, i)
-            if args.output_dir:
-                _save_task_output(result, i, args.output_dir)
+            if args.output_file:
+                _append_task_output(result, i, args.output_file)
+            logger.info("Library size after task %d: %d functions", i + 1, len(controller.library))
         if args.stats:
             _print_library_stats(controller)
     elif args.task is not None:
@@ -264,8 +254,8 @@ def main() -> None:
         task = TASKS[args.task]
         result = controller.solve(task["input"], task_type=task["type"], budget=args.budget)
         _print_result(result, args.task)
-        if args.output_dir:
-            _save_task_output(result, args.task, args.output_dir)
+        if args.output_file:
+            _append_task_output(result, args.task, args.output_file)
         if args.stats:
             _print_library_stats(controller)
     else:
@@ -274,8 +264,8 @@ def main() -> None:
         results = controller.solve_batch(TASKS)
         for i, result in enumerate(results):
             _print_result(result, i)
-            if args.output_dir:
-                _save_task_output(result, i, args.output_dir)
+            if args.output_file:
+                _append_task_output(result, i, args.output_file)
         if args.stats:
             _print_library_stats(controller)
 

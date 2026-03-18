@@ -42,6 +42,7 @@ State = {
     # --- added by Controller after solve loop ---
     "cost_summary":      dict,   # from CostTracker.summary()
     "library_snapshot":  list,   # list of Function.to_dict() at end of task
+    "agent_messages":    list,   # every LLM call during this task (see below)
 }
 ```
 
@@ -90,6 +91,39 @@ BCR decompose:
 ```python
 {"step": int, "agent": "BCR", "action": "decompose", "subtasks": list[str]}
 ```
+
+---
+
+## agent_messages
+
+`state["agent_messages"]` is a list of every LLM call made during the task, in call order. It is populated by `Controller.solve()` from `LLMClient.get_task_log()`.
+
+Each entry has the same structure as a `--debug-dir` file:
+
+```python
+{
+    "tag":          str,   # "task_parser" | "ssl" | "bcr" | "reporting"
+    "model":        str,   # model ID used for the call
+    "request": {
+        "system":   str,             # exact system prompt sent
+        "messages": list[dict],      # [{"role": "user", "content": "..."}]
+        "max_tokens": int,
+    },
+    "response": {
+        # openai backend:
+        "finish_reason":    str,
+        "content":          str,     # raw JSON string the model produced
+        "reasoning_content": str,    # chain-of-thought (if available)
+        # anthropic backend:
+        "stop_reason":      str,
+        "content":          str,
+        "usage":            dict,    # {"input_tokens": int, "output_tokens": int}
+    },
+    "parsed_result": dict,  # the parsed JSON dict the agent received ({} on parse failure)
+}
+```
+
+This field is included in every `--output-file` JSONL record and is intended as training data for agentic LLM fine-tuning.
 
 ---
 

@@ -57,6 +57,7 @@ class LLMClient:
     ):
         self.backend = backend
         self._call_counter = 0
+        self._task_log: List[Dict] = []
 
         if debug_dir:
             run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
@@ -76,6 +77,18 @@ class LLMClient:
             self._client = openai.OpenAI(base_url=base_url, api_key=api_key or "EMPTY")
         else:
             raise ValueError(f"Unknown backend: {backend!r}. Use 'anthropic' or 'openai'.")
+
+    # ------------------------------------------------------------------
+    # Task-level message log
+    # ------------------------------------------------------------------
+
+    def reset_task_log(self) -> None:
+        """Clear the in-memory message log. Call before starting each task."""
+        self._task_log = []
+
+    def get_task_log(self) -> List[Dict]:
+        """Return all messages recorded since the last reset_task_log() call."""
+        return list(self._task_log)
 
     # ------------------------------------------------------------------
     # Public API
@@ -193,6 +206,15 @@ class LLMClient:
         response: Dict,
         parsed: Dict,
     ) -> None:
+        # Always record in the per-task in-memory log for training data export
+        self._task_log.append({
+            "tag": tag,
+            "model": model,
+            "request": request,
+            "response": response,
+            "parsed_result": parsed,
+        })
+
         if not self._debug_dir:
             return
         self._call_counter += 1

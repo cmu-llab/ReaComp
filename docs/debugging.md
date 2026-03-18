@@ -92,32 +92,30 @@ The GptOss reasoning backend formerly required exactly 1 tool (causes a 400 if m
 
 ---
 
-## Per-Task Output Files (`--output-dir`)
+## Per-Task Output File (`--output-file`)
+
+Each completed task is appended to the file immediately — no waiting for the full batch.
 
 ```bash
-python main.py --tasks-file tasks.jsonl --output-dir results/
+python main.py --tasks-file tasks.jsonl --output-file results.jsonl
 ```
 
-Creates:
+Creates (or appends to) `results.jsonl` with one JSON line per task:
 
 ```
-results/
-├── task_0000/
-│   ├── trajectory.json   # full agent trace
-│   └── response.json     # final answer for evaluation
-├── task_0001/
-│   └── ...
+results.jsonl   # one JSON object per line, written live after each task
 ```
 
-### `trajectory.json`
+### Record schema
 
-Full record for analysis and debugging:
+Each line combines the trajectory, final response, and every LLM call made during the task (suitable for agentic training data):
 
 ```json
 {
   "task_index": 0,
   "task_type": "list_transform",
   "original_prompt": "Given a list of integers, return only the even numbers.",
+
   "task_spec": {"domain": "list_manipulation", "input_types": ["list[int]"], ...},
   "solved": true,
   "steps_taken": 2,
@@ -131,25 +129,42 @@ Full record for analysis and debugging:
     "functions_used": ["filter_even"]
   },
   "library_snapshot": [{"name": "filter_even", "domain": "list_manipulation", ...}],
-  "cost_summary": {"num_new_functions": 1, "reuse_count": 1, "total_cost": 1.15, ...}
-}
-```
+  "cost_summary": {"num_new_functions": 1, "reuse_count": 1, "total_cost": 1.15, ...},
 
-### `response.json`
-
-Minimal record for task-level evaluation:
-
-```json
-{
-  "task_index": 0,
-  "original_prompt": "Given a list of integers, return only the even numbers.",
-  "solved": true,
   "answer": "[2, 4, 6]",
   "explanation": "Filtered the list using filter_even.",
   "confidence": 0.95,
-  "execution_result": [2, 4, 6]
+  "execution_result": [2, 4, 6],
+  "error": null,
+
+  "agent_messages": [
+    {
+      "tag": "task_parser",
+      "model": "openai/gpt-oss-120b",
+      "request": {
+        "system": "...",
+        "messages": [{"role": "user", "content": "Parse this task: ..."}],
+        "max_tokens": 512
+      },
+      "response": {
+        "finish_reason": "stop",
+        "content": "{\"domain\": \"list_manipulation\", ...}",
+        "reasoning_content": "..."
+      },
+      "parsed_result": {"domain": "list_manipulation", "input_types": ["list[int]"], ...}
+    },
+    {"tag": "ssl", ...},
+    {"tag": "bcr", ...},
+    {"tag": "reporting", ...}
+  ]
 }
 ```
+
+**Key fields:**
+- `agent_messages` — ordered list of every LLM call during the task. Each entry mirrors the `--debug-dir` file format (same `tag`, `model`, `request`, `response`, `parsed_result` fields). Use this for agentic training data.
+- `trace` — high-level agent action log (agent names + actions, no raw prompts).
+- `solution` — the Python code BCR wrote to solve the task.
+- `execution_result` — the actual value returned by running the solution code.
 
 ---
 

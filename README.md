@@ -103,8 +103,8 @@ python main.py
 # Run tasks from a JSONL file
 python main.py --tasks-file scripts/mock_tasks.jsonl
 
-# Write per-task output files for evaluation
-python main.py --tasks-file tasks.jsonl --output-dir results/
+# Write output JSONL (live, one line per task)
+python main.py --tasks-file tasks.jsonl --output-file results.jsonl
 
 # Print library stats after the run
 python main.py --stats
@@ -144,7 +144,7 @@ export VLLM_API_KEY=your-key
 | `--model NAME` | `claude-sonnet-4-5` | LLM model name |
 | `--base-url URL` | — | OpenAI-compatible endpoint (enables vLLM mode) |
 | `--budget FLOAT` | `15.0` | Step budget per task |
-| `--output-dir DIR` | — | Write `trajectory.json` + `response.json` per task |
+| `--output-file FILE` | — | Append each task result live to a JSONL file (response + trajectory + agent messages) |
 | `--debug-dir DIR` | — | Write per-call LLM debug logs (request, CoT, parsed result) |
 | `--stats` | — | Print library and cost stats after the run |
 
@@ -173,13 +173,14 @@ Each record requires a `prompt` key. The optional `type` key is a metadata label
 
 ## Output Files
 
-`--output-dir results/` writes two files per task:
+`--output-file results.jsonl` appends one JSON line per task **immediately** after each task completes. Each line combines:
+- **response** — answer, explanation, confidence, execution result
+- **trajectory** — task spec, agent trace, solution code, library snapshot, cost summary
+- **agent_messages** — every LLM call during the task (system prompt, user message, raw response, parsed result) — useful as agentic training data
 
-```
-results/
-├── task_0000/
-│   ├── trajectory.json   # full agent trace, solution code, library snapshot, costs
-│   └── response.json     # answer, explanation, confidence, execution result
+```jsonl
+{"task_index": 0, "solved": true, "answer": "[2, 4, 6]", "trace": [...], "agent_messages": [...]}
+{"task_index": 1, "solved": true, "answer": "6", "trace": [...], "agent_messages": [...]}
 ```
 
 `--debug-dir debug_logs/` writes one JSON file per LLM call, including the model's chain-of-thought (`reasoning_content`) and parsed result. Files are written immediately so they survive crashes:

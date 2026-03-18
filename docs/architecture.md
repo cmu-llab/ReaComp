@@ -63,20 +63,71 @@ SSL runs on step 0 (library always needs updating before the first solve attempt
 
 Otherwise BCR runs.
 
-## Agent Communication via State
+## Agent Descriptions
 
-Agents communicate entirely through a shared **state dict** — no direct agent-to-agent calls.
+### TaskParser
+Converts the raw natural-language prompt into a structured `TaskSpec` — domain, I/O types, operation hints, and an example input snippet. This runs once at the start, before the solve loop. If the LLM call fails, a minimal fallback spec is used and the loop continues. The spec is passed to SSL and BCR on every step to guide domain-aware library retrieval.
+
+### SSL Agent (Symbolic Search and Library)
+The library manager. On each invocation it looks at the current task and the existing library and chooses one of three actions:
+- **reuse** — an existing function already covers the need; mark it active
+- **compose** — combine two or more existing functions into a new wrapper
+- **create** — write a brand-new function from scratch
+
+Preference is always reuse > compose > create. New and composed functions are immediately added to the shared library and verified with `safe_exec`. The SSL output tells BCR which functions to use via `state["working_memory"]["active_functions"]`.
+
+### BCR Agent (Bottom-up Conceptual Reasoning)
+The solver. It sees the current task, the full library, and the active functions suggested by SSL, and produces one of two outputs:
+- **solve** — writes a complete Python function that uses library functions to answer the task; sets `state["solved"] = True`
+- **decompose** — if the task is too complex, breaks it into ordered sub-tasks stored in `state["working_memory"]["subtasks"]`; SSL will then handle each sub-task in the next iteration
+
+BCR is instructed to always use at least one library function when the library is non-empty. The solution code is a plain `def` — the entry-point name is inferred from the first `def` line by regex, so the model does not need to provide it separately.
+
+### Reporting Agent
+Formats the final answer. It runs exactly once, after `state["solved"] == True`. Before calling the LLM, it actually *executes* the solution code (via `execute_with_library`) so the concrete result is available. The LLM then formats that result according to any output-format instructions in the original prompt (e.g. "return as a comma-separated string").
+
+**How `confidence` works:** The reporting agent asks the LLM to output a `confidence` float (0.0–1.0) as part of its JSON response. This is a self-reported estimate by the model — it is not computed from execution success or any external metric. If execution succeeded, the model typically reports high confidence; if execution failed or produced an unexpected result, it reports lower confidence. The fallback path (when LLM parsing fails) always sets `confidence = 0.5`.
+
+---
+
+## Message Passing
+
+There are two distinct levels of communication in the system.
+
+### Level 1 — Between agents (via state dict)
+
+Agents never call each other directly. They communicate by reading from and writing to a shared **state dict** that is passed through the Controller. Each agent reads what it needs, does its work (one LLM call), and writes its output back to state.
 
 Key fields written by each agent:
 
-| Agent | Writes |
-|---|---|
-| TaskParser | `state["task_spec"]` |
-| SSL | `state["working_memory"]["active_functions"]`, `state["trace"]` |
-| BCR | `state["solution"]`, `state["solved"]`, `state["trace"]` |
-| Reporting | `state["final_output"]` |
+| Agent | Reads from state | Writes to state |
+|---|---|---|
+| TaskParser | `original_prompt` | `task_spec` |
+| SSL | `task_input`, `task_type`, `working_memory` | `working_memory["active_functions"]`, `trace` |
+| BCR | `task_input`, `task_type`, `working_memory` | `solution`, `solved`, `trace` |
+| Reporting | `solution`, `original_prompt` | `final_output` |
 
-See [data-structures.md](data-structures.md) for the full State schema.
+The `FunctionLibrary` and `CostTracker` are passed as separate arguments alongside the state dict (they are shared across tasks in a session, not per-task).
+
+### Level 2 — Between agents and the LLM (via JSON prompts)
+
+Each agent constructs a prompt in two parts:
+- **System prompt** — describes the agent's role, rules, and the exact JSON schema it must output
+- **User message** — assembles the current task context, library contents, task spec, and any working memory into a single text string
+
+The LLM returns a plain JSON object (no tool-calling). The agent parses that JSON into a Python dict and reads the fields it cares about. For example, BCR reads `result["action"]`, `result["code"]`, and `result["functions_used"]` and writes them into the state dict.
+
+```
+Agent builds prompt          LLM returns JSON          Agent writes to state
+──────────────────           ─────────────────         ──────────────────────
+system: role + schema    ─►  {"action": "solve",  ─►  state["solution"] = {...}
+user:   task + library       "code": "def ...",        state["solved"] = True
+                             "functions_used": [...]}   state["trace"].append(...)
+```
+
+All LLM calls pass through `LLMClient.create()`, which handles backend differences (Anthropic vs OpenAI-compatible), strips markdown fences, and returns a parsed dict. The `agent_messages` field in the output JSONL contains the complete request + response for every LLM call during a task.
+
+See [data-structures.md](data-structures.md) for the full State schema and [agents.md](agents.md) for each agent's complete JSON schema.
 
 ## LLM Communication — JSON Output Mode
 
