@@ -14,4 +14,5 @@ python main.py \
   --model      "openai/gpt-oss-120b" \
   --budget     15.0 \
   --output-dir outputs/vllm_test \
+  --debug-dir debug/vllm_test \
   --stats
