@@ -1,6 +1,8 @@
 """Reporting Agent.
 
 Translates an existing solution into a clean final output.
+Receives the original NL prompt so it can honour any output-format
+instructions or in-context examples embedded in it.
 No new reasoning is permitted here.
 """
 
@@ -21,7 +23,7 @@ _TOOLS = [
             "properties": {
                 "answer": {
                     "type": "string",
-                    "description": "The final answer, formatted for the task type.",
+                    "description": "The final answer, formatted exactly as the original prompt requests.",
                 },
                 "explanation": {
                     "type": "string",
@@ -38,8 +40,10 @@ _TOOLS = [
 ]
 
 _SYSTEM = (
-    "You are the Reporting agent.  Your job is ONLY to translate an existing "
-    "solution into the required output format.  Do NOT do any new reasoning."
+    "You are the Reporting agent. "
+    "Translate an existing solution into the output format requested by the original prompt. "
+    "The original prompt may contain format instructions or in-context examples — follow them exactly. "
+    "Do NOT do any new reasoning; only reformat the provided solution."
 )
 
 
@@ -54,7 +58,10 @@ class ReportingAgent:
             return state
 
         solution = state["solution"]
-        task = state["task_input"]
+        # Use the original NL prompt as the primary task description so the
+        # agent can honour any output-format instructions embedded in it.
+        original_prompt = state.get("original_prompt") or str(state.get("task_input", ""))
+        task_input = state.get("task_input")
 
         # Try to execute the solution to get a concrete result
         execution_result: Any = None
@@ -64,7 +71,7 @@ class ReportingAgent:
         func_name = solution.get("function", "")
 
         if code and func_name:
-            call_args = self._infer_args(task)
+            call_args = self._infer_args(task_input)
             ok, result, err = execute_with_library(
                 solution_code=code,
                 function_name=func_name,
@@ -85,11 +92,11 @@ class ReportingAgent:
         )
 
         user_msg = (
-            f"Task: {task}\n\n"
+            f"Original task prompt:\n{original_prompt}\n\n"
             f"Solution code:\n```python\n{code}\n```\n\n"
             f"Reasoning: {solution.get('reasoning', 'N/A')}\n\n"
             f"{exec_info}\n\n"
-            "Format the final answer."
+            "Format the final answer according to the output format specified in the original prompt."
         )
 
         response = self.client.create(
@@ -131,7 +138,6 @@ class ReportingAgent:
                 inp = task["input"]
                 return [inp] if not isinstance(inp, list) else [inp]
             if "examples" in task:
-                # Return the input of the first example for spot-checking
                 ex = task["examples"][0] if task["examples"] else {}
                 return [ex.get("input")] if "input" in ex else []
         if isinstance(task, list):

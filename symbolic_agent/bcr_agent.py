@@ -2,13 +2,17 @@
 
 Attempts to solve the current task using available library functions.
 If that is not possible, decomposes the task into simpler sub-problems.
+
+Receives a TaskSpec so it can present the symbolic input representation
+to the LLM alongside the NL description.
 """
 
 import logging
-from typing import Dict
+from typing import Dict, Optional
 
 from .costs import CostTracker
 from .library import FunctionLibrary
+from .task_parser import TaskSpec
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +94,10 @@ Your job is to solve symbolic reasoning tasks using the shared function library.
 Rules:
 1. PREFER solving directly with existing library functions.
 2. Your solution_code must call at least one library function.
-3. Only call decompose_task if the task is genuinely too complex for a direct solution.
-4. Keep solutions concise.  Avoid reimplementing what's already in the library.
-5. All code must be pure Python (no external imports).
+3. Use the symbolic input representation to understand the exact data structures involved.
+4. Only call decompose_task if the task is genuinely too complex for a direct solution.
+5. Keep solutions concise.  Avoid reimplementing what's already in the library.
+6. All code must be pure Python (no external imports).
 """
 
 
@@ -101,17 +106,42 @@ class BCRAgent:
         self.client = client
         self.model = model
 
-    def run(self, state: Dict, library: FunctionLibrary, cost_tracker: CostTracker) -> Dict:
+    def run(
+        self,
+        state: Dict,
+        library: FunctionLibrary,
+        cost_tracker: CostTracker,
+        task_spec: Optional[TaskSpec] = None,
+    ) -> Dict:
         task = state["task_input"]
         task_type = state["task_type"]
         working_memory = state.get("working_memory") or {}
         active_funcs = working_memory.get("active_functions", [])
         active_str = ", ".join(active_funcs) if active_funcs else "none suggested"
 
+        spec_block = ""
+        if task_spec:
+            spec_block = (
+                f"Task domain: {task_spec.domain}\n"
+                f"Input types: {task_spec.input_types}  →  output: {task_spec.output_type}\n"
+                f"Symbolic input example:\n  {task_spec.symbolic_inputs}\n"
+                f"Operation hints: {task_spec.operation_hints}\n\n"
+            )
+
+        # Use domain-aware retrieval for the suggested functions section
+        relevant = library.retrieve_relevant(str(task), task_spec=task_spec, top_k=5)
+        relevant_str = (
+            "\n".join(f"- {f.name} [{f.domain}]: {f.description}" for f in relevant)
+            if relevant
+            else "none"
+        )
+
         user_msg = (
             f"Task type: {task_type}\n"
             f"Task: {task}\n\n"
+            f"{spec_block}"
             f"{library.format_for_prompt()}\n\n"
+            f"Domain/type-matched suggestions: {relevant_str}\n"
             f"Suggested active functions: {active_str}\n\n"
             "Solve the task directly using library functions, or decompose if necessary."
         )

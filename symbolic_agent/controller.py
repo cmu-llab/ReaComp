@@ -11,6 +11,7 @@ from .llm_client import LLMClient
 from .models import make_state
 from .reporting_agent import ReportingAgent
 from .ssl_agent import SSLAgent
+from .task_parser import TaskParser, TaskSpec
 
 logger = logging.getLogger(__name__)
 
@@ -18,17 +19,31 @@ MAX_STEPS = 10
 DEFAULT_BUDGET = 15.0
 
 
+def _extract_prompt(task_input: Any) -> str:
+    """Pull the natural-language prompt string out of whatever task_input is."""
+    if isinstance(task_input, str):
+        return task_input
+    if isinstance(task_input, dict):
+        return (
+            task_input.get("prompt")
+            or task_input.get("description")
+            or str(task_input)
+        )
+    return str(task_input)
+
+
 class Controller:
     """
     Main controller loop.
 
+        task_spec = TaskParser.parse(prompt)
         for step in range(MAX_STEPS):
             if solved(state): break
             if should_call_ssl(state):
-                state = SSL_agent(state)
+                state = SSL_agent(state, task_spec)
             else:
-                state = BCR_agent(state)
-        state = Reporting_agent(state)
+                state = BCR_agent(state, task_spec)
+        state = Reporting_agent(state)   # receives original prompt
 
     The library is shared across tasks in a session, enabling function
     reuse and emergent abstraction over time.
@@ -45,14 +60,13 @@ class Controller:
         Parameters
         ----------
         api_key : str, optional
-            Anthropic API key (ignored when base_url is set; vLLM needs any non-empty string).
+            Anthropic API key (or any non-empty string for local vLLM).
         model : str
-            Model name to use for SSL and BCR agents.
+            Model name used for SSL, BCR, and Task Parser agents.
         reporting_model : str, optional
-            Model for the reporting agent.  Defaults to `model`.
+            Model for the Reporting agent (defaults to haiku for speed).
         base_url : str, optional
-            If set, use an OpenAI-compatible endpoint (e.g. a local vLLM server).
-            Example: "http://localhost:8000/v1"
+            OpenAI-compatible base URL for local vLLM, e.g. "http://localhost:8000/v1".
         """
         if base_url:
             backend = "openai"
@@ -62,10 +76,11 @@ class Controller:
             key = api_key or os.environ.get("ANTHROPIC_API_KEY")
 
         client = LLMClient(backend=backend, base_url=base_url, api_key=key)
-        report_model = reporting_model or model
+        report_model = reporting_model or "claude-haiku-4-5-20251001"
 
         self.library = FunctionLibrary()
         self.cost_tracker = CostTracker()
+        self.task_parser = TaskParser(client, model="claude-haiku-4-5-20251001")
         self.ssl_agent = SSLAgent(client, model)
         self.bcr_agent = BCRAgent(client, model)
         self.reporting_agent = ReportingAgent(client, report_model)
@@ -76,7 +91,6 @@ class Controller:
 
     def _should_call_ssl(self, state: Dict) -> bool:
         """Return True if the SSL agent should run next."""
-        # Always start with SSL to prime the library
         if state["steps"] == 0:
             return True
 
@@ -108,11 +122,22 @@ class Controller:
         budget: float = DEFAULT_BUDGET,
     ) -> Dict:
         """Run the main solve loop for a single task."""
-        state = make_state(task_input=task_input, task_type=task_type, budget=budget)
+        original_prompt = _extract_prompt(task_input)
+        state = make_state(
+            task_input=task_input,
+            task_type=task_type,
+            budget=budget,
+            original_prompt=original_prompt,
+        )
         state["library"] = [f.name for f in self.library.functions]
 
         logger.info("=== New task: %s ===", task_type)
-        logger.info("Input: %s", task_input)
+        logger.info("Prompt: %s", original_prompt[:120])
+
+        # Parse the task into a structured spec before entering the solve loop
+        task_spec: Optional[TaskSpec] = self.task_parser.parse(original_prompt)
+        if task_spec:
+            logger.info("Task spec: %s", task_spec.summary())
 
         for step in range(MAX_STEPS):
             if state["solved"]:
@@ -125,20 +150,20 @@ class Controller:
 
             if self._should_call_ssl(state):
                 logger.info("Step %d → SSL", step)
-                state = self.ssl_agent.run(state, self.library, self.cost_tracker)
+                state = self.ssl_agent.run(state, self.library, self.cost_tracker, task_spec)
                 state["budget"] -= 1.0
             else:
                 logger.info("Step %d → BCR", step)
-                state = self.bcr_agent.run(state, self.library, self.cost_tracker)
+                state = self.bcr_agent.run(state, self.library, self.cost_tracker, task_spec)
                 state["budget"] -= 1.5
 
         # Final BCR attempt if not yet solved
         if not state["solved"]:
             logger.info("Final BCR attempt")
             state["steps"] += 1
-            state = self.bcr_agent.run(state, self.library, self.cost_tracker)
+            state = self.bcr_agent.run(state, self.library, self.cost_tracker, task_spec)
 
-        # Reporting
+        # Reporting — receives original_prompt via state
         if state["solved"]:
             state = self.reporting_agent.run(state, self.library)
         else:

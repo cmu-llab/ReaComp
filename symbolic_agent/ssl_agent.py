@@ -2,15 +2,20 @@
 
 Decides whether to reuse existing functions, compose them,
 or create a new one.  Prefers reuse over invention.
+
+Receives a TaskSpec so it can:
+  - retrieve functions by domain affinity and type matching
+  - tag newly created functions with domain and I/O types
 """
 
 import logging
-from typing import Dict
+from typing import Dict, Optional
 
 from .costs import CostTracker
 from .executor import safe_exec
 from .library import FunctionLibrary
 from .models import Function
+from .task_parser import TaskSpec
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +59,22 @@ _TOOLS = [
                 "code": {
                     "type": "string",
                     "description": (
-                        "Complete Python function definition. "
+                        "Complete Python function definition with type annotations. "
                         "Must be self-contained (no external imports)."
                     ),
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "Task domain this function belongs to (e.g. list_manipulation).",
+                },
+                "input_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Python types of the parameters, e.g. ['list[int]'].",
+                },
+                "output_type": {
+                    "type": "string",
+                    "description": "Python return type, e.g. 'list[int]'.",
                 },
             },
             "required": ["name", "description", "code"],
@@ -82,6 +100,9 @@ _TOOLS = [
                     "items": {"type": "string"},
                     "description": "Names of existing library functions this composition calls.",
                 },
+                "domain": {"type": "string"},
+                "input_types": {"type": "array", "items": {"type": "string"}},
+                "output_type": {"type": "string"},
             },
             "required": ["name", "description", "code", "uses"],
         },
@@ -97,9 +118,10 @@ Rules:
 1. FIRST check whether an existing function already covers the need → call reuse_function.
 2. If two or more existing functions can be combined → call compose_functions.
 3. Create a brand-new function ONLY when nothing else works → call create_function.
-4. Keep functions short, general, and reusable across many tasks.
-5. Functions must be pure Python with no external imports.
+4. Keep functions short, general, and reusable across many tasks in the same domain.
+5. Functions must be pure Python with type annotations and no external imports.
 6. Never create a function that duplicates an existing one.
+7. When creating or composing, include domain, input_types, and output_type.
 """
 
 
@@ -108,22 +130,39 @@ class SSLAgent:
         self.client = client
         self.model = model
 
-    def run(self, state: Dict, library: FunctionLibrary, cost_tracker: CostTracker) -> Dict:
+    def run(
+        self,
+        state: Dict,
+        library: FunctionLibrary,
+        cost_tracker: CostTracker,
+        task_spec: Optional[TaskSpec] = None,
+    ) -> Dict:
         task = state["task_input"]
         task_type = state["task_type"]
 
-        relevant = library.retrieve_relevant(str(task), top_k=5)
+        relevant = library.retrieve_relevant(str(task), task_spec=task_spec, top_k=5)
         relevant_str = (
-            "\n".join(f"- {f.name}: {f.description}" for f in relevant)
+            "\n".join(f"- {f.name} [{f.domain}]: {f.description}" for f in relevant)
             if relevant
             else "None found."
         )
 
+        spec_block = ""
+        if task_spec:
+            spec_block = (
+                f"Task domain: {task_spec.domain}\n"
+                f"Input types: {task_spec.input_types}\n"
+                f"Output type: {task_spec.output_type}\n"
+                f"Operation hints: {task_spec.operation_hints}\n"
+                f"Symbolic input example: {task_spec.symbolic_inputs}\n\n"
+            )
+
         user_msg = (
             f"Task type: {task_type}\n"
             f"Task: {task}\n\n"
+            f"{spec_block}"
             f"{library.format_for_prompt()}\n\n"
-            f"Most relevant existing functions:\n{relevant_str}\n\n"
+            f"Most relevant existing functions (domain + type matched):\n{relevant_str}\n\n"
             "Decide: reuse an existing function, compose existing functions, "
             "or create a new one.  Prefer reuse > compose > create."
         )
@@ -158,13 +197,16 @@ class SSLAgent:
                     logger.warning("SSL: reuse requested for unknown function '%s'", inp["function_name"])
 
             elif name in ("create_function", "compose_functions"):
+                # Fall back to task_spec for domain/types if the model didn't fill them
                 new_func = Function(
                     name=inp["name"],
                     description=inp["description"],
                     code=inp["code"],
+                    domain=inp.get("domain") or (task_spec.domain if task_spec else "general"),
+                    input_types=inp.get("input_types") or (task_spec.input_types if task_spec else []),
+                    output_type=inp.get("output_type") or (task_spec.output_type if task_spec else ""),
                 )
 
-                # Validate syntax before adding
                 ok, _, err = safe_exec(new_func.code)
                 if not ok:
                     logger.warning("SSL: generated function '%s' has errors: %s", new_func.name, err)
@@ -180,7 +222,7 @@ class SSLAgent:
                         if used:
                             cost_tracker.record_reuse(used)
 
-                logger.info("SSL: %s '%s'", name, new_func.name)
+                logger.info("SSL: %s '%s' [%s]", name, new_func.name, new_func.domain)
 
         state["working_memory"] = {"active_functions": active_functions}
         state["trace"].append({"step": state["steps"], "agent": "SSL", "actions": actions})
