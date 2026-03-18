@@ -24,42 +24,28 @@ logger = logging.getLogger(__name__)
 _TOOLS = [
     {
         "name": "bcr_action",
-        "description": (
-            "Either solve the task directly with library functions (action='solve'), "
-            "or break it into simpler sub-tasks (action='decompose'). "
-            "Prefer solve over decompose."
-        ),
+        "description": "Solve the task with library functions (action='solve'), or decompose into sub-tasks (action='decompose'). Prefer solve.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
                     "enum": ["solve", "decompose"],
-                    "description": (
-                        "solve: provide a complete Python solution using library functions. "
-                        "decompose: split into ordered sub-tasks when a direct solution is not possible."
-                    ),
+                    "description": "solve: write Python code that solves the task. decompose: split into simpler sub-tasks.",
                 },
                 # --- solve fields ---
-                "solution_code": {
+                "code": {
                     "type": "string",
-                    "description": (
-                        "(solve) Complete Python code defining a function that solves the task. "
-                        "May call library functions by name. No external imports."
-                    ),
-                },
-                "solution_function": {
-                    "type": "string",
-                    "description": "(solve) Name of the entry-point function in solution_code.",
+                    "description": "Complete Python function definition that solves the task. May call library functions by name. No external imports.",
                 },
                 "reasoning": {
                     "type": "string",
-                    "description": "(solve) Step-by-step explanation of the solution.",
+                    "description": "Step-by-step explanation of the solution approach.",
                 },
                 "functions_used": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "(solve) Names of library functions called by the solution.",
+                    "description": "Names of library functions called inside code.",
                 },
                 # --- decompose fields ---
                 "subtasks": {
@@ -72,14 +58,14 @@ _TOOLS = [
                         },
                         "required": ["description", "input"],
                     },
-                    "description": "(decompose) Ordered list of sub-tasks.",
+                    "description": "Ordered list of sub-tasks to solve independently.",
                 },
                 "composition_plan": {
                     "type": "string",
-                    "description": "(decompose) How sub-task results combine to solve the main task.",
+                    "description": "How to combine the sub-task results into the final answer.",
                 },
             },
-            "required": ["action"],
+            "required": ["action", "code"],
         },
     },
 ]
@@ -91,10 +77,10 @@ Your job is to solve symbolic reasoning tasks using the shared function library.
 
 Rules:
 1. PREFER solving directly with existing library functions.
-2. Your solution_code must call at least one library function.
+2. Your code must call at least one library function when the library is non-empty.
 3. Use the symbolic input representation to understand the exact data structures involved.
-4. Only call decompose_task if the task is genuinely too complex for a direct solution.
-5. Keep solutions concise.  Avoid reimplementing what's already in the library.
+4. Only decompose if the task is genuinely too complex for a direct solution.
+5. Keep solutions concise. Avoid reimplementing what's already in the library.
 6. All code must be pure Python (no external imports).
 """
 
@@ -162,19 +148,18 @@ class BCRAgent:
             action = inp.get("action", "solve")
 
             if action == "solve":
-                solution_code = inp.get("solution_code", "")
-                # Model often omits solution_function — extract the first def name from code
+                # Accept 'code' (new schema) or 'solution_code' (old schema / model habit)
+                solution_code = inp.get("code") or inp.get("solution_code", "")
+                # Extract entry-point name from the def statement — never require the model to repeat it
                 solution_function = inp.get("solution_function", "")
                 if not solution_function and solution_code:
                     m = re.search(r'\bdef\s+(\w+)\s*\(', solution_code)
                     if m:
                         solution_function = m.group(1)
-                        logger.info("BCR: inferred solution_function=%r from code", solution_function)
 
                 if not solution_code or not solution_function:
                     logger.warning(
-                        "BCR: solve action missing solution_code/solution_function, "
-                        "skipping. inp keys: %s", list(inp.keys()),
+                        "BCR: solve action missing code, skipping. inp keys: %s", list(inp.keys()),
                     )
                     continue
 

@@ -27,64 +27,47 @@ logger = logging.getLogger(__name__)
 _TOOLS = [
     {
         "name": "ssl_action",
-        "description": (
-            "Manage the function library for the current task. "
-            "Set action='reuse' to mark an existing function as sufficient, "
-            "'compose' to build a new function from existing ones, "
-            "or 'create' to define a brand-new function. "
-            "Prefer reuse > compose > create."
-        ),
+        "description": "Manage the shared function library. Prefer reuse > compose > create.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
                     "enum": ["reuse", "compose", "create"],
-                    "description": (
-                        "reuse: an existing function covers the need. "
-                        "compose: combine existing functions into a new one. "
-                        "create: write a brand-new function."
-                    ),
+                    "description": "reuse: existing function is sufficient. compose: build from existing functions. create: write a new function from scratch.",
                 },
-                # --- reuse fields ---
-                "function_name": {
+                "name": {
                     "type": "string",
-                    "description": "(reuse) Name of the existing function to reuse.",
+                    "description": "snake_case name of the function (existing name for reuse, new name for create/compose).",
                 },
-                "reasoning": {
-                    "type": "string",
-                    "description": "(reuse) Why this function is relevant.",
-                },
-                # --- create / compose fields ---
-                "name": {"type": "string", "description": "(create/compose) snake_case function name."},
-                "description": {"type": "string", "description": "(create/compose) One-line docstring."},
                 "code": {
                     "type": "string",
-                    "description": (
-                        "(create/compose) Complete Python function definition with type annotations. "
-                        "Must be self-contained (no external imports)."
-                    ),
+                    "description": "Complete Python function definition with type annotations. Required for create and compose. Must be self-contained (no external imports).",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "One-line docstring summarising what the function does.",
                 },
                 "uses": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "(compose) Names of existing library functions this composition calls.",
+                    "description": "Names of existing library functions called inside this composition (compose only).",
                 },
                 "domain": {
                     "type": "string",
-                    "description": "Task domain (e.g. list_manipulation).",
+                    "description": "Task domain, e.g. list_manipulation, string_manipulation, math.",
                 },
                 "input_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Python parameter types, e.g. ['list[int]'].",
+                    "description": "Python type annotations for each parameter, e.g. ['list[int]'].",
                 },
                 "output_type": {
                     "type": "string",
-                    "description": "Python return type, e.g. 'list[int]'.",
+                    "description": "Python return-type annotation, e.g. 'list[int]'.",
                 },
             },
-            "required": ["action"],
+            "required": ["action", "name"],
         },
     },
 ]
@@ -95,13 +78,13 @@ You are the SSL (Symbolic Search and Library) agent in a symbolic reasoning syst
 Your ONLY job is to maintain a shared function library used across tasks.
 
 Rules:
-1. FIRST check whether an existing function already covers the need → call reuse_function.
-2. If two or more existing functions can be combined → call compose_functions.
-3. Create a brand-new function ONLY when nothing else works → call create_function.
+1. FIRST check whether an existing function already covers the need → action=reuse.
+2. If two or more existing functions can be combined → action=compose.
+3. Create a brand-new function ONLY when nothing else works → action=create.
 4. Keep functions short, general, and reusable across many tasks in the same domain.
 5. Functions must be pure Python with type annotations and no external imports.
 6. Never create a function that duplicates an existing one.
-7. When creating or composing, include domain, input_types, and output_type.
+7. For create and compose, always include code, domain, input_types, and output_type.
 """
 
 
@@ -168,14 +151,16 @@ class SSLAgent:
             action = inp.get("action", "create")
 
             if action == "reuse":
-                func = library.get(inp.get("function_name", ""))
+                # 'name' is now the unified field; keep 'function_name' as fallback
+                reuse_name = inp.get("name") or inp.get("function_name", "")
+                func = library.get(reuse_name)
                 if func:
                     cost_tracker.record_reuse(func)
                     active_functions.append(func.name)
                     actions.append({"action": "reuse", "function": func.name, "reasoning": inp.get("reasoning", "")})
                     logger.info("SSL: reusing '%s'", func.name)
                 else:
-                    logger.warning("SSL: reuse requested for unknown function '%s'", inp.get("function_name"))
+                    logger.warning("SSL: reuse requested for unknown function '%s'", reuse_name)
 
             elif action in ("create", "compose"):
                 # Model sometimes uses 'function_name' (the reuse field) instead of 'name'
