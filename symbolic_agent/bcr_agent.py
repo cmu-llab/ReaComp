@@ -160,15 +160,23 @@ class BCRAgent:
             action = inp.get("action", "solve")
 
             if action == "solve":
+                if not inp.get("solution_code") or not inp.get("solution_function"):
+                    logger.warning(
+                        "BCR: solve action missing required fields (solution_code/solution_function), "
+                        "skipping. inp keys: %s", list(inp.keys()),
+                    )
+                    continue
+
                 for fname in inp.get("functions_used", []):
                     func = library.get(fname)
                     if func:
                         cost_tracker.record_reuse(func)
 
+                reasoning = inp.get("reasoning", "")
                 state["solution"] = {
                     "code": inp["solution_code"],
                     "function": inp["solution_function"],
-                    "reasoning": inp["reasoning"],
+                    "reasoning": reasoning,
                     "functions_used": inp.get("functions_used", []),
                 }
                 state["solved"] = True
@@ -176,14 +184,21 @@ class BCRAgent:
                     "step": state["steps"],
                     "agent": "BCR",
                     "action": "solve",
-                    "reasoning": inp["reasoning"],
+                    "reasoning": reasoning,
                 })
                 logger.info("BCR: solved using %s", inp.get("functions_used", []))
 
             elif action == "decompose":
+                if not inp.get("subtasks"):
+                    logger.warning(
+                        "BCR: decompose action missing subtasks, skipping. inp keys: %s",
+                        list(inp.keys()),
+                    )
+                    continue
+
                 state["working_memory"] = {
                     "subtasks": inp["subtasks"],
-                    "composition_plan": inp["composition_plan"],
+                    "composition_plan": inp.get("composition_plan", ""),
                     "active_functions": active_funcs,
                 }
                 state["trace"].append({
