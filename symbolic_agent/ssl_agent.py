@@ -3,9 +3,7 @@
 Decides whether to reuse existing functions, compose them,
 or create a new one.  Prefers reuse over invention.
 
-Receives a TaskSpec so it can:
-  - retrieve functions by domain affinity and type matching
-  - tag newly created functions with domain and I/O types
+Responds with a plain JSON object — no tool calling.
 """
 
 import logging
@@ -20,61 +18,8 @@ from .task_parser import TaskSpec
 
 logger = logging.getLogger(__name__)
 
-# --------------------------------------------------------------------------
-# Tool schemas
-# --------------------------------------------------------------------------
-
-_TOOLS = [
-    {
-        "name": "ssl_action",
-        "description": "Manage the shared function library. Prefer reuse > compose > create.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["reuse", "compose", "create"],
-                    "description": "reuse: existing function is sufficient. compose: build from existing functions. create: write a new function from scratch.",
-                },
-                "name": {
-                    "type": "string",
-                    "description": "snake_case name of the function (existing name for reuse, new name for create/compose).",
-                },
-                "code": {
-                    "type": "string",
-                    "description": "Complete Python function definition with type annotations. Required for create and compose. Must be self-contained (no external imports).",
-                },
-                "description": {
-                    "type": "string",
-                    "description": "One-line docstring summarising what the function does.",
-                },
-                "uses": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Names of existing library functions called inside this composition (compose only).",
-                },
-                "domain": {
-                    "type": "string",
-                    "description": "Task domain, e.g. list_manipulation, string_manipulation, math.",
-                },
-                "input_types": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Python type annotations for each parameter, e.g. ['list[int]'].",
-                },
-                "output_type": {
-                    "type": "string",
-                    "description": "Python return-type annotation, e.g. 'list[int]'.",
-                },
-            },
-            "required": ["action", "name"],
-        },
-    },
-]
-
 _SYSTEM = """\
 You are the SSL (Symbolic Search and Library) agent in a symbolic reasoning system.
-
 Your ONLY job is to maintain a shared function library used across tasks.
 
 Rules:
@@ -84,7 +29,19 @@ Rules:
 4. Keep functions short, general, and reusable across many tasks in the same domain.
 5. Functions must be pure Python with type annotations and no external imports.
 6. Never create a function that duplicates an existing one.
-7. For create and compose, always include code, domain, input_types, and output_type.
+7. For create and compose always include code, domain, input_types, and output_type.
+
+Respond with exactly this JSON structure:
+{
+  "action": "reuse" | "compose" | "create",
+  "name": "<snake_case function name — existing name for reuse, new name for create/compose>",
+  "code": "<complete Python def with type annotations — create/compose only>",
+  "description": "<one-line docstring>",
+  "uses": ["<existing_fn>"],
+  "domain": "<e.g. list_manipulation>",
+  "input_types": ["<e.g. list[int]>"],
+  "output_type": "<e.g. list[int]>"
+}
 """
 
 
@@ -106,8 +63,7 @@ class SSLAgent:
         relevant = library.retrieve_relevant(str(task), task_spec=task_spec, top_k=5)
         relevant_str = (
             "\n".join(f"- {f.name} [{f.domain}]: {f.description}" for f in relevant)
-            if relevant
-            else "None found."
+            if relevant else "None found."
         )
 
         spec_block = ""
@@ -127,78 +83,61 @@ class SSLAgent:
             f"{library.format_for_prompt()}\n\n"
             f"Most relevant existing functions (domain + type matched):\n{relevant_str}\n\n"
             "Decide: reuse an existing function, compose existing functions, "
-            "or create a new one.  Prefer reuse > compose > create."
+            "or create a new one. Prefer reuse > compose > create."
         )
 
-        response = self.client.create(
+        result = self.client.create(
             model=self.model,
             max_tokens=1024,
             system=_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
-            tools=_TOOLS,
-            tool_choice={"type": "any"},
             tag="ssl",
         )
 
         actions: list = []
         active_functions: list = []
 
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
+        action = result.get("action", "")
+        # Accept function_name as a fallback for name (model habit from old schema)
+        name = result.get("name") or result.get("function_name", "")
 
-            inp = block.input
-            action = inp.get("action", "create")
+        if action == "reuse":
+            func = library.get(name)
+            if func:
+                cost_tracker.record_reuse(func)
+                active_functions.append(func.name)
+                actions.append({"action": "reuse", "function": func.name, "reasoning": result.get("reasoning", "")})
+                logger.info("SSL: reusing '%s'", func.name)
+            else:
+                logger.warning("SSL: reuse requested for unknown function '%s'", name)
 
-            if action == "reuse":
-                # 'name' is now the unified field; keep 'function_name' as fallback
-                reuse_name = inp.get("name") or inp.get("function_name", "")
-                func = library.get(reuse_name)
-                if func:
-                    cost_tracker.record_reuse(func)
-                    active_functions.append(func.name)
-                    actions.append({"action": "reuse", "function": func.name, "reasoning": inp.get("reasoning", "")})
-                    logger.info("SSL: reusing '%s'", func.name)
-                else:
-                    logger.warning("SSL: reuse requested for unknown function '%s'", reuse_name)
+        elif action in ("create", "compose"):
+            code = result.get("code", "")
+            # Fallback: scan all string values for a Python def if code field is empty
+            if not code:
+                for v in result.values():
+                    if isinstance(v, str) and re.search(r"\bdef\s+\w+\s*\(", v):
+                        code = v
+                        logger.info("SSL: extracted code from non-standard field")
+                        break
+            # Infer name from code if still missing
+            if not name and code:
+                m = re.search(r"\bdef\s+(\w+)\s*\(", code)
+                if m:
+                    name = m.group(1)
+                    logger.info("SSL: inferred name=%r from code", name)
 
-            elif action in ("create", "compose"):
-                # Model sometimes uses 'function_name' (the reuse field) instead of 'name'
-                func_name = inp.get("name") or inp.get("function_name", "")
-
-                # Model sometimes squashes the code into another field (e.g. output_type).
-                # Scan all string values for one that looks like a Python function definition.
-                func_code = inp.get("code", "")
-                if not func_code:
-                    for v in inp.values():
-                        if isinstance(v, str) and re.search(r'\bdef\s+\w+\s*\(', v):
-                            func_code = v
-                            logger.info("SSL: extracted code from non-standard field")
-                            break
-
-                # Infer name from code if still missing
-                if not func_name and func_code:
-                    m = re.search(r'\bdef\s+(\w+)\s*\(', func_code)
-                    if m:
-                        func_name = m.group(1)
-                        logger.info("SSL: inferred name=%r from code", func_name)
-
-                if not func_name or not func_code:
-                    logger.warning(
-                        "SSL: %s action missing required fields (name/code), skipping. inp keys: %s",
-                        action, list(inp.keys()),
-                    )
-                    continue
-                # Fall back to task_spec for domain/types if the model didn't fill them
+            if not name or not code:
+                logger.warning("SSL: %s action missing name/code, skipping. keys: %s", action, list(result.keys()))
+            else:
                 new_func = Function(
-                    name=func_name,
-                    description=inp.get("description", ""),
-                    code=func_code,
-                    domain=inp.get("domain") or (task_spec.domain if task_spec else "general"),
-                    input_types=inp.get("input_types") or (task_spec.input_types if task_spec else []),
-                    output_type=inp.get("output_type") or (task_spec.output_type if task_spec else ""),
+                    name=name,
+                    description=result.get("description", ""),
+                    code=code,
+                    domain=result.get("domain") or (task_spec.domain if task_spec else "general"),
+                    input_types=result.get("input_types") or (task_spec.input_types if task_spec else []),
+                    output_type=result.get("output_type") or (task_spec.output_type if task_spec else ""),
                 )
-
                 ok, _, err = safe_exec(new_func.code)
                 if not ok:
                     logger.warning("SSL: generated function '%s' has errors: %s", new_func.name, err)
@@ -209,12 +148,15 @@ class SSLAgent:
                 actions.append({"action": action, "function": new_func.name})
 
                 if action == "compose":
-                    for used_name in inp.get("uses", []):
+                    for used_name in result.get("uses", []):
                         used = library.get(used_name)
                         if used:
                             cost_tracker.record_reuse(used)
 
                 logger.info("SSL: %s '%s' [%s]", action, new_func.name, new_func.domain)
+
+        else:
+            logger.warning("SSL: unrecognised action %r, skipping. keys: %s", action, list(result.keys()))
 
         state["working_memory"] = {"active_functions": active_functions}
         state["trace"].append({"step": state["steps"], "agent": "SSL", "actions": actions})

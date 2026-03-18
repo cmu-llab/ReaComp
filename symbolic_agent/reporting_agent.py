@@ -3,7 +3,8 @@
 Translates an existing solution into a clean final output.
 Receives the original NL prompt so it can honour any output-format
 instructions or in-context examples embedded in it.
-No new reasoning is permitted here.
+
+Responds with a plain JSON object — no tool calling.
 """
 
 import logging
@@ -14,41 +15,23 @@ from .library import FunctionLibrary
 
 logger = logging.getLogger(__name__)
 
-_TOOLS = [
-    {
-        "name": "format_solution",
-        "description": "Format the solution into a clean final answer.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "answer": {
-                    "type": "string",
-                    "description": "The final answer, formatted exactly as the original prompt requests.",
-                },
-                "explanation": {
-                    "type": "string",
-                    "description": "One-sentence plain-English explanation.",
-                },
-                "confidence": {
-                    "type": "number",
-                    "description": "Confidence score between 0 and 1.",
-                },
-            },
-            "required": ["answer", "explanation", "confidence"],
-        },
-    }
-]
+_SYSTEM = """\
+You are the Reporting agent in a symbolic reasoning system.
+Translate an existing solution into the output format requested by the original prompt.
+The original prompt may contain format instructions or in-context examples — follow them exactly.
+Do NOT do any new reasoning; only reformat the provided solution.
 
-_SYSTEM = (
-    "You are the Reporting agent. "
-    "Translate an existing solution into the output format requested by the original prompt. "
-    "The original prompt may contain format instructions or in-context examples — follow them exactly. "
-    "Do NOT do any new reasoning; only reformat the provided solution."
-)
+Respond with exactly this JSON:
+{
+  "answer": "<final answer, formatted exactly as the original prompt requests>",
+  "explanation": "<one-sentence plain-English explanation>",
+  "confidence": <float 0.0–1.0>
+}
+"""
 
 
 class ReportingAgent:
-    def __init__(self, client, model: str = "claude-haiku-4-5-20251001"):
+    def __init__(self, client, model: str = "claude-sonnet-4-5"):
         self.client = client
         self.model = model
 
@@ -58,12 +41,8 @@ class ReportingAgent:
             return state
 
         solution = state["solution"]
-        # Use the original NL prompt as the primary task description so the
-        # agent can honour any output-format instructions embedded in it.
         original_prompt = state.get("original_prompt") or str(state.get("task_input", ""))
-        task_input = state.get("task_input")
 
-        # Try to execute the solution to get a concrete result
         execution_result: Any = None
         execution_error: str = ""
 
@@ -71,7 +50,7 @@ class ReportingAgent:
         func_name = solution.get("function", "")
 
         if code and func_name:
-            call_args = self._infer_args(task_input)
+            call_args = self._infer_args(state.get("task_input"))
             ok, result, err = execute_with_library(
                 solution_code=code,
                 function_name=func_name,
@@ -99,27 +78,24 @@ class ReportingAgent:
             "Format the final answer according to the output format specified in the original prompt."
         )
 
-        response = self.client.create(
+        result = self.client.create(
             model=self.model,
             max_tokens=512,
             system=_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
-            tools=_TOOLS,
-            tool_choice={"type": "any"},
             tag="reporting",
         )
 
-        for block in response.content:
-            if block.type == "tool_use" and block.name == "format_solution":
-                state["final_output"] = {
-                    "answer": block.input["answer"],
-                    "explanation": block.input["explanation"],
-                    "confidence": block.input["confidence"],
-                    "execution_result": execution_result,
-                }
-                return state
+        if result.get("answer") is not None:
+            state["final_output"] = {
+                "answer": result["answer"],
+                "explanation": result.get("explanation", ""),
+                "confidence": result.get("confidence", 0.5),
+                "execution_result": execution_result,
+            }
+            return state
 
-        # Fallback if tool was not called
+        # Fallback if JSON parsing failed or answer was absent
         state["final_output"] = {
             "answer": str(execution_result if execution_result is not None else solution),
             "explanation": solution.get("reasoning", ""),
@@ -128,12 +104,7 @@ class ReportingAgent:
         }
         return state
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
     def _infer_args(self, task) -> list:
-        """Best-effort: extract call arguments from the task description."""
         if isinstance(task, dict):
             if "input" in task:
                 inp = task["input"]
