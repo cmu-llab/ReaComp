@@ -9,7 +9,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 
 python main.py \
-  --tasks-file scripts/mock_tasks.jsonl \
+  --tasks-file scripts/mock_tasks_mixed.jsonl \
   --base-url   "http://localhost:8002/v1" \
   --model      "openai/gpt-oss-120b" \
   --budget     15.0 \
