@@ -176,10 +176,16 @@ class SSLAgent:
                     logger.warning("SSL: reuse requested for unknown function '%s'", inp.get("function_name"))
 
             elif action in ("create", "compose"):
+                if not inp.get("name") or not inp.get("code"):
+                    logger.warning(
+                        "SSL: %s action missing required fields (name/code), skipping. inp keys: %s",
+                        action, list(inp.keys()),
+                    )
+                    continue
                 # Fall back to task_spec for domain/types if the model didn't fill them
                 new_func = Function(
                     name=inp["name"],
-                    description=inp["description"],
+                    description=inp.get("description", ""),
                     code=inp["code"],
                     domain=inp.get("domain") or (task_spec.domain if task_spec else "general"),
                     input_types=inp.get("input_types") or (task_spec.input_types if task_spec else []),
