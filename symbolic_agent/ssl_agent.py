@@ -25,86 +25,65 @@ logger = logging.getLogger(__name__)
 
 _TOOLS = [
     {
-        "name": "reuse_function",
+        "name": "ssl_action",
         "description": (
-            "Indicate that an existing library function is sufficient for the current task. "
-            "Use this whenever a function already exists that can help."
+            "Manage the function library for the current task. "
+            "Set action='reuse' to mark an existing function as sufficient, "
+            "'compose' to build a new function from existing ones, "
+            "or 'create' to define a brand-new function. "
+            "Prefer reuse > compose > create."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["reuse", "compose", "create"],
+                    "description": (
+                        "reuse: an existing function covers the need. "
+                        "compose: combine existing functions into a new one. "
+                        "create: write a brand-new function."
+                    ),
+                },
+                # --- reuse fields ---
                 "function_name": {
                     "type": "string",
-                    "description": "Name of the existing function to reuse.",
+                    "description": "(reuse) Name of the existing function to reuse.",
                 },
                 "reasoning": {
                     "type": "string",
-                    "description": "Why this function is relevant to the task.",
+                    "description": "(reuse) Why this function is relevant.",
                 },
-            },
-            "required": ["function_name", "reasoning"],
-        },
-    },
-    {
-        "name": "create_function",
-        "description": (
-            "Create a brand-new library function that does not yet exist. "
-            "Only use this when no existing function (or composition) can help."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "snake_case function name."},
-                "description": {"type": "string", "description": "One-line docstring."},
+                # --- create / compose fields ---
+                "name": {"type": "string", "description": "(create/compose) snake_case function name."},
+                "description": {"type": "string", "description": "(create/compose) One-line docstring."},
                 "code": {
                     "type": "string",
                     "description": (
-                        "Complete Python function definition with type annotations. "
+                        "(create/compose) Complete Python function definition with type annotations. "
                         "Must be self-contained (no external imports)."
                     ),
                 },
+                "uses": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "(compose) Names of existing library functions this composition calls.",
+                },
                 "domain": {
                     "type": "string",
-                    "description": "Task domain this function belongs to (e.g. list_manipulation).",
+                    "description": "Task domain (e.g. list_manipulation).",
                 },
                 "input_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Python types of the parameters, e.g. ['list[int]'].",
+                    "description": "Python parameter types, e.g. ['list[int]'].",
                 },
                 "output_type": {
                     "type": "string",
                     "description": "Python return type, e.g. 'list[int]'.",
                 },
             },
-            "required": ["name", "description", "code"],
-        },
-    },
-    {
-        "name": "compose_functions",
-        "description": (
-            "Build a new function by composing two or more existing library functions. "
-            "Prefer this over create_function when existing pieces can be combined."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string"},
-                "description": {"type": "string"},
-                "code": {
-                    "type": "string",
-                    "description": "Python function that calls the listed existing functions.",
-                },
-                "uses": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Names of existing library functions this composition calls.",
-                },
-                "domain": {"type": "string"},
-                "input_types": {"type": "array", "items": {"type": "string"}},
-                "output_type": {"type": "string"},
-            },
-            "required": ["name", "description", "code", "uses"],
+            "required": ["action"],
         },
     },
 ]
@@ -183,20 +162,20 @@ class SSLAgent:
             if block.type != "tool_use":
                 continue
 
-            name = block.name
             inp = block.input
+            action = inp.get("action", "create")
 
-            if name == "reuse_function":
-                func = library.get(inp["function_name"])
+            if action == "reuse":
+                func = library.get(inp.get("function_name", ""))
                 if func:
                     cost_tracker.record_reuse(func)
                     active_functions.append(func.name)
-                    actions.append({"action": "reuse", "function": func.name, "reasoning": inp["reasoning"]})
+                    actions.append({"action": "reuse", "function": func.name, "reasoning": inp.get("reasoning", "")})
                     logger.info("SSL: reusing '%s'", func.name)
                 else:
-                    logger.warning("SSL: reuse requested for unknown function '%s'", inp["function_name"])
+                    logger.warning("SSL: reuse requested for unknown function '%s'", inp.get("function_name"))
 
-            elif name in ("create_function", "compose_functions"):
+            elif action in ("create", "compose"):
                 # Fall back to task_spec for domain/types if the model didn't fill them
                 new_func = Function(
                     name=inp["name"],
@@ -214,15 +193,15 @@ class SSLAgent:
                 library.add(new_func)
                 cost_tracker.record_new_function(new_func)
                 active_functions.append(new_func.name)
-                actions.append({"action": name, "function": new_func.name})
+                actions.append({"action": action, "function": new_func.name})
 
-                if name == "compose_functions":
+                if action == "compose":
                     for used_name in inp.get("uses", []):
                         used = library.get(used_name)
                         if used:
                             cost_tracker.record_reuse(used)
 
-                logger.info("SSL: %s '%s' [%s]", name, new_func.name, new_func.domain)
+                logger.info("SSL: %s '%s' [%s]", action, new_func.name, new_func.domain)
 
         state["working_memory"] = {"active_functions": active_functions}
         state["trace"].append({"step": state["steps"], "agent": "SSL", "actions": actions})

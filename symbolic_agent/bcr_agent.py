@@ -22,48 +22,45 @@ logger = logging.getLogger(__name__)
 
 _TOOLS = [
     {
-        "name": "solve_task",
+        "name": "bcr_action",
         "description": (
-            "Provide a complete Python solution for the task, using one or more "
-            "library functions.  The solution_code must define a callable function."
+            "Either solve the task directly with library functions (action='solve'), "
+            "or break it into simpler sub-tasks (action='decompose'). "
+            "Prefer solve over decompose."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["solve", "decompose"],
+                    "description": (
+                        "solve: provide a complete Python solution using library functions. "
+                        "decompose: split into ordered sub-tasks when a direct solution is not possible."
+                    ),
+                },
+                # --- solve fields ---
                 "solution_code": {
                     "type": "string",
                     "description": (
-                        "Complete Python code that defines a function solving the task. "
-                        "May call library functions by name (they will be loaded first). "
-                        "No external imports."
+                        "(solve) Complete Python code defining a function that solves the task. "
+                        "May call library functions by name. No external imports."
                     ),
                 },
                 "solution_function": {
                     "type": "string",
-                    "description": "Name of the entry-point function in solution_code.",
+                    "description": "(solve) Name of the entry-point function in solution_code.",
                 },
                 "reasoning": {
                     "type": "string",
-                    "description": "Step-by-step explanation of the solution.",
+                    "description": "(solve) Step-by-step explanation of the solution.",
                 },
                 "functions_used": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Names of library functions called by the solution.",
+                    "description": "(solve) Names of library functions called by the solution.",
                 },
-            },
-            "required": ["solution_code", "solution_function", "reasoning", "functions_used"],
-        },
-    },
-    {
-        "name": "decompose_task",
-        "description": (
-            "Break the task into simpler sub-tasks when a direct solution is not possible. "
-            "Use this only if the task genuinely requires intermediate steps."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
+                # --- decompose fields ---
                 "subtasks": {
                     "type": "array",
                     "items": {
@@ -74,14 +71,14 @@ _TOOLS = [
                         },
                         "required": ["description", "input"],
                     },
-                    "description": "Ordered list of sub-tasks.",
+                    "description": "(decompose) Ordered list of sub-tasks.",
                 },
                 "composition_plan": {
                     "type": "string",
-                    "description": "How results from sub-tasks combine to solve the main task.",
+                    "description": "(decompose) How sub-task results combine to solve the main task.",
                 },
             },
-            "required": ["subtasks", "composition_plan"],
+            "required": ["action"],
         },
     },
 ]
@@ -159,10 +156,10 @@ class BCRAgent:
             if block.type != "tool_use":
                 continue
 
-            name = block.name
             inp = block.input
+            action = inp.get("action", "solve")
 
-            if name == "solve_task":
+            if action == "solve":
                 for fname in inp.get("functions_used", []):
                     func = library.get(fname)
                     if func:
@@ -172,7 +169,7 @@ class BCRAgent:
                     "code": inp["solution_code"],
                     "function": inp["solution_function"],
                     "reasoning": inp["reasoning"],
-                    "functions_used": inp["functions_used"],
+                    "functions_used": inp.get("functions_used", []),
                 }
                 state["solved"] = True
                 state["trace"].append({
@@ -181,9 +178,9 @@ class BCRAgent:
                     "action": "solve",
                     "reasoning": inp["reasoning"],
                 })
-                logger.info("BCR: solved using %s", inp["functions_used"])
+                logger.info("BCR: solved using %s", inp.get("functions_used", []))
 
-            elif name == "decompose_task":
+            elif action == "decompose":
                 state["working_memory"] = {
                     "subtasks": inp["subtasks"],
                     "composition_plan": inp["composition_plan"],
