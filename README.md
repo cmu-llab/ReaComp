@@ -198,6 +198,46 @@ the OpenAI function-calling schema (`parameters`, `tool_choice="required"`)
 and maps the response back to the same interface the agents expect.  The
 agents themselves are backend-agnostic.
 
+#### End-to-end test script
+
+`scripts/test_vllm.sh` runs all three input modes against a local vLLM server
+in one shot, covering every `main.py` flag:
+
+```bash
+bash scripts/test_vllm.sh
+```
+
+All settings can be overridden from the environment:
+
+```bash
+BASE_URL=http://localhost:8000/v1   # vLLM server endpoint
+MODEL=gpt-oss-120b                  # model name as served by vLLM
+VLLM_API_KEY=EMPTY                  # API key (EMPTY works for most local servers)
+BUDGET=15.0                         # per-task step budget
+OUTPUT_DIR=outputs/vllm_test        # where trajectory.json / response.json go
+TASKS_FILE=data/my_tasks.jsonl      # optional custom task file (auto-generated if unset)
+SINGLE_TASK_INDEX=0                 # which built-in task to use for the smoke test
+SHOW_STATS=1                        # print library stats after each run
+```
+
+Example with overrides:
+
+```bash
+BASE_URL=http://gpu-box:9000/v1 MODEL=llama-3-70b OUTPUT_DIR=results/ \
+  bash scripts/test_vllm.sh
+```
+
+The script runs three passes:
+
+| Pass | Flags exercised | Description |
+|------|-----------------|-------------|
+| 1 | `--task --base-url --model --budget --output-dir --stats` | Single built-in task (smoke test) |
+| 2 | `--base-url --model --budget --output-dir --stats` | All built-in tasks, shared library |
+| 3 | `--tasks-file --base-url --model --budget --output-dir --stats` | Batch from JSONL file |
+
+Pre-flight checks verify Python dependencies, confirm the vLLM `/health`
+endpoint is reachable, and validate the model name before any tasks run.
+
 ### Running tasks from a file
 
 Pass a JSON or JSONL file with `--tasks-file`.  All tasks in the file share
