@@ -11,10 +11,18 @@ Usage:
 
     # vLLM (OpenAI-compatible)
     client = LLMClient(backend="openai", base_url="http://localhost:8000/v1", api_key="EMPTY")
+
+Reasoning-model note
+--------------------
+Some models (e.g. gpt-oss-120b with reasoning_backend='GptOss') return their
+tool call as JSON embedded in the message text rather than in the tool_calls
+API field.  _create_openai() falls back to _extract_tool_calls_from_text()
+when tool_calls is empty, so these models work without any agent changes.
 """
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -125,11 +133,13 @@ class LLMClient:
             max_tokens=max_tokens,
             messages=oai_messages,
             tools=oai_tools,
-            tool_choice="required",   # equivalent to Anthropic's tool_choice={"type":"any"}
+            tool_choice="required",
         )
 
-        blocks: List[ToolUseBlock] = []
         msg = response.choices[0].message
+        blocks: List[ToolUseBlock] = []
+
+        # Primary path: structured tool_calls field
         for tc in (msg.tool_calls or []):
             try:
                 inp = json.loads(tc.function.arguments)
@@ -137,6 +147,28 @@ class LLMClient:
                 inp = {}
                 logger.warning("Could not parse tool arguments for %s", tc.function.name)
             blocks.append(ToolUseBlock(name=tc.function.name, input=inp))
+
+        # Fallback: reasoning models (e.g. gpt-oss-120b) sometimes embed the
+        # tool call as JSON in the message content instead of tool_calls.
+        if not blocks:
+            content = getattr(msg, "content", "") or ""
+            # Also check reasoning_content, which some vLLM reasoning models populate
+            reasoning = getattr(msg, "reasoning_content", "") or ""
+            text = content + "\n" + reasoning
+            if text.strip():
+                blocks = self._extract_tool_calls_from_text(text, oai_tools)
+                if blocks:
+                    logger.info(
+                        "Extracted %d tool call(s) from response text (reasoning model fallback)",
+                        len(blocks),
+                    )
+                else:
+                    logger.warning(
+                        "Response returned no tool calls and text extraction found nothing.\n"
+                        "finish_reason=%s  content=%s",
+                        response.choices[0].finish_reason,
+                        content[:300],
+                    )
 
         return UnifiedResponse(blocks)
 
@@ -154,8 +186,77 @@ class LLMClient:
                 "function": {
                     "name": t["name"],
                     "description": t.get("description", ""),
-                    # Anthropic uses "input_schema"; OpenAI uses "parameters"
                     "parameters": t.get("input_schema", {"type": "object", "properties": {}}),
                 },
             })
         return result
+
+    # ------------------------------------------------------------------
+    # Text-based tool call extraction (reasoning model fallback)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_tool_calls_from_text(
+        text: str, oai_tools: List[Dict]
+    ) -> List[ToolUseBlock]:
+        """
+        Parse tool call JSON from plain text for models that don't use the
+        tool_calls API field.
+
+        Handles these common patterns emitted by reasoning models:
+
+          1. ```json\n{"name": "fn", "arguments": {...}}\n```
+          2. {"name": "fn", "arguments": {...}}
+          3. {"name": "fn", "input": {...}}          (Anthropic-style)
+          4. {"name": "fn", "parameters": {...}}
+          5. A top-level object whose keys match a known tool's required fields
+             (the model skipped the wrapper and wrote the arguments directly)
+        """
+        valid_names = {t["function"]["name"]: t for t in oai_tools}
+        blocks: List[ToolUseBlock] = []
+
+        # Collect JSON candidates: prefer fenced blocks, then bare objects
+        candidates: List[str] = re.findall(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+        if not candidates:
+            # Extract top-level {...} objects (handles nested braces up to depth 5)
+            candidates = re.findall(r"\{(?:[^{}]|\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})*\}", text)
+
+        for raw in candidates:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            if not isinstance(data, dict):
+                continue
+
+            tool_name = data.get("name") or data.get("tool") or data.get("function")
+
+            if tool_name and tool_name in valid_names:
+                # Wrapper format: {"name": "...", "arguments"|"input"|"parameters": {...}}
+                inp = (
+                    data.get("arguments")
+                    or data.get("input")
+                    or data.get("parameters")
+                    or {}
+                )
+                if isinstance(inp, str):
+                    try:
+                        inp = json.loads(inp)
+                    except json.JSONDecodeError:
+                        inp = {}
+                blocks.append(ToolUseBlock(name=tool_name, input=inp))
+
+            else:
+                # Direct format: the object IS the arguments for a tool whose
+                # required fields are all present in data.
+                for name, tool_def in valid_names.items():
+                    required = tool_def["function"].get("parameters", {}).get("required", [])
+                    if required and all(k in data for k in required):
+                        blocks.append(ToolUseBlock(name=name, input=data))
+                        break
+
+        return blocks
