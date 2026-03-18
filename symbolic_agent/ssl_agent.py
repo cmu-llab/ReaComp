@@ -9,6 +9,7 @@ Receives a TaskSpec so it can:
 """
 
 import logging
+import re
 from typing import Dict, Optional
 
 from .costs import CostTracker
@@ -177,7 +178,27 @@ class SSLAgent:
                     logger.warning("SSL: reuse requested for unknown function '%s'", inp.get("function_name"))
 
             elif action in ("create", "compose"):
-                if not inp.get("name") or not inp.get("code"):
+                # Model sometimes uses 'function_name' (the reuse field) instead of 'name'
+                func_name = inp.get("name") or inp.get("function_name", "")
+
+                # Model sometimes squashes the code into another field (e.g. output_type).
+                # Scan all string values for one that looks like a Python function definition.
+                func_code = inp.get("code", "")
+                if not func_code:
+                    for v in inp.values():
+                        if isinstance(v, str) and re.search(r'\bdef\s+\w+\s*\(', v):
+                            func_code = v
+                            logger.info("SSL: extracted code from non-standard field")
+                            break
+
+                # Infer name from code if still missing
+                if not func_name and func_code:
+                    m = re.search(r'\bdef\s+(\w+)\s*\(', func_code)
+                    if m:
+                        func_name = m.group(1)
+                        logger.info("SSL: inferred name=%r from code", func_name)
+
+                if not func_name or not func_code:
                     logger.warning(
                         "SSL: %s action missing required fields (name/code), skipping. inp keys: %s",
                         action, list(inp.keys()),
@@ -185,9 +206,9 @@ class SSLAgent:
                     continue
                 # Fall back to task_spec for domain/types if the model didn't fill them
                 new_func = Function(
-                    name=inp["name"],
+                    name=func_name,
                     description=inp.get("description", ""),
-                    code=inp["code"],
+                    code=func_code,
                     domain=inp.get("domain") or (task_spec.domain if task_spec else "general"),
                     input_types=inp.get("input_types") or (task_spec.input_types if task_spec else []),
                     output_type=inp.get("output_type") or (task_spec.output_type if task_spec else ""),

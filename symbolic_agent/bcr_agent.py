@@ -8,6 +8,7 @@ to the LLM alongside the NL description.
 """
 
 import logging
+import re
 from typing import Dict, Optional
 
 from .costs import CostTracker
@@ -161,9 +162,18 @@ class BCRAgent:
             action = inp.get("action", "solve")
 
             if action == "solve":
-                if not inp.get("solution_code") or not inp.get("solution_function"):
+                solution_code = inp.get("solution_code", "")
+                # Model often omits solution_function — extract the first def name from code
+                solution_function = inp.get("solution_function", "")
+                if not solution_function and solution_code:
+                    m = re.search(r'\bdef\s+(\w+)\s*\(', solution_code)
+                    if m:
+                        solution_function = m.group(1)
+                        logger.info("BCR: inferred solution_function=%r from code", solution_function)
+
+                if not solution_code or not solution_function:
                     logger.warning(
-                        "BCR: solve action missing required fields (solution_code/solution_function), "
+                        "BCR: solve action missing solution_code/solution_function, "
                         "skipping. inp keys: %s", list(inp.keys()),
                     )
                     continue
@@ -175,8 +185,8 @@ class BCRAgent:
 
                 reasoning = inp.get("reasoning", "")
                 state["solution"] = {
-                    "code": inp["solution_code"],
-                    "function": inp["solution_function"],
+                    "code": solution_code,
+                    "function": solution_function,
                     "reasoning": reasoning,
                     "functions_used": inp.get("functions_used", []),
                 }
