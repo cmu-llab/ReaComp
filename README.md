@@ -63,7 +63,10 @@ symbolic-library-agent/
 │   └── tasks.py            # Built-in example tasks
 ├── scripts/
 │   ├── mock_tasks.jsonl    # Sample JSONL task file for testing
+│   ├── run_agent_vllm.sh   # run the agent for data generation with vLLM
 │   └── test_vllm.sh        # Quick vLLM smoke-test
+│
+│
 ├── docs/                   # Detailed documentation
 ├── main.py                 # CLI entry point
 ├── requirements.txt
