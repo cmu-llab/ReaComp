@@ -193,67 +193,6 @@ def serialize_gsm_symbolic_variables(rec: dict) -> dict:
 
     return rec
 
-def build_rg_split_with_difficulty(
-    N=20,
-    f=0.25,
-    seed=42,
-    difficulty=None,  # can be scalar or callable(task)->difficulty
-    shuffle=True,
-    skip_failures=True,
-):
-    rng = random.Random(seed)
-
-    train_data = []
-    test_data = []
-
-    test_size = max(1, int(f * N))
-    dataset_list = get_all_datasets()
-    pbar = tqdm(enumerate(dataset_list), total=len(dataset_list), desc="Building RG split")
-
-    for i, name in pbar:
-        train_seed = seed + i * 2
-        test_seed = seed + i * 2 + 1
-
-        kwargs = {}
-
-        # inject difficulty ONLY if supported
-        if has_curriculum(name) and difficulty is not None:
-            if callable(difficulty):
-                kwargs["difficulty"] = difficulty(name)
-            else:
-                kwargs["difficulty"] = difficulty
-
-        try:
-            train_ds = reasoning_gym.create_dataset(
-                name, size=N, seed=train_seed, **kwargs
-            )
-            test_ds = reasoning_gym.create_dataset(
-                name, size=test_size, seed=test_seed, **kwargs
-            )
-        except Exception as e:
-            if skip_failures:
-                print(f"[WARN] Skipping {name}: {e}")
-                continue
-            else:
-                raise
-
-        for x in train_ds:
-            x["task"] = name
-            x["has_curriculum"] = has_curriculum(name)
-
-        for x in test_ds:
-            x["task"] = name
-            x["has_curriculum"] = has_curriculum(name)
-
-        train_data.extend(train_ds)
-        test_data.extend(test_ds)
-
-    if shuffle:
-        rng.shuffle(train_data)
-        rng.shuffle(test_data)
-
-    return train_data, test_data
-
 def build_rg_split(
     N=20,
     f=0.25,
@@ -282,20 +221,23 @@ def build_rg_split(
     test_data = []
 
     test_size = max(1, int(f * N))
-    dataset_list = get_all_datasets()
-    pbar = tqdm(enumerate(dataset_list), total=len(dataset_list), desc="Building RG split")
+    pbar = tqdm(enumerate(datasets), total=len(datasets), desc="Building RG split")
 
     for i, name in pbar:
         train_seed = seed + i * 2
         test_seed = seed + i * 2 + 1
 
         try:
-            train_ds = list(reasoning_gym.create_dataset(
-                name, size=N, seed=train_seed
+            train_ds_and_eg = list(reasoning_gym.create_dataset(
+                name, size=N+1, seed=train_seed
             ))
-            test_ds = list(reasoning_gym.create_dataset(
-                name, size=test_size, seed=test_seed
-            ))
+            train_ds = train_ds_and_eg[:-1]  # all but last example for training
+            eg = train_ds_and_eg[-1]  # last example for prompt
+            if f > 0:
+                test_ds = list(reasoning_gym.create_dataset(
+                    name, size=test_size, seed=test_seed
+                ))
+            else: test_ds = []
         except Exception as e:
             if skip_failures:
                 print(f"[WARN] Skipping {name}: {e}")
@@ -306,9 +248,25 @@ def build_rg_split(
         # annotate task name
         for x in train_ds:
             x["task"] = name
+            x["prompt"] = f"""You will be shown an example reasoning problem below.
+Question: {eg['question']}
+Answer: {eg['answer']}
+
+Now solve a similar reasoning problem and report the final answer in a similar format as above. Just give the answer, without any explanation.
+
+Question: {x['question']}
+Answer:"""
             x = serialize_gsm_symbolic_variables(x) if name == "gsm_symbolic" else x
         for x in test_ds:
             x["task"] = name
+            x["prompt"] = f"""You will be shown an example reasoning problem below.
+Question: {eg['question']}
+Answer: {eg['answer']}
+
+Now solve a similar reasoning problem and report the final answer in a similar format as above. Just give the answer, without any explanation.
+
+Question: {x['question']}
+Answer:"""
             x = serialize_gsm_symbolic_variables(x) if name == "gsm_symbolic" else x
 
         train_data.extend(train_ds)
@@ -324,7 +282,8 @@ def build_rg_split(
 
     if shuffle:
         rng.shuffle(train_data)
-        rng.shuffle(test_data)
+        if len(test_data) > 0: 
+            rng.shuffle(test_data)
 
     return train_data, test_data
 
@@ -334,8 +293,25 @@ def write_jsonl(data, filename: str):
             json.dump(item, f)
             f.write("\n")
 
-# main
-if __name__ == "__main__":
+def create_pilot_run_data():
+    easy_pilot_tasks_path = "data/reasoning_gym/easy_pilot_tasks.jsonl"
+    med_pilot_tasks_path = "data/reasoning_gym/med_pilot_tasks.jsonl"
+    hard_pilot_tasks_path = "data/reasoning_gym/hard_pilot_tasks.jsonl"
+
+    easy_test, _ = build_rg_split(N=50, f=0, seed=42, datasets=["basic_arithmetic", "caesar_cipher"], shuffle=False) # easy tasks.
+    if not os.path.exists(easy_pilot_tasks_path):
+        write_jsonl(easy_test, easy_pilot_tasks_path)
+
+    med_test, _ = build_rg_split(N=50, f=0, seed=42, datasets=["palindrome_partitioning",
+  "calendar_arithmetic"], shuffle=False) # medium tasks.
+    if not os.path.exists(med_pilot_tasks_path):
+        write_jsonl(med_test, med_pilot_tasks_path)
+
+    hard_test, _ = build_rg_split(N=50, f=0, seed=42, datasets=["sokoban", "arc_agi"], shuffle=False) # hard tasks.
+    if not os.path.exists(hard_pilot_tasks_path):
+        write_jsonl(hard_test, hard_pilot_tasks_path)
+
+def create_final_data():
     train_path = "data/reasoning_gym/train.jsonl"
     test_path = "data/reasoning_gym/test.jsonl"
     train, test = build_rg_split(N=100, f=0.25, seed=42, shuffle=True)
@@ -346,3 +322,8 @@ if __name__ == "__main__":
         write_jsonl(train, train_path)
     if not os.path.exists(test_path):
         write_jsonl(test, test_path)
+
+# main
+if __name__ == "__main__":
+    create_pilot_run_data()
+    # create_final_data()
