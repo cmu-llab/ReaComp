@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -117,58 +118,87 @@ class LLMClient:
     # ------------------------------------------------------------------
 
     def _create_anthropic(self, model, max_tokens, system, messages, tag):
-        response = self._client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=messages,
-        )
-        # Extract text from the first text block
-        raw = next(
-            (b.text for b in response.content if getattr(b, "type", None) == "text"),
-            "",
-        )
-        result = self._parse_json(raw, tag)
-        self._write_debug_log(
-            tag=tag,
-            model=model,
-            request={"system": system, "messages": messages, "max_tokens": max_tokens},
-            response={
-                "stop_reason": response.stop_reason,
-                "content": raw,
-                "usage": {
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens,
-                },
-            },
-            parsed=result,
-        )
-        return result
+        last_exc = None
+        for attempt in range(3):
+            try:
+                response = self._client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    system=system,
+                    messages=messages,
+                )
+                raw = next(
+                    (b.text for b in response.content if getattr(b, "type", None) == "text"),
+                    "",
+                )
+                result = self._parse_json(raw, tag)
+                self._write_debug_log(
+                    tag=tag,
+                    model=model,
+                    request={"system": system, "messages": messages, "max_tokens": max_tokens},
+                    response={
+                        "stop_reason": response.stop_reason,
+                        "content": raw,
+                        "usage": {
+                            "input_tokens": response.usage.input_tokens,
+                            "output_tokens": response.usage.output_tokens,
+                        },
+                    },
+                    parsed=result,
+                )
+                return result
+            except Exception as exc:
+                last_exc = exc
+                if getattr(exc, "status_code", None) == 400:
+                    raise
+                if attempt < 2:
+                    wait = 5 * (2 ** attempt)
+                    logger.warning(
+                        "Anthropic call failed (attempt %d/3, tag=%s): %s. Retrying in %ds.",
+                        attempt + 1, tag, exc, wait,
+                    )
+                    time.sleep(wait)
+        raise last_exc
 
     def _create_openai(self, model, max_tokens, system, messages, tag):
         oai_messages = [{"role": "system", "content": system}] + messages
-        response = self._client.chat.completions.create(
-            model=model,
-            max_tokens=max_tokens,
-            messages=oai_messages,
-            response_format={"type": "json_object"},
-        )
-        msg = response.choices[0].message
-        content = msg.content or ""
-        reasoning = getattr(msg, "reasoning_content", "") or ""
-        result = self._parse_json(content, tag)
-        self._write_debug_log(
-            tag=tag,
-            model=model,
-            request={"system": system, "messages": messages, "max_tokens": max_tokens},
-            response={
-                "finish_reason": response.choices[0].finish_reason,
-                "content": content,
-                "reasoning_content": reasoning,
-            },
-            parsed=result,
-        )
-        return result
+        last_exc = None
+        for attempt in range(3):
+            try:
+                response = self._client.chat.completions.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    messages=oai_messages,
+                    response_format={"type": "json_object"},
+                )
+                msg = response.choices[0].message
+                content = msg.content or ""
+                reasoning = getattr(msg, "reasoning_content", "") or ""
+                result = self._parse_json(content, tag)
+                self._write_debug_log(
+                    tag=tag,
+                    model=model,
+                    request={"system": system, "messages": messages, "max_tokens": max_tokens},
+                    response={
+                        "finish_reason": response.choices[0].finish_reason,
+                        "content": content,
+                        "reasoning_content": reasoning,
+                    },
+                    parsed=result,
+                )
+                return result
+            except Exception as exc:
+                last_exc = exc
+                if getattr(exc, "status_code", None) == 400:
+                    raise
+                if attempt < 2:
+                    wait = 5 * (2 ** attempt)
+                    logger.warning(
+                        "OpenAI call failed (attempt %d/3, tag=%s): %s. Retrying in %ds.",
+                        attempt + 1, tag, exc, wait,
+                    )
+                    time.sleep(wait)
+        raise last_exc
 
     # ------------------------------------------------------------------
     # JSON parsing

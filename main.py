@@ -8,6 +8,7 @@ Usage:
     python main.py --stats                       # print library stats after a batch run
     python main.py --tasks-file tasks.jsonl      # run tasks from a JSON/JSONL file
     python main.py --output-file results.jsonl   # append each task result live to a JSONL file
+    python main.py --tasks-file tasks.jsonl --output-file results.jsonl  # auto-resumes if crashed
 """
 
 import argparse
@@ -22,6 +23,7 @@ from dotenv import load_dotenv
 
 from examples.tasks import TASKS
 from symbolic_agent import Controller
+from symbolic_agent.models import Function
 
 # --------------------------------------------------------------------------
 # Logging
@@ -156,6 +158,78 @@ def _append_task_output(result: dict, task_index: int, output_file: str) -> None
     logger.info("Appended task %d → %s", task_index, output_file)
 
 
+def _save_checkpoint(controller: Controller, last_completed_index: int, checkpoint_file: str) -> None:
+    """
+    Overwrite {checkpoint_file} with the current controller state so a crashed run
+    can be resumed.  Called after every successfully completed task.
+
+    Stores:
+      - last_completed_index : last task index that was written to the output file
+      - library              : all Function objects (serialised via to_dict())
+      - cost_tracker         : cumulative counters and log
+    """
+    ckpt = {
+        "last_completed_index": last_completed_index,
+        "library": [f.to_dict() for f in controller.library.functions],
+        "cost_tracker": {
+            "num_new_functions": controller.cost_tracker.num_new_functions,
+            "total_function_length": controller.cost_tracker.total_function_length,
+            "reuse_count": controller.cost_tracker.reuse_count,
+            "task_loss": controller.cost_tracker.task_loss,
+            "log": controller.cost_tracker.log,
+        },
+    }
+    try:
+        Path(checkpoint_file).write_text(
+            json.dumps(ckpt, indent=2, default=str), encoding="utf-8"
+        )
+    except Exception as exc:
+        logger.warning("Could not write checkpoint %s: %s", checkpoint_file, exc)
+
+
+def _load_checkpoint(controller: Controller, checkpoint_file: str) -> int:
+    """
+    Restore controller state from {checkpoint_file}.
+    Returns the next task index to run (last_completed_index + 1).
+    Returns 0 and leaves controller untouched on any error.
+    """
+    try:
+        ckpt = json.loads(Path(checkpoint_file).read_text(encoding="utf-8"))
+
+        # Restore library
+        controller.library.functions = []
+        for fd in ckpt.get("library", []):
+            controller.library.functions.append(Function(
+                name=fd["name"],
+                code=fd["code"],
+                description=fd.get("description", ""),
+                domain=fd.get("domain", "general"),
+                input_types=fd.get("input_types", []),
+                output_type=fd.get("output_type", ""),
+                usage_count=fd.get("usage_count", 0),
+                creation_cost=fd.get("creation_cost", 0.0),
+            ))
+
+        # Restore cost tracker
+        ct = ckpt.get("cost_tracker", {})
+        controller.cost_tracker.num_new_functions = ct.get("num_new_functions", 0)
+        controller.cost_tracker.total_function_length = ct.get("total_function_length", 0)
+        controller.cost_tracker.reuse_count = ct.get("reuse_count", 0)
+        controller.cost_tracker.task_loss = ct.get("task_loss", 0.0)
+        controller.cost_tracker.log = ct.get("log", [])
+
+        last_index = ckpt.get("last_completed_index", -1)
+        next_index = last_index + 1
+        logger.info(
+            "Checkpoint loaded: last_completed=%d, library=%d functions → resuming from task %d",
+            last_index, len(controller.library), next_index,
+        )
+        return next_index
+    except Exception as exc:
+        logger.warning("Could not load checkpoint %s: %s — starting from scratch.", checkpoint_file, exc)
+        return 0
+
+
 def _print_library_stats(controller: Controller) -> None:
     stats = controller.library_stats()
     print(f"\n{'='*60}")
@@ -236,7 +310,31 @@ def main() -> None:
     if args.tasks_file:
         tasks = _load_tasks_file(args.tasks_file)
         logger.info("Loaded %d tasks from %s", len(tasks), args.tasks_file)
+
+        # Checkpoint file lives alongside the output file: results.jsonl → results.ckpt.json
+        ckpt_file = (
+            str(Path(args.output_file).with_suffix(".ckpt.json"))
+            if args.output_file else None
+        )
+
+        # Auto-resume: if both output file and checkpoint exist, restore state and skip done tasks
+        start_index = 0
+        if (
+            ckpt_file
+            and Path(ckpt_file).exists()
+            and args.output_file
+            and Path(args.output_file).exists()
+        ):
+            start_index = _load_checkpoint(controller, ckpt_file)
+        elif ckpt_file and Path(ckpt_file).exists():
+            logger.warning(
+                "Checkpoint found but output file %s is missing — ignoring checkpoint and starting fresh.",
+                args.output_file,
+            )
+
         for i, task in enumerate(tasks):
+            if i < start_index:
+                continue
             task_input = task.get("input", task)
             task_type = task.get("type", "symbolic")
             logger.info("--- Task %d/%d ---", i + 1, len(tasks))
@@ -244,6 +342,8 @@ def main() -> None:
             _print_result(result, i)
             if args.output_file:
                 _append_task_output(result, i, args.output_file)
+            if ckpt_file:
+                _save_checkpoint(controller, i, ckpt_file)
             logger.info("Library size after task %d: %d functions", i + 1, len(controller.library))
         if args.stats:
             _print_library_stats(controller)
