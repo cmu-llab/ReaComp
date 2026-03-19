@@ -22,10 +22,18 @@ _LONG_OUTPUT_HINTS = {
 
 
 def _reporting_max_tokens(task_spec) -> int:
-    """Scale reporting budget up for tasks whose answers can be long sequences or grids."""
+    """Scale reporting budget up for tasks whose answers can be long sequences or grids.
+
+    task_spec may be a TaskSpec dataclass (from agents) or a plain dict (from state).
+    """
     if task_spec is None:
         return 1024
-    words = {w for hint in task_spec.operation_hints for w in hint.lower().split()}
+    hints = (
+        task_spec.get("operation_hints", [])
+        if isinstance(task_spec, dict)
+        else task_spec.operation_hints
+    )
+    words = {w for hint in hints for w in hint.lower().split()}
     return 2048 if words & _LONG_OUTPUT_HINTS else 1024
 
 _SYSTEM = """\
