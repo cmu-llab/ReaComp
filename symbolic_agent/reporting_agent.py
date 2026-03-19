@@ -15,6 +15,19 @@ from .library import FunctionLibrary
 
 logger = logging.getLogger(__name__)
 
+_LONG_OUTPUT_HINTS = {
+    "sequence", "steps", "moves", "path", "list", "enumerate",
+    "simulate", "grid", "matrix", "multiple",
+}
+
+
+def _reporting_max_tokens(task_spec) -> int:
+    """Scale reporting budget up for tasks whose answers can be long sequences or grids."""
+    if task_spec is None:
+        return 1024
+    words = {w for hint in task_spec.operation_hints for w in hint.lower().split()}
+    return 2048 if words & _LONG_OUTPUT_HINTS else 1024
+
 _SYSTEM = """\
 You are the Reporting agent in a symbolic reasoning system.
 Translate an existing solution into the output format requested by the original prompt.
@@ -78,9 +91,10 @@ class ReportingAgent:
             "Format the final answer according to the output format specified in the original prompt."
         )
 
+        task_spec = state.get("task_spec")
         result = self.client.create(
             model=self.model,
-            max_tokens=512,
+            max_tokens=_reporting_max_tokens(task_spec),
             system=_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
             tag="reporting",

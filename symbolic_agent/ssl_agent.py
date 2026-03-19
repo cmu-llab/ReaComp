@@ -18,6 +18,19 @@ from .task_parser import TaskSpec
 
 logger = logging.getLogger(__name__)
 
+_COMPLEX_HINTS = {
+    "bfs", "dfs", "backtrack", "backtracking", "recursion", "recursive",
+    "search", "enumerate", "simulate", "sequence", "steps", "moves", "path",
+}
+
+
+def _ssl_max_tokens(task_spec) -> int:
+    """Scale SSL output budget up for tasks that require complex function bodies."""
+    if task_spec is None:
+        return 2048
+    words = {w for hint in task_spec.operation_hints for w in hint.lower().split()}
+    return 4096 if words & _COMPLEX_HINTS else 2048
+
 _SYSTEM = """\
 You are the SSL (Symbolic Search and Library) agent in a symbolic reasoning system.
 Your ONLY job is to maintain a shared function library used across tasks.
@@ -61,10 +74,7 @@ class SSLAgent:
         task_type = state["task_type"]
 
         relevant = library.retrieve_relevant(str(task), task_spec=task_spec, top_k=5)
-        relevant_str = (
-            "\n".join(f"- {f.name} [{f.domain}]: {f.description}" for f in relevant)
-            if relevant else "None found."
-        )
+        relevant_names = [f.name for f in relevant]
 
         spec_block = ""
         if task_spec:
@@ -76,19 +86,26 @@ class SSLAgent:
                 f"Symbolic input example: {task_spec.symbolic_inputs}\n\n"
             )
 
+        # Relevant functions are shown with full code; the rest appear as compact one-liners.
+        relevant_note = (
+            f"Functions shown in full ({', '.join(relevant_names)}) are the closest matches "
+            "to this task — check these first before creating anything new."
+            if relevant_names else "Library is empty — create a new function."
+        )
+
         user_msg = (
             f"Task type: {task_type}\n"
             f"Task: {task}\n\n"
             f"{spec_block}"
-            f"{library.format_for_prompt()}\n\n"
-            f"Most relevant existing functions (domain + type matched):\n{relevant_str}\n\n"
+            f"{library.format_for_prompt(full_code_for=relevant_names)}\n\n"
+            f"{relevant_note}\n\n"
             "Decide: reuse an existing function, compose existing functions, "
             "or create a new one. Prefer reuse > compose > create."
         )
 
         result = self.client.create(
             model=self.model,
-            max_tokens=1024,
+            max_tokens=_ssl_max_tokens(task_spec),
             system=_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
             tag="ssl",

@@ -244,9 +244,19 @@ class FunctionLibrary:
         ]
         return "\n".join(lines)
 
-    def format_for_prompt(self) -> str:
+    def format_for_prompt(self, full_code_for: Optional[List[str]] = None) -> str:
+        """
+        Format library for inclusion in agent prompts.
+
+        full_code_for : names of functions to show with complete code.
+                        All other functions are rendered as compact one-line entries
+                        (name, domain, description, type signature) to keep prompts short
+                        as the library grows.
+                        Pass None to show full code for every function (default, backward compat).
+        """
         if not self.functions:
             return "# Library is empty"
+        full_set = set(full_code_for) if full_code_for is not None else None
         blocks = ["# Available Library Functions"]
         for f in self.functions:
             sig = ""
@@ -255,10 +265,15 @@ class FunctionLibrary:
             if f.output_type:
                 sig += f"  →  {f.output_type}"
             domain_tag = f"[{f.domain}]" if f.domain and f.domain != "general" else ""
-            blocks.append(f"\n## {f.name}  {domain_tag}")
-            if f.description or sig:
-                blocks.append(f"# {f.description}{sig}")
-            blocks.append(f"```python\n{f.code}\n```")
+            if full_set is None or f.name in full_set:
+                # Full code block — shown for relevant/active functions
+                blocks.append(f"\n## {f.name}  {domain_tag}")
+                if f.description or sig:
+                    blocks.append(f"# {f.description}{sig}")
+                blocks.append(f"```python\n{f.code}\n```")
+            else:
+                # Compact one-liner — name, domain, description, signature
+                blocks.append(f"- {f.name} {domain_tag}: {f.description}{sig}")
         return "\n".join(blocks)
 
     def __len__(self) -> int:

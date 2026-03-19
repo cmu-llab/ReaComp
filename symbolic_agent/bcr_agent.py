@@ -16,6 +16,19 @@ from .task_parser import TaskSpec
 
 logger = logging.getLogger(__name__)
 
+_COMPLEX_HINTS = {
+    "bfs", "dfs", "backtrack", "backtracking", "recursion", "recursive",
+    "search", "enumerate", "simulate", "sequence", "steps", "moves", "path",
+}
+
+
+def _bcr_max_tokens(task_spec) -> int:
+    """Scale BCR output budget up for tasks requiring complex solution code."""
+    if task_spec is None:
+        return 2048
+    words = {w for hint in task_spec.operation_hints for w in hint.lower().split()}
+    return 4096 if words & _COMPLEX_HINTS else 2048
+
 _SYSTEM = """\
 You are the BCR (Bottom-up Conceptual Reasoning) agent in a symbolic reasoning system.
 Your job is to solve symbolic reasoning tasks using the shared function library.
@@ -73,24 +86,23 @@ class BCRAgent:
             )
 
         relevant = library.retrieve_relevant(str(task), task_spec=task_spec, top_k=5)
-        relevant_str = (
-            "\n".join(f"- {f.name} [{f.domain}]: {f.description}" for f in relevant)
-            if relevant else "none"
-        )
+
+        # Show full code for functions SSL flagged as active + top retrieved matches.
+        # Everything else is a compact one-liner to keep the prompt short.
+        full_code_names = list({f.name for f in relevant} | set(active_funcs))
 
         user_msg = (
             f"Task type: {task_type}\n"
             f"Task: {task}\n\n"
             f"{spec_block}"
-            f"{library.format_for_prompt()}\n\n"
-            f"Domain/type-matched suggestions: {relevant_str}\n"
+            f"{library.format_for_prompt(full_code_for=full_code_names)}\n\n"
             f"Suggested active functions: {active_str}\n\n"
             "Solve the task directly using library functions, or decompose if necessary."
         )
 
         result = self.client.create(
             model=self.model,
-            max_tokens=2048,
+            max_tokens=_bcr_max_tokens(task_spec),
             system=_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
             tag="bcr",
