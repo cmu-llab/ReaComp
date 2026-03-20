@@ -148,6 +148,8 @@ export VLLM_API_KEY=your-key
 | `--base-url URL` | — | OpenAI-compatible endpoint (enables vLLM mode) |
 | `--budget FLOAT` | `15.0` | Step budget per task |
 | `--output-file FILE` | — | Append each task result live to a JSONL file (response + trajectory + agent messages) |
+| `--default-reward NAME` | — | Reward module to use for all tasks (e.g. `reasoning_gym`); overridden per-task by the `reward` field |
+| `--max-reward-iters N` | `3` | Max reward-feedback iterations when a reward is set |
 | `--debug-dir DIR` | — | Write per-call LLM debug logs (request, CoT, parsed result) |
 | `--stats` | — | Print library and cost stats after the run |
 
@@ -170,7 +172,43 @@ export VLLM_API_KEY=your-key
 ]
 ```
 
-Each record requires a `prompt` key. The optional `type` key is a metadata label; the internal domain is inferred from the prompt content by the TaskParser.
+Each record requires a `prompt` key. Optional keys:
+
+| Key | Description |
+|---|---|
+| `type` | Task category label (default: `"symbolic"`) |
+| `reward` | Reward module name (e.g. `"reasoning_gym"`). Enables the closed-loop reward feedback for this task. See [Reward Loop](#reward-loop). |
+| any other keys | Passed through to the reward function as part of `entry` |
+
+---
+
+## Reward Loop
+
+When a task record has a `reward` field (or `--default-reward` is set), the controller uses `solve_with_reward()` instead of `solve()`. It iterates up to `--max-reward-iters` times, feeding the reward signal back to BCR after each attempt:
+
+```
+solve attempt → execute → reward_fn(result, ok, entry) → reward < 1.0?
+    └─ BCR gets reward history + "fix mode" prompt → retry
+```
+
+Reward functions live in `rewards/{name}.py` and must implement:
+
+```python
+def reward(result: Any, execution_ok: bool, entry: dict) -> dict:
+    return {"value": float, "message": str}  # message is optional
+```
+
+`rewards/reasoning_gym.py` covers all 104 reasoning_gym task types via `get_score_answer_fn(source_dataset)`.
+
+To run reasoning_gym tasks with the reward loop:
+
+```bash
+# Add "reward": "reasoning_gym" to each record, or use --default-reward:
+python main.py --tasks-file data/reasoning_gym/easy_pilot_tasks.jsonl \
+               --default-reward reasoning_gym \
+               --max-reward-iters 3 \
+               --output-file outputs/reasoning_gym_easy.jsonl
+```
 
 ---
 
@@ -180,10 +218,11 @@ Each record requires a `prompt` key. The optional `type` key is a metadata label
 - **response** — answer, explanation, confidence, execution result
 - **trajectory** — task spec, agent trace, solution code, library snapshot, cost summary
 - **agent_messages** — every LLM call during the task (system prompt, user message, raw response, parsed result) — useful as agentic training data
+- **reward fields** — `reward_history`, `best_reward`, `final_reward` (populated when a reward is set)
 
 ```jsonl
 {"task_index": 0, "solved": true, "answer": "[2, 4, 6]", "trace": [...], "agent_messages": [...]}
-{"task_index": 1, "solved": true, "answer": "6", "trace": [...], "agent_messages": [...]}
+{"task_index": 1, "solved": true, "answer": "6", "best_reward": 1.0, "reward_history": [...], ...}
 ```
 
 `--debug-dir debug_logs/` writes one JSON file per LLM call, including the model's chain-of-thought (`reasoning_content`) and parsed result. Files are written immediately so they survive crashes:

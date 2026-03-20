@@ -137,6 +137,13 @@ Each line combines the trajectory, final response, and every LLM call made durin
   "execution_result": [2, 4, 6],
   "error": null,
 
+  "reward_history": [
+    {"iteration": 0, "reward": 0.12, "blame": "logic", "message": "Score=0.12 ...", "solution_summary": "..."},
+    {"iteration": 1, "reward": 1.0,  "blame": "logic", "message": "", "solution_summary": "..."}
+  ],
+  "best_reward": 1.0,
+  "final_reward": {"value": 1.0},
+
   "agent_messages": [
     {
       "tag": "task_parser",

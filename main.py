@@ -298,6 +298,13 @@ def main() -> None:
              "The agent retries until it achieves reward=1.0 or exhausts N iterations. (default: 3)",
     )
     parser.add_argument(
+        "--default-reward",
+        default=None,
+        metavar="NAME",
+        help="Reward module name to use for tasks that do not have a 'reward' field "
+             "(e.g. 'reasoning_gym'). Enables the reward loop for the whole run.",
+    )
+    parser.add_argument(
         "--debug-dir",
         default=None,
         metavar="DIR",
@@ -355,7 +362,7 @@ def main() -> None:
                 continue
             task_input = task.get("input", task)
             task_type = task.get("type", "symbolic")
-            reward_name = task.get("reward")
+            reward_name = task.get("reward") or args.default_reward
             logger.info("--- Task %d/%d ---", i + 1, len(tasks))
 
             if reward_name:

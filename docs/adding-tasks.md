@@ -55,7 +55,8 @@ Run with: `python main.py --tasks-file tasks.jsonl`
 |---|---|---|
 | `prompt` | yes | Natural-language task description passed to the agents |
 | `type` | no | Task category label (default: `"symbolic"`). Used for output metadata only |
-| any other keys | no | Passed through to agents as additional context |
+| `reward` | no | Reward module name (e.g. `"reasoning_gym"`). Enables the closed-loop reward loop for this task |
+| any other keys | no | Passed through as-is to the reward function via `entry` (e.g. `answer`, `metadata`) |
 
 ---
 
@@ -92,6 +93,33 @@ All tasks in a single run share one `FunctionLibrary`. Functions created for tas
 ```
 
 Task 3 should automatically reuse the functions created in tasks 1 and 2.
+
+---
+
+## Reward loop
+
+When a task record has a `reward` field, the controller uses `solve_with_reward()`. After each solve attempt it executes the solution, passes the raw result to the reward function, and if the score is below 1.0, feeds the history back to BCR and retries.
+
+Reward functions live in `rewards/{name}.py`:
+
+```python
+def reward(result: Any, execution_ok: bool, entry: dict) -> dict:
+    # result       : raw Python value from execute_with_library(), or None on error
+    # execution_ok : False if the solution code raised an exception
+    # entry        : full task record dict (prompt, answer, metadata, ...)
+    return {"value": 0.85, "message": "Score=0.85: wrong sign"}
+```
+
+`rewards/reasoning_gym.py` covers all 104 reasoning_gym task types automatically via `get_score_answer_fn(source_dataset)`.
+
+For datasets where the record already has a `reward` field, no extra flags are needed. For datasets where the field is absent, use `--default-reward <name>`:
+
+```bash
+python main.py --tasks-file data/reasoning_gym/easy_pilot_tasks.jsonl \
+               --default-reward reasoning_gym \
+               --max-reward-iters 3 \
+               --output-file outputs/rg_easy.jsonl
+```
 
 ---
 
