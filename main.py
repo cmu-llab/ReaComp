@@ -22,6 +22,7 @@ from typing import List, Dict
 from dotenv import load_dotenv
 
 from examples.tasks import TASKS
+from rewards import load_reward
 from symbolic_agent import Controller
 from symbolic_agent.models import Function
 
@@ -114,9 +115,14 @@ def _load_tasks_file(path: str) -> List[Dict]:
             print(f"ERROR: record {i} in {path} is missing required key 'prompt'", file=sys.stderr)
             sys.exit(1)
         # Build a task_input dict the agents can work with
-        task_input = {k: v for k, v in rec.items() if k != "type"}
+        task_input = {k: v for k, v in rec.items() if k not in ("type", "reward")}
         task_input.setdefault("description", rec["prompt"])
-        tasks.append({"input": task_input, "type": rec.get("type", "symbolic")})
+        tasks.append({
+            "input": task_input,
+            "type": rec.get("type", "symbolic"),
+            "reward": rec.get("reward"),   # name of rewards/{name}.py, or None
+            "entry": rec,                  # full original record for reward_fn
+        })
 
     return tasks
 
@@ -151,6 +157,10 @@ def _append_task_output(result: dict, task_index: int, output_file: str) -> None
         "error": final.get("error"),
         # all component-agent LLM calls (request + response) for training data
         "agent_messages": result.get("agent_messages", []),
+        # reward-loop fields (populated only when solve_with_reward is used)
+        "reward_history": result.get("reward_history", []),
+        "best_reward": result.get("best_reward"),
+        "final_reward": result.get("final_reward"),
     }
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as f:
@@ -280,6 +290,14 @@ def main() -> None:
              "and all component-agent LLM messages (request + response) for training data.",
     )
     parser.add_argument(
+        "--max-reward-iters",
+        type=int,
+        default=3,
+        metavar="N",
+        help="Maximum reward-feedback iterations per task when the task record has a 'reward' field. "
+             "The agent retries until it achieves reward=1.0 or exhausts N iterations. (default: 3)",
+    )
+    parser.add_argument(
         "--debug-dir",
         default=None,
         metavar="DIR",
@@ -337,8 +355,21 @@ def main() -> None:
                 continue
             task_input = task.get("input", task)
             task_type = task.get("type", "symbolic")
+            reward_name = task.get("reward")
             logger.info("--- Task %d/%d ---", i + 1, len(tasks))
-            result = controller.solve(task_input, task_type)
+
+            if reward_name:
+                reward_fn = load_reward(reward_name)
+                result = controller.solve_with_reward(
+                    task_input=task_input,
+                    task_type=task_type,
+                    budget=args.budget,
+                    reward_fn=reward_fn,
+                    entry=task.get("entry", {}),
+                    max_reward_iters=args.max_reward_iters,
+                )
+            else:
+                result = controller.solve(task_input, task_type, budget=args.budget)
             _print_result(result, i)
             if args.output_file:
                 _append_task_output(result, i, args.output_file)

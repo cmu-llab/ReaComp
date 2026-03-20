@@ -10,7 +10,7 @@ Responds with a plain JSON object — no tool calling.
 import logging
 from typing import Any, Dict
 
-from .executor import execute_with_library
+from .executor import execute_with_library, infer_call_args
 from .library import FunctionLibrary
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ class ReportingAgent:
         func_name = solution.get("function", "")
 
         if code and func_name:
-            call_args = self._infer_args(state.get("task_input"))
+            call_args = infer_call_args(state.get("task_input"))
             ok, result, err = execute_with_library(
                 solution_code=code,
                 function_name=func_name,
@@ -126,24 +126,3 @@ class ReportingAgent:
         }
         return state
 
-    def _infer_args(self, task) -> list:
-        """
-        Best-effort extraction of call arguments from the task description.
-        Returns [] when no concrete input data can be found — execution is
-        optional and the reporting agent handles None results gracefully.
-        """
-        if isinstance(task, dict):
-            # Built-in task format: {"description": "...", "examples": [...]}
-            if "examples" in task:
-                ex = task["examples"][0] if task["examples"] else {}
-                return [ex["input"]] if "input" in ex else []
-            # Some task formats carry a direct "input" value
-            if "input" in task:
-                inp = task["input"]
-                return [inp] if not isinstance(inp, list) else [inp]
-            # Prompt-only dict (e.g. JSONL tasks) — no concrete args available
-            return []
-        if isinstance(task, list):
-            return [task]
-        # Plain string prompt — no concrete args
-        return []

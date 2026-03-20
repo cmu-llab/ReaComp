@@ -40,6 +40,8 @@ Rules:
 4. Only decompose if the task is genuinely too complex for a direct solution.
 5. Keep solutions concise. Avoid reimplementing what is already in the library.
 6. All code must be pure Python (no external imports).
+7. Return the answer value directly (e.g. "42", not "The answer is 42").
+   Minimal, clean answer strings avoid partial-credit penalties from scoring functions.
 
 For action=solve, respond with:
 {
@@ -56,6 +58,17 @@ For action=decompose, respond with:
   "composition_plan": "<how to combine sub-task results into the final answer>"
 }
 """
+
+
+def _format_reward_history(history: list) -> str:
+    lines = ["Previous attempts (most recent last):"]
+    for h in history[-3:]:
+        lines.append(
+            f"  iter={h['iteration']}  reward={h.get('reward', 0.0):.3f}  blame={h.get('blame', '?')}\n"
+            f"  feedback: {h.get('message', '')}\n"
+            f"  approach: {h.get('solution_summary', '')}"
+        )
+    return "\n".join(lines)
 
 
 class BCRAgent:
@@ -99,6 +112,17 @@ class BCRAgent:
             f"Suggested active functions: {active_str}\n\n"
             "Solve the task directly using library functions, or decompose if necessary."
         )
+
+        reward_history = state.get("reward_history", [])
+        if reward_history:
+            history_block = _format_reward_history(reward_history)
+            user_msg += (
+                f"\n\n--- Fix mode (attempt {len(reward_history) + 1}) ---\n"
+                f"{history_block}\n\n"
+                "Previous solutions scored below 1.0. Try a DIFFERENT approach: "
+                "fix the logic error, use a different algorithm, or correct the output format. "
+                "Return the answer as a minimal clean value (e.g. '42', not 'The answer is 42')."
+            )
 
         result = self.client.create(
             model=self.model,

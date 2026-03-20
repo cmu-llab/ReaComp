@@ -51,4 +51,6 @@ def make_state(
         "steps": 0,
         "solved": False,
         "solution": None,
+        "reward_history": [],   # list of reward-loop attempt records
+        "best_reward": 0.0,     # highest reward value seen across iterations
     }

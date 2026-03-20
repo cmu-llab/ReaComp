@@ -53,6 +53,24 @@ def safe_exec(code: str, namespace: Optional[Dict] = None) -> Tuple[bool, Option
         return False, None, traceback.format_exc()
 
 
+def infer_call_args(task) -> list:
+    """
+    Best-effort extraction of call arguments from the task description.
+    Returns [] when no concrete input data can be found.
+    """
+    if isinstance(task, dict):
+        if "examples" in task:
+            ex = task["examples"][0] if task["examples"] else {}
+            return [ex["input"]] if "input" in ex else []
+        if "input" in task:
+            inp = task["input"]
+            return [inp] if not isinstance(inp, list) else [inp]
+        return []
+    if isinstance(task, list):
+        return [task]
+    return []
+
+
 def execute_with_library(
     solution_code: str,
     function_name: str,
