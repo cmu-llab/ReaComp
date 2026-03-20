@@ -1,9 +1,14 @@
 import os
+import sys
+import pathlib
 import reasoning_gym
 import random
 from tqdm import tqdm
 from fractions import Fraction
-from .utils import write_jsonl
+
+sys.path.append(pathlib.Path(str(os.path.abspath(__file__))).parent)
+
+from utils import write_jsonl
 
 DATASET_METADATA = {
     "ab": True,
@@ -248,6 +253,7 @@ def build_rg_split(
         # annotate task name
         for x in train_ds:
             x["task"] = name
+            x["reward"] = 'reasoning_gym'
             x["prompt"] = f"""You will be shown an example reasoning problem below.
 Question: {eg['question']}
 Answer: {eg['answer']}
@@ -259,6 +265,7 @@ Answer:"""
             x = serialize_gsm_symbolic_variables(x) if name == "gsm_symbolic" else x
         for x in test_ds:
             x["task"] = name
+            x["reward"] = 'reasoning_gym'
             x["prompt"] = f"""You will be shown an example reasoning problem below.
 Question: {eg['question']}
 Answer: {eg['answer']}
