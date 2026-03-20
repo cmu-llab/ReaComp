@@ -65,6 +65,13 @@ def infer_call_args(task) -> list:
         if "input" in task:
             inp = task["input"]
             return [inp] if not isinstance(inp, list) else [inp]
+        # For question-answer tasks (e.g. reasoning_gym) prefer the bare question
+        # string over the full few-shot prompt, so solutions don't accidentally
+        # parse an exemplar instead of the actual question.
+        if "question" in task:
+            return [task["question"]]
+        if "prompt" in task:
+            return [task["prompt"]]
         return []
     if isinstance(task, list):
         return [task]

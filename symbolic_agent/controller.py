@@ -302,6 +302,9 @@ class Controller:
         # task_loss = 1 - best reward achieved
         self.cost_tracker.task_loss += 1.0 - state.get("best_reward", 0.0)
 
+        # In reward-loop mode "solved" means reward=1.0, not just "BCR produced code"
+        state["solved"] = state.get("best_reward", 0.0) >= 1.0
+
         # Reporting runs once on the final solution
         if state.get("solved"):
             state = self.reporting_agent.run(state, self.library)
