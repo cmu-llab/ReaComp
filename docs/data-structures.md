@@ -66,14 +66,26 @@ State = {
 
 ---
 
-### `state["solution"]` (set by BCR on solve)
+### `state["solution"]` (set by BCR)
 
+For `action=direct` (question/prompt tasks):
 ```python
 {
+    "action":         "direct",
+    "answer":         str,        # the answer string derived by BCR
+    "reasoning":      str,        # BCR's explanation of how it applied the library function
+    "functions_used": list[str],  # library function names conceptually applied
+}
+```
+
+For `action=solve` (algorithmic tasks):
+```python
+{
+    "action":         "solve",    # field present but optional for backwards compat
     "code":           str,        # complete Python function definition
     "function":       str,        # entry-point function name (inferred from def)
     "reasoning":      str,        # BCR's explanation
-    "functions_used": list[str],  # library function names called
+    "functions_used": list[str],  # library function names called in code
 }
 ```
 

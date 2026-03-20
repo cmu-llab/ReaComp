@@ -42,13 +42,22 @@ Rules:
 6. All code must be pure Python (no external imports).
 7. Return the answer value directly (e.g. "42", not "The answer is 42").
    Minimal, clean answer strings avoid partial-credit penalties from scoring functions.
-8. Your solution function will be called with the task's input value as its single argument.
-   For example/input-based tasks this is the raw input (list, int, etc.).
-   For question/prompt-based tasks this is the question string — parse any embedded data
-   from it (e.g. extract the cipher text after "Decrypt this Caesar cipher text: ").
-   Never hardcode specific input values; write a general function.
+8. For question/prompt-based tasks where a library function directly applies: use
+   action=direct. Read the question, extract the concrete input value with your
+   understanding, and return the answer. E.g. for a Caesar cipher question you read
+   the cipher text from the question and apply caesar_decrypt mentally — no code needed.
+   Use action=solve only when a reusable algorithmic function is genuinely needed
+   (e.g. the task involves structured input like a list, grid, or graph).
 
-For action=solve, respond with:
+For action=direct (question/prompt tasks — answer derived by applying library function):
+{
+  "action": "direct",
+  "answer": "<the answer value as a clean minimal string>",
+  "reasoning": "<how you derived it, which library function you applied and to what input>",
+  "functions_used": ["<library function names conceptually applied>"]
+}
+
+For action=solve (algorithmic tasks — reusable function over structured input):
 {
   "action": "solve",
   "code": "<complete Python function definition that solves the task>",
@@ -56,7 +65,7 @@ For action=solve, respond with:
   "functions_used": ["<library function names called in code>"]
 }
 
-For action=decompose, respond with:
+For action=decompose (task too complex for a direct solution):
 {
   "action": "decompose",
   "subtasks": [{"description": "<sub-task>", "input": "<input description>"}],
@@ -139,7 +148,34 @@ class BCRAgent:
 
         action = result.get("action", "")
 
-        if action == "solve":
+        if action == "direct":
+            answer = result.get("answer")
+            if answer is None:
+                logger.warning("BCR: direct missing answer, skipping. keys: %s", list(result.keys()))
+                return state
+
+            for fname in result.get("functions_used", []):
+                func = library.get(fname)
+                if func:
+                    cost_tracker.record_reuse(func)
+
+            reasoning = result.get("reasoning", "")
+            state["solution"] = {
+                "action": "direct",
+                "answer": str(answer),
+                "reasoning": reasoning,
+                "functions_used": result.get("functions_used", []),
+            }
+            state["solved"] = True
+            state["trace"].append({
+                "step": state["steps"],
+                "agent": "BCR",
+                "action": "direct",
+                "reasoning": reasoning,
+            })
+            logger.info("BCR: direct answer=%s using %s", answer, result.get("functions_used", []))
+
+        elif action == "solve":
             # Accept both 'code' (current schema) and 'solution_code' (model habit)
             code = result.get("code") or result.get("solution_code", "")
             # Infer entry-point name from the def statement — never require model to repeat it

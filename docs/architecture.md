@@ -102,11 +102,13 @@ The library manager. On each invocation it looks at the current task and the exi
 Preference is always reuse > compose > create. New and composed functions are immediately added to the shared library and verified with `safe_exec`. The SSL output tells BCR which functions to use via `state["working_memory"]["active_functions"]`.
 
 ### BCR Agent (Bottom-up Conceptual Reasoning)
-The solver. It sees the current task, the full library, and the active functions suggested by SSL, and produces one of two outputs:
-- **solve** — writes a complete Python function that uses library functions to answer the task; sets `state["solved"] = True`
-- **decompose** — if the task is too complex, breaks it into ordered sub-tasks stored in `state["working_memory"]["subtasks"]`; SSL will then handle each sub-task in the next iteration
+The solver. It sees the current task, the full library, and the active functions suggested by SSL, and produces one of three outputs:
 
-BCR is instructed to always use at least one library function when the library is non-empty. The solution code is a plain `def` — the entry-point name is inferred from the first `def` line by regex, so the model does not need to provide it separately.
+- **direct** — for question/prompt-based tasks (e.g. reasoning_gym): BCR reads the question, extracts the concrete input value with its LLM understanding, applies the library function mentally, and returns the answer string directly. No Python code is written and nothing is added to the library. E.g. for a Caesar cipher question BCR identifies the cipher text and returns `caesar_decrypt` applied to it.
+- **solve** — for algorithmic tasks with structured input (lists, grids, graphs): BCR writes a reusable Python function. The entry-point name is inferred from the `def` line by regex.
+- **decompose** — if the task is too complex, breaks it into ordered sub-tasks stored in `state["working_memory"]["subtasks"]`; SSL will then handle each sub-task in the next iteration.
+
+The `direct` action keeps the library clean — instance-specific solve wrappers never accumulate. Library functions (e.g. `caesar_decrypt`) are still credited via `functions_used` for cost tracking.
 
 **Fix mode:** when `state["reward_history"]` is non-empty (reward loop), BCR receives the previous attempt scores, blame labels, and feedback messages in its user prompt. It is instructed to try a different approach and return a minimal clean answer string (e.g. `"42"` not `"The answer is 42"`) to avoid partial-credit penalties.
 

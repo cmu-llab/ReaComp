@@ -183,8 +183,11 @@ class Controller:
         """
         if not execution_ok:
             return "execution"
-        funcs_used = (state.get("solution") or {}).get("functions_used", [])
-        if funcs_used:
+        solution = state.get("solution") or {}
+        if solution.get("action") == "direct":
+            # BCR answered mentally — wrong answer is a reasoning error, not a library bug
+            return "partial" if reward_value > 0.0 else "logic"
+        if solution.get("functions_used"):
             return "library"
         if reward_value > 0.0:
             return "partial"
@@ -249,7 +252,10 @@ class Controller:
             execution_ok = False
             raw_result = None
             solution = state.get("solution")
-            if solution and solution.get("code") and solution.get("function"):
+            if solution and solution.get("action") == "direct":
+                execution_ok = True
+                raw_result = solution["answer"]
+            elif solution and solution.get("code") and solution.get("function"):
                 ok, result, err = execute_with_library(
                     solution_code=solution["code"],
                     function_name=solution["function"],

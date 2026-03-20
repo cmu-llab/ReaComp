@@ -74,6 +74,10 @@ class ReportingAgent:
             # Reuse result already computed by the reward loop — avoids re-executing
             execution_result = state.pop("_cached_exec")
             logger.info("Reporting: using cached execution result=%s", execution_result)
+        elif solution.get("action") == "direct":
+            # BCR answered directly — no code to execute
+            execution_result = solution.get("answer")
+            logger.info("Reporting: direct answer=%s", execution_result)
         elif code and func_name:
             call_args = infer_call_args(state.get("task_input"))
             ok, result, err = execute_with_library(

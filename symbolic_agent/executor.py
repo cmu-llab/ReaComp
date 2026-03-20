@@ -59,17 +59,15 @@ def infer_call_args(task) -> list:
     Returns [] when no concrete input data can be found.
     """
     if isinstance(task, dict):
+        # question first: most explicit NL input for Q&A tasks (e.g. reasoning_gym)
+        if "question" in task:
+            return [task["question"]]
         if "examples" in task:
             ex = task["examples"][0] if task["examples"] else {}
             return [ex["input"]] if "input" in ex else []
         if "input" in task:
             inp = task["input"]
             return [inp] if not isinstance(inp, list) else [inp]
-        # For question-answer tasks (e.g. reasoning_gym) prefer the bare question
-        # string over the full few-shot prompt, so solutions don't accidentally
-        # parse an exemplar instead of the actual question.
-        if "question" in task:
-            return [task["question"]]
         if "prompt" in task:
             return [task["prompt"]]
         return []

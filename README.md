@@ -262,6 +262,7 @@ Objective = TaskLoss + λ·TotalCost
 - **Reuse over invention** — SSL checks the library before creating anything new
 - **Domain-aware retrieval** — functions are scored by text similarity, domain affinity, type overlap, and usage count; a `list_manipulation` function transfers to `sequence` tasks but not to `math` or `chess`
 - **Cross-task library sharing** — batch mode accumulates a growing library; later tasks can reuse primitives built for earlier ones
+- **Direct answers for Q&A tasks** — BCR's `direct` action lets it apply a library function mentally and return the answer string without writing any code. Instance-specific solve wrappers never pollute the library; only reusable primitives are stored.
 - **Robust JSON parsing** — agents tolerate imperfect model output: markdown fences are stripped, common field-name aliases are accepted, function names are inferred from `def` lines
 - **Safe execution** — generated code runs in a sandboxed namespace; dangerous imports (`os`, `sys`, `subprocess`, etc.) are blocked at the AST level
 
