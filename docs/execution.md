@@ -55,6 +55,30 @@ ok, result, error = execute_with_library(
 
 ---
 
+## `infer_call_args(task)`
+
+A best-effort helper that extracts call arguments from a task description so the solution function can be executed automatically (used by the Reporting agent and `solve_with_reward`).
+
+```python
+args = infer_call_args(task_input)
+ok, result, err = execute_with_library(code, func_name, args, library_functions)
+```
+
+Extraction priority (first match wins):
+
+| Task shape | Extracted args |
+|---|---|
+| `{"examples": [{"input": x, ...}]}` | `[x]` (first example input) |
+| `{"input": x}` | `[x]` |
+| `{"question": "Calculate ..."}` | `["Calculate ..."]` — bare question string, skipping any few-shot exemplar in the full prompt |
+| `{"prompt": "..."}` | `["..."]` — full prompt string |
+| list | `[task]` |
+| anything else | `[]` (no args — execution is optional) |
+
+Returns `[]` when no concrete input can be found; `execute_with_library` and the Reporting agent both handle `None` execution results gracefully.
+
+---
+
 ## Where `safe_exec` is also used
 
 The **SSL agent** calls `safe_exec(new_func.code)` after creating or composing a function. A syntax or import error is logged as a warning but does **not** prevent the function from being added to the library. This keeps the loop running even when the LLM produces slightly imperfect code.

@@ -14,7 +14,8 @@ State = {
     "original_prompt": str,       # the raw NL prompt string (passed to Reporting agent)
     "budget":         float,      # remaining step budget (decrements each step)
     "steps":          int,        # current step index
-    "solved":         bool,       # True once BCR produces a valid solution
+    "solved":         bool,       # True once BCR produces a valid solution.
+                                  # In solve_with_reward(), overridden to mean best_reward >= 1.0
     "solution":       None,       # populated by BCR on solve (see below)
     "working_memory": None,       # populated by SSL and BCR (see below)
     "library":        list[str],  # snapshot of library function names at task start
@@ -39,12 +40,31 @@ State = {
         "error":            str,
     },
 
+    # --- reward loop fields (solve_with_reward only) ---
+    "reward_history":  list[dict],  # one entry per iteration (see below)
+    "best_reward":     float,       # highest reward value seen across iterations
+    "final_reward":    dict,        # {"value": float, "message": str} from last iteration
+
     # --- added by Controller after solve loop ---
     "cost_summary":      dict,   # from CostTracker.summary()
     "library_snapshot":  list,   # list of Function.to_dict() at end of task
     "agent_messages":    list,   # every LLM call during this task (see below)
 }
 ```
+
+### `state["reward_history"]` entries (solve_with_reward only)
+
+```python
+{
+    "iteration":        int,    # 0-indexed attempt number
+    "reward":           float,  # reward value for this attempt
+    "blame":            str,    # "execution" | "library" | "partial" | "logic"
+    "message":          str,    # reward function's feedback string
+    "solution_summary": str,    # first 200 chars of BCR's reasoning (for BCR fix-mode context)
+}
+```
+
+---
 
 ### `state["solution"]` (set by BCR on solve)
 
@@ -210,10 +230,12 @@ Objective = task_loss + λ·TotalCost
 
 ### Default weights
 
-| Symbol | Name | Value |
-|---|---|---|
-| α | per new function | 1.0 |
-| β | per line of code | 0.05 |
-| γ | redundancy penalty | 2.0 |
-| δ | reuse reward | 0.5 |
-| λ | regularisation | 0.3 |
+| Symbol | Name | Default | CLI flag |
+|---|---|---|---|
+| α | per new function | 1.0 | — |
+| β | per line of code | 0.05 | — |
+| γ | redundancy penalty | 2.0 | — |
+| δ | reuse reward | 0.5 | — |
+| λ | regularisation | 0.3 | `--lam` |
+
+`task_loss` is set by `solve_with_reward()` to `1 - best_reward` per task and accumulates across tasks. It remains 0 when using `solve()` without a reward function.
