@@ -1,9 +1,9 @@
 import os
-import json
 import reasoning_gym
 import random
 from tqdm import tqdm
 from fractions import Fraction
+from .utils import write_jsonl
 
 DATASET_METADATA = {
     "ab": True,
@@ -286,12 +286,6 @@ Answer:"""
             rng.shuffle(test_data)
 
     return train_data, test_data
-
-def write_jsonl(data, filename: str):
-    with open(filename, "w") as f:
-        for item in data:
-            json.dump(item, f)
-            f.write("\n")
 
 def create_pilot_run_data():
     easy_pilot_tasks_path = "data/reasoning_gym/easy_pilot_tasks.jsonl"
