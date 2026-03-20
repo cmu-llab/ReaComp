@@ -56,6 +56,7 @@ class Controller:
         model: str = "claude-sonnet-4-5",
         base_url: Optional[str] = None,
         debug_dir: Optional[str] = None,
+        lam: float = 0.3,
     ):
         """
         Parameters
@@ -78,7 +79,7 @@ class Controller:
 
         self.client = client
         self.library = FunctionLibrary()
-        self.cost_tracker = CostTracker()
+        self.cost_tracker = CostTracker(lam=lam)
         self.task_parser = TaskParser(client, model=model)
         self.ssl_agent = SSLAgent(client, model)
         self.bcr_agent = BCRAgent(client, model)

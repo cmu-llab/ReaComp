@@ -23,7 +23,8 @@ class CostTracker:
     Objective = TaskLoss + λ·TotalCost
     """
 
-    def __init__(self):
+    def __init__(self, lam: float = LAMBDA):
+        self.lam = lam
         self.num_new_functions: int = 0
         self.total_function_length: int = 0
         self.reuse_count: int = 0
@@ -75,7 +76,7 @@ class CostTracker:
         return max(0.0, cost)
 
     def objective(self, functions: List[Function]) -> float:
-        return self.task_loss + LAMBDA * self.total_cost(functions)
+        return self.task_loss + self.lam * self.total_cost(functions)
 
     # ------------------------------------------------------------------
     # Reporting

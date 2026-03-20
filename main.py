@@ -43,6 +43,14 @@ def _print_result(result: dict, task_index: int) -> None:
     print(f"{'='*60}")
     print(f"Solved : {result['solved']}")
 
+    # Reward loop summary (only present when solve_with_reward was used)
+    if result.get("reward_history"):
+        best = result.get("best_reward", 0.0)
+        iters = len(result["reward_history"])
+        print(f"Reward : best={best:.3f}  iters={iters}")
+        for h in result["reward_history"]:
+            print(f"  iter={h['iteration']}  r={h['reward']:.3f}  blame={h.get('blame','?')}  {h.get('message','')[:80]}")
+
     final = result.get("final_output", {})
     if "error" in final:
         print(f"Error  : {final['error']}")
@@ -267,6 +275,7 @@ def main() -> None:
     parser.add_argument("--stats", action="store_true", help="Print library stats after run")
     parser.add_argument("--model", default="claude-sonnet-4-5", help="Model name to use")
     parser.add_argument("--budget", type=float, default=15.0, help="Step budget per task")
+    parser.add_argument("--lam", type=float, default=0.3, help="λ: regularisation weight for library cost in Objective = TaskLoss + λ·TotalCost (default: 0.3)")
     parser.add_argument(
         "--base-url",
         default=None,
@@ -330,7 +339,7 @@ def main() -> None:
             print("ERROR: ANTHROPIC_API_KEY is not set.  Add it to .env or export it.", file=sys.stderr)
             sys.exit(1)
 
-    controller = Controller(api_key=api_key, model=args.model, base_url=args.base_url, debug_dir=args.debug_dir)
+    controller = Controller(api_key=api_key, model=args.model, base_url=args.base_url, debug_dir=args.debug_dir, lam=args.lam)
 
     if args.tasks_file:
         tasks = _load_tasks_file(args.tasks_file)

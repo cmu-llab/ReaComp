@@ -147,6 +147,7 @@ export VLLM_API_KEY=your-key
 | `--model NAME` | `claude-sonnet-4-5` | LLM model name |
 | `--base-url URL` | — | OpenAI-compatible endpoint (enables vLLM mode) |
 | `--budget FLOAT` | `15.0` | Step budget per task |
+| `--lam FLOAT` | `0.3` | λ regularisation weight: `Objective = TaskLoss + λ·TotalCost` |
 | `--output-file FILE` | — | Append each task result live to a JSONL file (response + trajectory + agent messages) |
 | `--default-reward NAME` | — | Reward module to use for all tasks (e.g. `reasoning_gym`); overridden per-task by the `reward` field |
 | `--max-reward-iters N` | `3` | Max reward-feedback iterations when a reward is set |
