@@ -16,5 +16,5 @@ python main.py \
   --budget         15.0 \
   --default-reward reasoning_gym \
   --max-reward-iters 3 \
-  --output-file    outputs/reasoning_gym_easy_pilot.jsonl \
+  --output-file    outputs/reasoning_gym_easy_pilot_with_rewards.jsonl \
   --stats
