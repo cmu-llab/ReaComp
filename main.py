@@ -122,8 +122,12 @@ def _load_tasks_file(path: str) -> List[Dict]:
         if "prompt" not in rec:
             print(f"ERROR: record {i} in {path} is missing required key 'prompt'", file=sys.stderr)
             sys.exit(1)
-        # Build a task_input dict the agents can work with
-        task_input = {k: v for k, v in rec.items() if k not in ("type", "reward")}
+        # Build a task_input dict the agents can work with.
+        # Use an inclusion list so only safe NL fields are visible to agents —
+        # oracle answer, metadata, and other dataset internals are never leaked.
+        # The full record is preserved in "entry" for the reward function and output.
+        _AGENT_KEYS = {"question", "prompt", "task", "description"}
+        task_input = {k: v for k, v in rec.items() if k in _AGENT_KEYS}
         task_input.setdefault("description", rec["prompt"])
         tasks.append({
             "input": task_input,
