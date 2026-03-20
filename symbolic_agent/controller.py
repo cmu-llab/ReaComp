@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Optional
 
 from .bcr_agent import BCRAgent
 from .costs import CostTracker
@@ -115,6 +115,38 @@ class Controller:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _init_task_state(self, task_input: Any, task_type: str, budget: float):
+        """Shared setup for solve() and solve_with_reward(). Returns (state, task_spec)."""
+        self.client.reset_task_log()
+        original_prompt = _extract_prompt(task_input)
+        state = make_state(
+            task_input=task_input,
+            task_type=task_type,
+            budget=budget,
+            original_prompt=original_prompt,
+        )
+        state["library"] = [f.name for f in self.library.functions]
+        logger.info("Prompt: %s", original_prompt[:120])
+
+        task_spec: Optional[TaskSpec] = self.task_parser.parse(original_prompt)
+        if task_spec:
+            logger.info("Task spec: %s", task_spec.summary())
+            state["task_spec"] = {
+                "domain": task_spec.domain,
+                "input_types": task_spec.input_types,
+                "output_type": task_spec.output_type,
+                "operation_hints": task_spec.operation_hints,
+                "symbolic_inputs": task_spec.symbolic_inputs,
+            }
+        return state, task_spec
+
+    def _finalize_state(self, state: Dict) -> Dict:
+        """Attach cost/library snapshot and agent message log to state."""
+        state["cost_summary"] = self.cost_tracker.summary(self.library.functions)
+        state["library_snapshot"] = [f.to_dict() for f in self.library.functions]
+        state["agent_messages"] = self.client.get_task_log()
+        return state
+
     def _run_solve_loop(self, state: Dict, task_spec: Optional[TaskSpec], budget: float) -> Dict:
         """Inner SSL/BCR loop shared by solve() and solve_with_reward()."""
         state["budget"] = budget
@@ -169,43 +201,16 @@ class Controller:
         budget: float = DEFAULT_BUDGET,
     ) -> Dict:
         """Run the main solve loop for a single task."""
-        self.client.reset_task_log()
-        original_prompt = _extract_prompt(task_input)
-        state = make_state(
-            task_input=task_input,
-            task_type=task_type,
-            budget=budget,
-            original_prompt=original_prompt,
-        )
-        state["library"] = [f.name for f in self.library.functions]
-
         logger.info("=== New task: %s ===", task_type)
-        logger.info("Prompt: %s", original_prompt[:120])
-
-        # Parse the task into a structured spec before entering the solve loop
-        task_spec: Optional[TaskSpec] = self.task_parser.parse(original_prompt)
-        if task_spec:
-            logger.info("Task spec: %s", task_spec.summary())
-            state["task_spec"] = {
-                "domain": task_spec.domain,
-                "input_types": task_spec.input_types,
-                "output_type": task_spec.output_type,
-                "operation_hints": task_spec.operation_hints,
-                "symbolic_inputs": task_spec.symbolic_inputs,
-            }
-
+        state, task_spec = self._init_task_state(task_input, task_type, budget)
         state = self._run_solve_loop(state, task_spec, budget)
 
-        # Reporting — receives original_prompt via state
         if state["solved"]:
             state = self.reporting_agent.run(state, self.library)
         else:
             state["final_output"] = {"error": "Could not solve the task within budget/steps."}
 
-        state["cost_summary"] = self.cost_tracker.summary(self.library.functions)
-        state["library_snapshot"] = [f.to_dict() for f in self.library.functions]
-        state["agent_messages"] = self.client.get_task_log()
-        return state
+        return self._finalize_state(state)
 
     def solve_with_reward(
         self,
@@ -224,36 +229,16 @@ class Controller:
         reward_fn  : callable matching rewards/{name}.reward(result, execution_ok, entry) -> dict
         entry      : full task record dict from the JSONL (passed as-is to reward_fn)
         """
-        self.client.reset_task_log()
-        original_prompt = _extract_prompt(task_input)
-        state = make_state(
-            task_input=task_input,
-            task_type=task_type,
-            budget=budget,
-            original_prompt=original_prompt,
-        )
-        state["library"] = [f.name for f in self.library.functions]
-
         logger.info("=== New task (reward loop): %s ===", task_type)
-        logger.info("Prompt: %s", original_prompt[:120])
-
-        task_spec: Optional[TaskSpec] = self.task_parser.parse(original_prompt)
-        if task_spec:
-            logger.info("Task spec: %s", task_spec.summary())
-            state["task_spec"] = {
-                "domain": task_spec.domain,
-                "input_types": task_spec.input_types,
-                "output_type": task_spec.output_type,
-                "operation_hints": task_spec.operation_hints,
-                "symbolic_inputs": task_spec.symbolic_inputs,
-            }
+        state, task_spec = self._init_task_state(task_input, task_type, budget)
 
         final_reward: Dict = {"value": 0.0}
+        best_raw_result = None
+        call_args = infer_call_args(task_input)
 
         for reward_iter in range(max_reward_iters):
             logger.info("Reward iteration %d/%d", reward_iter + 1, max_reward_iters)
 
-            # Reset per-iteration fields while keeping reward history
             state["solved"] = False
             state["solution"] = None
             state["trace"] = []
@@ -261,12 +246,10 @@ class Controller:
 
             state = self._run_solve_loop(state, task_spec, budget)
 
-            # Execute solution to get raw result for the reward function
             execution_ok = False
             raw_result = None
             solution = state.get("solution")
             if solution and solution.get("code") and solution.get("function"):
-                call_args = infer_call_args(task_input)
                 ok, result, err = execute_with_library(
                     solution_code=solution["code"],
                     function_name=solution["function"],
@@ -278,64 +261,40 @@ class Controller:
 
             reward_result = reward_fn(raw_result, execution_ok, entry)
             reward_value = float(reward_result.get("value", 0.0))
-            reward_msg = reward_result.get("message", "")
 
             if reward_value > state.get("best_reward", 0.0):
                 state["best_reward"] = reward_value
+                best_raw_result = raw_result
 
             state["reward_history"].append({
                 "iteration": reward_iter,
                 "reward": reward_value,
-                "message": reward_msg,
+                "message": reward_result.get("message", ""),
                 "blame": self._determine_blame(state, execution_ok, reward_value),
                 "solution_summary": (solution.get("reasoning", "")[:200] if solution else ""),
             })
             final_reward = reward_result
 
-            logger.info(
-                "Reward iteration %d: value=%.3f  %s", reward_iter + 1, reward_value, reward_msg
-            )
+            logger.info("Reward iteration %d: value=%.3f  %s", reward_iter + 1, reward_value, reward_result.get("message", ""))
 
             if reward_value >= 1.0:
                 logger.info("Perfect reward achieved, stopping.")
                 break
 
-        # task_loss = 1 - best reward achieved
         self.cost_tracker.task_loss += 1.0 - state.get("best_reward", 0.0)
-
-        # In reward-loop mode "solved" means reward=1.0, not just "BCR produced code"
         state["solved"] = state.get("best_reward", 0.0) >= 1.0
 
-        # Reporting runs once on the final solution
-        if state.get("solved"):
+        # Cache execution result so Reporting agent doesn't re-execute
+        if best_raw_result is not None:
+            state["_cached_exec"] = best_raw_result
+
+        if state["solved"]:
             state = self.reporting_agent.run(state, self.library)
         else:
             state["final_output"] = {"error": "Could not solve the task within budget/steps."}
 
-        state["cost_summary"] = self.cost_tracker.summary(self.library.functions)
-        state["library_snapshot"] = [f.to_dict() for f in self.library.functions]
-        state["agent_messages"] = self.client.get_task_log()
         state["final_reward"] = final_reward
-        return state
-
-    def solve_batch(self, tasks: List[Dict]) -> List[Dict]:
-        """
-        Solve multiple tasks in sequence, sharing the function library.
-        Each task dict should have keys: "input", "type" (optional).
-        """
-        results = []
-        for i, task in enumerate(tasks):
-            task_input = task.get("input", task)
-            task_type = task.get("type", "symbolic")
-            logger.info("--- Batch task %d/%d ---", i + 1, len(tasks))
-            result = self.solve(task_input, task_type)
-            results.append(result)
-            logger.info(
-                "Library size after task %d: %d functions",
-                i + 1,
-                len(self.library),
-            )
-        return results
+        return self._finalize_state(state)
 
     def library_stats(self) -> Dict:
         """Return current library and cost statistics."""

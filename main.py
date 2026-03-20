@@ -412,8 +412,8 @@ def main() -> None:
     else:
         # Batch run: all built-in tasks share the same library
         logger.info("Running %d built-in tasks in batch mode", len(TASKS))
-        results = controller.solve_batch(TASKS)
-        for i, result in enumerate(results):
+        for i, task in enumerate(TASKS):
+            result = controller.solve(task["input"], task_type=task["type"], budget=args.budget)
             _print_result(result, i)
             if args.output_file:
                 _append_task_output(result, i, args.output_file)

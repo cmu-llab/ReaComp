@@ -70,7 +70,11 @@ class ReportingAgent:
         code = solution.get("code", "")
         func_name = solution.get("function", "")
 
-        if code and func_name:
+        if "_cached_exec" in state:
+            # Reuse result already computed by the reward loop — avoids re-executing
+            execution_result = state.pop("_cached_exec")
+            logger.info("Reporting: using cached execution result=%s", execution_result)
+        elif code and func_name:
             call_args = infer_call_args(state.get("task_input"))
             ok, result, err = execute_with_library(
                 solution_code=code,

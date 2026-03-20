@@ -42,6 +42,11 @@ Rules:
 6. All code must be pure Python (no external imports).
 7. Return the answer value directly (e.g. "42", not "The answer is 42").
    Minimal, clean answer strings avoid partial-credit penalties from scoring functions.
+8. Your solution function will be called with the task's input value as its single argument.
+   For example/input-based tasks this is the raw input (list, int, etc.).
+   For question/prompt-based tasks this is the question string — parse any embedded data
+   from it (e.g. extract the cipher text after "Decrypt this Caesar cipher text: ").
+   Never hardcode specific input values; write a general function.
 
 For action=solve, respond with:
 {
