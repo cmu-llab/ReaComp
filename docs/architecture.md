@@ -36,6 +36,8 @@ Natural-language prompt
 
 ## Control Flow
 
+### `solve()` — standard mode
+
 ```python
 task_spec = TaskParser.parse(prompt)
 
@@ -53,6 +55,29 @@ if not state["solved"]:
 if state["solved"]:
     state = reporting_agent.run(state, library)
 ```
+
+### `solve_with_reward()` — closed-loop reward mode
+
+When a task record has a `reward` field (or `--default-reward` is set), the controller runs a reward-feedback loop. BCR is retried up to `--max-reward-iters` times with the reward signal injected into its prompt ("fix mode"):
+
+```python
+task_spec = TaskParser.parse(prompt)
+
+for reward_iter in range(max_reward_iters):
+    state = _run_solve_loop(state, task_spec, budget)   # SSL → BCR as above
+    result = execute_with_library(solution_code, args)
+    reward = reward_fn(result, execution_ok, entry)     # from rewards/{name}.py
+    state["reward_history"].append({iter, reward, blame, message, ...})
+    if reward["value"] >= 1.0:
+        break
+    # BCR sees reward_history on next iter → "fix mode" prompt
+
+state["solved"] = best_reward >= 1.0
+cost_tracker.task_loss += 1.0 - best_reward
+reporting_agent.run(state, library)   # runs once on final solution
+```
+
+**Blame assignment** (`_determine_blame`): the controller categorises each failed attempt as `"execution"` (code crashed), `"library"` (used library functions, may need fixing), `"partial"` (non-zero score), or `"logic"` (produced code but scored 0).
 
 ### SSL → BCR routing (`_should_call_ssl`)
 
@@ -82,6 +107,8 @@ The solver. It sees the current task, the full library, and the active functions
 - **decompose** — if the task is too complex, breaks it into ordered sub-tasks stored in `state["working_memory"]["subtasks"]`; SSL will then handle each sub-task in the next iteration
 
 BCR is instructed to always use at least one library function when the library is non-empty. The solution code is a plain `def` — the entry-point name is inferred from the first `def` line by regex, so the model does not need to provide it separately.
+
+**Fix mode:** when `state["reward_history"]` is non-empty (reward loop), BCR receives the previous attempt scores, blame labels, and feedback messages in its user prompt. It is instructed to try a different approach and return a minimal clean answer string (e.g. `"42"` not `"The answer is 42"`) to avoid partial-credit penalties.
 
 ### Reporting Agent
 Formats the final answer. It runs exactly once, after `state["solved"] == True`. Before calling the LLM, it actually *executes* the solution code (via `execute_with_library`) so the concrete result is available. The LLM then formats that result according to any output-format instructions in the original prompt (e.g. "return as a comma-separated string").
@@ -157,4 +184,4 @@ TotalCost = α·NumNewFunctions + β·TotalFunctionLength
 Objective = TaskLoss + λ·TotalCost
 ```
 
-Weights: α=1.0, β=0.05, γ=2.0, δ=0.5, λ=0.3. See [data-structures.md](data-structures.md#cost-tracker).
+Default weights: α=1.0, β=0.05, γ=2.0, δ=0.5, λ=0.3 (λ is configurable via `--lam`). `task_loss` is set by `solve_with_reward()` to `1 - best_reward` per task; it stays 0 when using `solve()`. See [data-structures.md](data-structures.md#cost-tracker).
