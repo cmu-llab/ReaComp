@@ -10,3 +10,4 @@
 | [execution.md](execution.md) | safe_exec, execute_with_library, forbidden imports |
 | [debugging.md](debugging.md) | --debug-dir logs, --output-dir files, common failure modes |
 | [adding-tasks.md](adding-tasks.md) | Task formats (JSON/JSONL), prompt guidelines, evaluation |
+| [output-format.md](output-format.md) | JSONL output schema, checkpoint format, execution_result shapes by task type, analysis snippets |
