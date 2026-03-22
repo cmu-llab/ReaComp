@@ -23,11 +23,18 @@ _COMPLEX_HINTS = {
 
 
 def _bcr_max_tokens(task_spec) -> int:
-    """Scale BCR output budget up for tasks requiring complex solution code."""
+    """Scale BCR output budget up for tasks requiring complex solution code.
+
+    Reasoning models (e.g. gpt-oss-120b) consume their chain-of-thought tokens
+    from the same max_tokens budget as the final output.  Long CoTs on cipher /
+    arithmetic tasks can easily exceed 4k tokens, leaving nothing for the JSON
+    response.  The higher baselines here give the model headroom to write its
+    response after reasoning.
+    """
     if task_spec is None:
-        return 2048
+        return 4096
     words = {w for hint in task_spec.operation_hints for w in hint.lower().split()}
-    return 4096 if words & _COMPLEX_HINTS else 2048
+    return 8192 if words & _COMPLEX_HINTS else 4096
 
 _SYSTEM = """\
 You are the BCR (Bottom-up Conceptual Reasoning) agent in a symbolic reasoning system.
@@ -75,12 +82,21 @@ For action=decompose (task too complex for a direct solution):
 
 
 def _format_reward_history(history: list) -> str:
+    """Format the last 2 reward iterations as a compact block.
+
+    Kept deliberately short: reward history is injected into every BCR retry
+    prompt and grows with each iteration.  Long feedback messages compound the
+    token budget problem on reasoning models where CoT tokens count against
+    max_tokens.
+    """
     lines = ["Previous attempts (most recent last):"]
-    for h in history[-3:]:
+    for h in history[-2:]:
+        msg = h.get("message", "")[:120]
+        approach = h.get("solution_summary", "")[:80]
         lines.append(
             f"  iter={h['iteration']}  reward={h.get('reward', 0.0):.3f}  blame={h.get('blame', '?')}\n"
-            f"  feedback: {h.get('message', '')}\n"
-            f"  approach: {h.get('solution_summary', '')}"
+            f"  feedback: {msg}\n"
+            f"  approach: {approach}"
         )
     return "\n".join(lines)
 
@@ -103,6 +119,15 @@ class BCRAgent:
         active_funcs = working_memory.get("active_functions", [])
         active_str = ", ".join(active_funcs) if active_funcs else "none suggested"
 
+        # reasoning_gym task_input carries both `question` and `prompt`, where
+        # `prompt` repeats the question plus a few-shot example (~600 extra tokens
+        # the model doesn't need for a direct-answer task).  Show only `question`
+        # when present; PBEBench tasks only have `prompt` so they fall through.
+        if isinstance(task, dict) and "question" in task:
+            task_display = task["question"]
+        else:
+            task_display = task
+
         spec_block = ""
         if task_spec:
             spec_block = (
@@ -120,7 +145,7 @@ class BCRAgent:
 
         user_msg = (
             f"Task type: {task_type}\n"
-            f"Task: {task}\n\n"
+            f"Task: {task_display}\n\n"
             f"{spec_block}"
             f"{library.format_for_prompt(full_code_for=full_code_names)}\n\n"
             f"Suggested active functions: {active_str}\n\n"

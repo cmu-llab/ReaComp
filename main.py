@@ -126,9 +126,8 @@ def _load_tasks_file(path: str) -> List[Dict]:
         # Use an inclusion list so only safe NL fields are visible to agents —
         # oracle answer, metadata, and other dataset internals are never leaked.
         # The full record is preserved in "entry" for the reward function and output.
-        _AGENT_KEYS = {"question", "prompt", "task", "description"}
+        _AGENT_KEYS = {"question", "prompt", "task"}
         task_input = {k: v for k, v in rec.items() if k in _AGENT_KEYS}
-        task_input.setdefault("description", rec["prompt"])
         tasks.append({
             "input": task_input,
             "type": rec.get("type", "symbolic"),
