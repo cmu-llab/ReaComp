@@ -10,11 +10,10 @@ export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 mkdir -p outputs
 
 python main.py \
-  --tasks-file     data/reasoning_gym/easy_pilot_tasks.jsonl \
+  --tasks-file     data/pbebench/lite_pilot_tasks.jsonl \
   --base-url       "http://localhost:8002/v1" \
   --model          "openai/gpt-oss-120b" \
   --budget         15.0 \
   --max-reward-iters 3 \
-  --default-reward "reasoning_gym" \
-  --output-file    outputs/reasoning_gym_easy_pilot_with_rewards.jsonl \
+  --output-file    outputs/pbebench_lite_pilot_tasks_with_rewards.jsonl \
   --stats
