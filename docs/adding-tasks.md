@@ -51,12 +51,16 @@ Run with: `python main.py --tasks-file tasks.jsonl`
 
 ### Record schema
 
-| Key | Required | Description |
-|---|---|---|
-| `prompt` | yes | Natural-language task description passed to the agents |
-| `type` | no | Task category label (default: `"symbolic"`). Used for output metadata only |
-| `reward` | no | Reward module name (e.g. `"reasoning_gym"`). Enables the closed-loop reward loop for this task |
-| any other keys | no | Passed through as-is to the reward function via `entry` (e.g. `answer`, `metadata`) |
+| Key | Visible to agents | Required | Description |
+|---|---|---|---|
+| `prompt` | yes | yes | Natural-language task description. Always shown to agents. |
+| `type` | no | no | Task category label (default: `"symbolic"`). Output metadata only. |
+| `question` | yes | no | Concise question string (reasoning_gym style). When present, BCR displays this instead of `prompt` to skip redundant few-shot context (~600 tokens saved per call). |
+| `task` | yes | no | Short task-type name (e.g. `"caesar_cipher"`). Passed to agents as context. |
+| `reward` | no | no | Reward module name (e.g. `"reasoning_gym"`, `"pbebench"`). Enables the closed-loop reward loop for this task. |
+| any other keys | **no** | no | Passed through to the reward function via `entry` but **never shown to agents**. Safe to include oracle fields like `answer`, `programs`, `metadata`. |
+
+Only `question`, `prompt`, and `task` are forwarded to agents (`_AGENT_KEYS` inclusion list in `main.py`). All other keys — including ground-truth answers — are stripped from `task_input` before any agent call.
 
 ---
 
@@ -154,4 +158,4 @@ with open("results.jsonl") as f:
             print(msg["tag"], msg["request"]["messages"], msg["response"]["content"])
 ```
 
-See [debugging.md](debugging.md#per-task-output-file---output-file) for the full record schema.
+See [output-format.md](output-format.md) for the full output record schema, checkpoint format, and analysis snippets.

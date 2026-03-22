@@ -175,11 +175,15 @@ export VLLM_API_KEY=your-key
 
 Each record requires a `prompt` key. Optional keys:
 
-| Key | Description |
-|---|---|
-| `type` | Task category label (default: `"symbolic"`) |
-| `reward` | Reward module name (e.g. `"reasoning_gym"`). Enables the closed-loop reward feedback for this task. See [Reward Loop](#reward-loop). |
-| any other keys | Passed through to the reward function as part of `entry` |
+| Key | Visible to agents | Description |
+|---|---|---|
+| `type` | no | Task category label (default: `"symbolic"`) |
+| `question` | yes | Concise question string (reasoning_gym style). BCR displays this instead of `prompt` to avoid redundant few-shot context in the agent prompt. |
+| `task` | yes | Short task-type label (e.g. `"caesar_cipher"`). Passed to agents as context. |
+| `reward` | no | Reward module name (e.g. `"reasoning_gym"`, `"pbebench"`). Enables the closed-loop reward feedback for this task. See [Reward Loop](#reward-loop). |
+| any other keys | no | Passed through to the reward function as part of `entry` but **never shown to agents** — safe to include oracle fields like `answer`, `programs`, `metadata`. |
+
+> **Oracle leakage prevention:** agents only ever see `question`, `prompt`, and `task` from the record. All other keys (including ground-truth answers) are stripped from `task_input` before any agent call and are only accessible to the reward function via the full `entry` dict.
 
 ---
 
@@ -280,3 +284,4 @@ Detailed documentation is in the [`docs/`](docs/) folder:
 - [Code execution (sandbox, safe_exec)](docs/execution.md)
 - [Debugging guide (debug logs, output files, failure modes)](docs/debugging.md)
 - [Adding tasks (formats, prompt guidelines, evaluation)](docs/adding-tasks.md)
+- [Output file format (JSONL schema, checkpoint, execution_result shapes)](docs/output-format.md)
