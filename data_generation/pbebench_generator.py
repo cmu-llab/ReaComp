@@ -10,10 +10,14 @@ from utils import write_jsonl
 def load_pbebench_lite(path: str="changelinglab/PBEBench-Lite", first_k: int=-1):
     """Load the PBEBench-Lite dataset from Hugging Face. If `first_k` is set to a positive integer, only the first `k` records will be returned."""
     ds = datasets.load_dataset(path)['test']
-    ds = [rec for rec in ds]
-    if first_k > 0: ds = ds[:first_k]
+    sel_data = []
+    for rec in ds:
+        rec['reward'] = "pbebench"
+        sel_data.append(rec)
 
-    return ds
+    if first_k > 0: sel_data = sel_data[:first_k]
+
+    return sel_data
 
 # main
 if __name__ == "__main__":
