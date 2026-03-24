@@ -242,6 +242,57 @@ debug_logs/run_20260318T060621/
 
 ---
 
+## Evaluating Results
+
+After a run, use the eval scripts to compute per-instance and summary metrics.
+
+### Quick start
+
+```bash
+# Evaluate one or more output files (summary + CSV + plots)
+bash scripts/run_eval.sh outputs/pbebench_lite_pilot_tasks_with_rewards.jsonl
+
+# Multiple files at once (adds a combined summary)
+bash scripts/run_eval.sh outputs/pbebench_lite*.jsonl outputs/reasoning_gym*.jsonl
+
+# Default: evaluates all *.jsonl files found in outputs/
+bash scripts/run_eval.sh
+```
+
+Outputs written to:
+- `outputs/eval.csv` — per-instance table (one row per task)
+- `outputs/eval_plots.png` — 2×3 summary figure
+
+### Metrics computed
+
+| Metric | Description |
+|---|---|
+| `best_reward` | Highest reward value achieved across all iterations (0–1) |
+| `task_loss` | `1 - best_reward` |
+| `solved` | Whether `solved=True` in the output record |
+| `num_iters` | Number of reward-loop iterations used |
+| `first_perfect_iter` | Iteration index where reward first hit 1.0 (null if never) |
+| `blame_sequence` | Chain of blame labels e.g. `execution→partial→partial` |
+| `total_cost` | Library cost for this task (α·new\_fns + β·length + γ·redundancy − δ·reuse) |
+| `objective` | `task_loss + λ·total_cost` |
+| `num_new_functions` | Functions added to the library during this task |
+| `reuse_count` | Times existing library functions were reused |
+
+### Advanced usage
+
+```bash
+# Print per-instance table to stdout
+python scripts/eval.py outputs/my_run.jsonl --per-instance
+
+# Save CSV to a custom path
+python scripts/eval.py outputs/my_run.jsonl --csv results/my_run_eval.csv
+
+# Custom plot output and resolution
+python scripts/plot_eval.py outputs/my_run.jsonl --out results/plots.png --dpi 200
+```
+
+---
+
 ## Cost Function
 
 ```
