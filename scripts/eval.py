@@ -167,6 +167,64 @@ def summarise(df: pd.DataFrame, label: str = "") -> None:
     print()
 
 
+# ── ckpt cost breakdown ────────────────────────────────────────────────────────
+
+def load_ckpt(jsonl_path: str) -> dict | None:
+    """Try to load a .ckpt.json file alongside the JSONL, return None if absent."""
+    ckpt_path = Path(jsonl_path).with_suffix("").with_suffix(".ckpt.json")
+    if not ckpt_path.exists():
+        return None
+    with open(ckpt_path) as f:
+        return json.load(f)
+
+
+def _parse_ckpt_log(log: list[str]) -> dict:
+    """Parse cost_tracker log lines into per-function stats."""
+    fns: dict[str, dict] = {}
+    for line in log:
+        parts = line.split()
+        if parts[0] == "[CREATE]":
+            name = parts[1]
+            lines_val = int(next(p.split("=")[1] for p in parts if p.startswith("lines=")))
+            cost_val = float(next(p.split("=")[1] for p in parts if p.startswith("cost=")))
+            fns[name] = {"lines": lines_val, "creation_cost": cost_val, "reuse_count": 0}
+        elif parts[0] == "[REUSE]":
+            name = parts[1]
+            if name in fns:
+                fns[name]["reuse_count"] = int(next(p.split("=")[1] for p in parts if p.startswith("total_uses=")))
+    return fns
+
+
+def summarise_ckpt(ckpt: dict, label: str = "") -> None:
+    ct = ckpt.get("cost_tracker", {})
+    log = ct.get("log", [])
+    fn_stats = _parse_ckpt_log(log)
+
+    creates = [l for l in log if l.startswith("[CREATE]")]
+    reuses  = [l for l in log if l.startswith("[REUSE]")]
+    total_events = len(creates) + len(reuses)
+    reuse_rate = len(reuses) / total_events if total_events else 0.0
+
+    hdr = f"  {label}" if label else ""
+    print(f"\n{'='*62}")
+    print(f"  Library Cost Breakdown{hdr}")
+    print(f"{'='*62}")
+    print(f"\n  CREATE events : {len(creates):4d}")
+    print(f"  REUSE  events : {len(reuses):4d}  ({reuse_rate:.1%} of all events)")
+    print(f"  Library size  : {len(fn_stats):4d} functions")
+
+    if fn_stats:
+        print(f"\n  {'function':<40}  {'lines':>5}  {'create_cost':>11}  {'reuses':>6}")
+        print(f"  {'-'*40}  {'-'*5}  {'-'*11}  {'-'*6}")
+        for name, s in sorted(fn_stats.items(), key=lambda x: -x[1]["reuse_count"]):
+            print(f"  {name:<40}  {s['lines']:>5}  {s['creation_cost']:>11.3f}  {s['reuse_count']:>6}")
+
+    total_create_cost = sum(s["creation_cost"] for s in fn_stats.values())
+    print(f"\n  Total creation cost (α + β·lines) : {total_create_cost:.3f}")
+    print(f"  task_loss (sum 1−reward)           : {ct.get('task_loss', float('nan')):.4f}")
+    print()
+
+
 # ── per-instance table ─────────────────────────────────────────────────────────
 
 def print_per_instance(df: pd.DataFrame) -> None:
@@ -195,6 +253,9 @@ def main():
         df = load_file(path)
         print(f"\nLoaded {len(df)} records from {path}")
         summarise(df, label=f"— {Path(path).stem}")
+        ckpt = load_ckpt(path)
+        if ckpt:
+            summarise_ckpt(ckpt, label=f"— {Path(path).stem}")
         dfs.append(df)
 
     if len(dfs) > 1 and args.combined:

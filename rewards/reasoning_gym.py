@@ -72,10 +72,24 @@ def reward(result: Any, execution_ok: bool, entry: Dict) -> Dict:
     if score >= 1.0:
         return {"value": score}
 
+    # Build a targeted fix hint without leaking the oracle.
+    hint = ""
+    oracle = str(entry.get("answer", "")).strip()
+    if oracle and 0.0 < score < 1.0:
+        if oracle in model_response:
+            # Base-class scorer: oracle is a substring, so response is too long.
+            hint = (
+                " Your response contains the correct answer but has extra characters"
+                " (e.g. trailing punctuation). Return exactly the required text—nothing more."
+            )
+        elif model_response in oracle:
+            hint = " Your response is a prefix of the correct answer. Return the full text."
+
     return {
         "value": score,
         "message": (
             f"Score={score:.3f} for {source_dataset}. "
             f"Response: '{model_response[:120]}'"
+            f"{hint}"
         ),
     }

@@ -265,6 +265,82 @@ def plot_cost(ax, dfs: list[pd.DataFrame], labels: list[str]):
     _ax_style(ax, "Cost Distribution", ylabel="Value")
 
 
+# ── ckpt helpers ──────────────────────────────────────────────────────────────
+
+def load_ckpt(jsonl_path: str) -> dict | None:
+    ckpt_path = Path(jsonl_path).with_suffix("").with_suffix(".ckpt.json")
+    if not ckpt_path.exists():
+        return None
+    with open(ckpt_path) as f:
+        return json.load(f)
+
+
+def _parse_ckpt_log(log: list) -> dict:
+    fns: dict = {}
+    for line in log:
+        parts = line.split()
+        if parts[0] == "[CREATE]":
+            name = parts[1]
+            lines_val = int(next(p.split("=")[1] for p in parts if p.startswith("lines=")))
+            cost_val  = float(next(p.split("=")[1] for p in parts if p.startswith("cost=")))
+            fns[name] = {"lines": lines_val, "creation_cost": cost_val, "reuse_count": 0,
+                         "create_idx": len(fns)}
+        elif parts[0] == "[REUSE]" and parts[1] in fns:
+            fns[parts[1]]["reuse_count"] = int(next(
+                p.split("=")[1] for p in parts if p.startswith("total_uses=")))
+    return fns
+
+
+def plot_library_reuse_rate(ax, ckpts: list, labels: list[str]):
+    """Create vs Reuse event counts per run."""
+    creates = [sum(1 for l in (c.get("cost_tracker", {}).get("log", []) if c else [])
+                   if l.startswith("[CREATE]"))
+               for c in ckpts]
+    reuses  = [sum(1 for l in (c.get("cost_tracker", {}).get("log", []) if c else []))
+               - cr
+               for c, cr in zip(ckpts, creates)]
+
+    x = np.arange(len(labels))
+    width = 0.35
+    b1 = ax.bar(x - width / 2, creates, width, label="CREATE", color=PALETTE[3], alpha=0.85)
+    b2 = ax.bar(x + width / 2, reuses,  width, label="REUSE",  color=PALETTE[2], alpha=0.85)
+
+    for bar, v in list(zip(b1, creates)) + list(zip(b2, reuses)):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
+                str(v), ha="center", va="bottom", fontsize=7)
+
+    total = [cr + re for cr, re in zip(creates, reuses)]
+    rates = [re / t if t else 0 for re, t in zip(reuses, total)]
+    for i, r in enumerate(rates):
+        ax.text(i, max(creates[i], reuses[i]) + max(total) * 0.05,
+                f"reuse\n{r:.0%}", ha="center", fontsize=7, color="dimgrey")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=15, ha="right", fontsize=8)
+    ax.legend(fontsize=7, framealpha=0.7)
+    _ax_style(ax, "Library CREATE vs REUSE Events", ylabel="Event count")
+
+
+def plot_library_growth(ax, ckpts: list, labels: list[str]):
+    """Library function count as CREATE events accumulate, one line per run."""
+    for ckpt, label, color in zip(ckpts, labels, PALETTE):
+        if ckpt is None:
+            continue
+        log = ckpt.get("cost_tracker", {}).get("log", [])
+        xs, ys, count = [], [], 0
+        for i, line in enumerate(log):
+            if line.startswith("[CREATE]"):
+                count += 1
+            xs.append(i)
+            ys.append(count)
+        ax.plot(xs, ys, label=label, color=color, linewidth=1.5)
+        ax.text(xs[-1] + 1, ys[-1], f"{ys[-1]}", fontsize=7, color=color, va="center")
+
+    ax.legend(fontsize=7, framealpha=0.7)
+    _ax_style(ax, "Library Growth Over Events",
+              xlabel="Cumulative log events", ylabel="# functions")
+
+
 # ── individual plot saving ─────────────────────────────────────────────────────
 
 PANELS = [
@@ -276,8 +352,15 @@ PANELS = [
     ("cost",                   plot_cost,                   (6, 4)),
 ]
 
+# Panels that require ckpt data — fn signature: (ax, ckpts, labels)
+CKPT_PANELS = [
+    ("library_reuse_rate", plot_library_reuse_rate, (6, 4)),
+    ("library_growth",     plot_library_growth,     (7, 4)),
+]
 
-def save_individual_plots(dfs, labels, out_dir: str, dpi: int = 150):
+
+def save_individual_plots(dfs, labels, out_dir: str, dpi: int = 150,
+                          ckpts: list | None = None):
     """Save each panel as a separate PNG in out_dir."""
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -289,6 +372,15 @@ def save_individual_plots(dfs, labels, out_dir: str, dpi: int = 150):
         fig.savefig(dest, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
         print(f"  Saved {dest}")
+    if ckpts and any(c is not None for c in ckpts):
+        for name, fn, figsize in CKPT_PANELS:
+            fig, ax = plt.subplots(figsize=figsize)
+            fn(ax, ckpts, labels)
+            plt.tight_layout()
+            dest = out_path / f"{name}.png"
+            fig.savefig(dest, dpi=dpi, bbox_inches="tight")
+            plt.close(fig)
+            print(f"  Saved {dest}")
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
@@ -306,7 +398,8 @@ def main():
     if args.out is None and args.out_dir is None:
         parser.error("Provide --out FILE and/or --out-dir DIR")
 
-    dfs = [load_file(p) for p in args.files]
+    dfs   = [load_file(p) for p in args.files]
+    ckpts = [load_ckpt(p) for p in args.files]
     labels = [Path(p).stem for p in args.files]
     # Shorten long stem names for readability
     short = []
@@ -318,7 +411,7 @@ def main():
 
     if args.out_dir:
         print(f"Saving individual panels to {args.out_dir}/")
-        save_individual_plots(dfs, labels, args.out_dir, dpi=args.dpi)
+        save_individual_plots(dfs, labels, args.out_dir, dpi=args.dpi, ckpts=ckpts)
 
     if args.out:
         fig, axes = plt.subplots(2, 3, figsize=(15, 9))
