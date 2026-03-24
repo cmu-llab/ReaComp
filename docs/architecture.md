@@ -21,7 +21,7 @@ Natural-language prompt
   │   ┌───────────┐   library ops    ┌───────────────┐   │
   │   │ SSL Agent │◄────────────────►│FunctionLibrary│   │
   │   └─────┬─────┘                  └───────────────┘   │
-  │         │ working_memory                ▲             │
+  │         │ working_memory               ▲             │
   │         ▼                              │             │
   │   ┌───────────┐    solution / decompose│             │
   │   │ BCR Agent │────────────────────────┘             │
@@ -69,44 +69,44 @@ Natural-language prompt
   └──────┬──────┘
          │ TaskSpec
          ▼
-  ┌──────────────────────────────────────────────────────────────────┐
-  │              Reward Loop  (≤ max_reward_iters)                   │
-  │                                                                  │
-  │   ┌──────────────────────────────────────────────────────────┐   │
-  │   │           Inner Solve Loop  (≤ MAX_STEPS)                │   │
-  │   │                                                          │   │
+  ┌─────────────────────────────────────────────────────────────────┐
+  │              Reward Loop  (≤ max_reward_iters)                  │
+  │                                                                 │
+  │   ┌─────────────────────────────────────────────────────────┐   │
+  │   │           Inner Solve Loop  (≤ MAX_STEPS)               │   │
+  │   │                                                         │   │
   │   │   ┌───────────┐  library ops   ┌───────────────────┐    │   │
   │   │   │ SSL Agent │◄──────────────►│  Function Library │    │   │
   │   │   └─────┬─────┘                └───────────────────┘    │   │
-  │   │         │ active_functions              ▲                │   │
+  │   │         │ active_functions             ▲                │   │
   │   │         ▼                              │                │   │
   │   │   ┌───────────┐   solve / decompose    │                │   │
   │   │   │ BCR Agent │───────────────────────►┘                │   │
   │   │   └───────────┘                                         │   │
-  │   └──────────────────────────┬───────────────────────────────┘   │
-  │                              │ state["solution"]                 │
-  │                              ▼                                   │
-  │                   ┌──────────────────────┐                       │
-  │                   │  execute_with_library │                       │
-  │                   └──────────┬───────────┘                       │
-  │                              │ (result, execution_ok)            │
-  │                              ▼                                   │
-  │                   ┌──────────────────────┐                       │
-  │                   │   reward_fn(result,  │  rewards/{name}.py    │
-  │                   │   execution_ok,entry)│                       │
-  │                   └──────────┬───────────┘                       │
-  │                              │ {"value": float, "message": str}  │
-  │                              ▼                                   │
-  │              ┌───────────────────────────────┐                   │
-  │              │  reward >= 1.0?               │                   │
-  │              │  yes ──► break                │                   │
-  │              │  no  ──► append reward_history│                   │
-  │              │           (blame, message)    │                   │
-  │              │           BCR sees history    │                   │
-  │              │           on next iter        │                   │
-  │              │           ("fix mode")        │                   │
-  │              └───────────────────────────────┘                   │
-  └──────────────────────────────────────────────────────────────────┘
+  │   └──────────────────────────┬──────────────────────────────┘   │
+  │                              │ state["solution"]                │
+  │                              ▼                                  │
+  │                   ┌──────────────────────┐                      │
+  │                   │  execute_with_library│                      │
+  │                   └──────────┬───────────┘                      │
+  │                              │ (result, execution_ok)           │
+  │                              ▼                                  │
+  │                   ┌──────────────────────┐                      │
+  │                   │   reward_fn(result,  │  rewards/{name}.py   │
+  │                   │   execution_ok,entry)│                      │
+  │                   └──────────┬───────────┘                      │
+  │                              │ {"value": float, "message": str} │
+  │                              ▼                                  │
+  │              ┌───────────────────────────────┐                  │
+  │              │  reward >= 1.0?               │                  │
+  │              │  yes ──► break                │                  │
+  │              │  no  ──► append reward_history│                  │
+  │              │           (blame, message)    │                  │
+  │              │           BCR sees history    │                  │
+  │              │           on next iter        │                  │
+  │              │           ("fix mode")        │                  │
+  │              └───────────────────────────────┘                  │
+  └─────────────────────────────────────────────────────────────────┘
          │ best solution (state["_cached_exec"])
          │ state["solved"] = best_reward >= 1.0
          │ cost_tracker.task_loss += 1.0 − best_reward
