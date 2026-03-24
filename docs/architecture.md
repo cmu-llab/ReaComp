@@ -60,6 +60,71 @@ if state["solved"]:
 
 When a task record has a `reward` field (or `--default-reward` is set), the controller runs a reward-feedback loop. BCR is retried up to `--max-reward-iters` times with the reward signal injected into its prompt ("fix mode"):
 
+```
+Natural-language prompt
+        │
+        ▼
+  ┌─────────────┐
+  │ TaskParser  │  NL → TaskSpec (runs once)
+  └──────┬──────┘
+         │ TaskSpec
+         ▼
+  ┌──────────────────────────────────────────────────────────────────┐
+  │              Reward Loop  (≤ max_reward_iters)                   │
+  │                                                                  │
+  │   ┌──────────────────────────────────────────────────────────┐   │
+  │   │           Inner Solve Loop  (≤ MAX_STEPS)                │   │
+  │   │                                                          │   │
+  │   │   ┌───────────┐  library ops   ┌───────────────────┐    │   │
+  │   │   │ SSL Agent │◄──────────────►│  Function Library │    │   │
+  │   │   └─────┬─────┘                └───────────────────┘    │   │
+  │   │         │ active_functions              ▲                │   │
+  │   │         ▼                              │                │   │
+  │   │   ┌───────────┐   solve / decompose    │                │   │
+  │   │   │ BCR Agent │───────────────────────►┘                │   │
+  │   │   └───────────┘                                         │   │
+  │   └──────────────────────────┬───────────────────────────────┘   │
+  │                              │ state["solution"]                 │
+  │                              ▼                                   │
+  │                   ┌──────────────────────┐                       │
+  │                   │  execute_with_library │                       │
+  │                   └──────────┬───────────┘                       │
+  │                              │ (result, execution_ok)            │
+  │                              ▼                                   │
+  │                   ┌──────────────────────┐                       │
+  │                   │   reward_fn(result,  │  rewards/{name}.py    │
+  │                   │   execution_ok,entry)│                       │
+  │                   └──────────┬───────────┘                       │
+  │                              │ {"value": float, "message": str}  │
+  │                              ▼                                   │
+  │              ┌───────────────────────────────┐                   │
+  │              │  reward >= 1.0?               │                   │
+  │              │  yes ──► break                │                   │
+  │              │  no  ──► append reward_history│                   │
+  │              │           (blame, message)    │                   │
+  │              │           BCR sees history    │                   │
+  │              │           on next iter        │                   │
+  │              │           ("fix mode")        │                   │
+  │              └───────────────────────────────┘                   │
+  └──────────────────────────────────────────────────────────────────┘
+         │ best solution (state["_cached_exec"])
+         │ state["solved"] = best_reward >= 1.0
+         │ cost_tracker.task_loss += 1.0 − best_reward
+         ▼
+  ┌──────────────────┐
+  │ Reporting Agent  │  formats final answer (runs once)
+  └──────────────────┘
+```
+
+**Blame assignment** labels each failed attempt so BCR's fix-mode prompt is targeted:
+
+| Blame | Condition |
+|---|---|
+| `execution` | solution code raised a runtime exception |
+| `library` | code ran but used library functions (library function may be wrong) |
+| `partial` | reward > 0 but < 1 from a `direct` action |
+| `logic` | code ran / direct action returned, but reward = 0 |
+
 ```python
 task_spec = TaskParser.parse(prompt)
 
@@ -76,8 +141,6 @@ state["solved"] = best_reward >= 1.0
 cost_tracker.task_loss += 1.0 - best_reward
 reporting_agent.run(state, library)   # runs once on final solution
 ```
-
-**Blame assignment** (`_determine_blame`): the controller categorises each failed attempt as `"execution"` (code crashed), `"library"` (used library functions, may need fixing), `"partial"` (non-zero score), or `"logic"` (produced code but scored 0).
 
 ### SSL → BCR routing (`_should_call_ssl`)
 
