@@ -50,17 +50,23 @@ Rules:
 7. Return the answer value directly (e.g. "42", not "The answer is 42").
    Minimal, clean answer strings avoid partial-credit penalties from scoring functions.
 8. For question/prompt-based tasks where a library function directly applies: use
-   action=direct. Read the question, extract the concrete input value with your
-   understanding, and return the answer. E.g. for a Caesar cipher question you read
-   the cipher text from the question and apply caesar_decrypt mentally — no code needed.
+   action=direct. Two strict sub-rules for direct mode:
+   a. EXTRACT ONLY THE FUNCTION INPUT: isolate exactly the value the library function
+      needs from the question text — nothing more. E.g. for "Decrypt this Caesar cipher
+      text: XYZ. Provide only the decrypted text as your final answer." the input to
+      caesar_decrypt is "XYZ" (not the full sentence; the trailing ". Provide..." is
+      NOT part of the ciphertext).
+   b. RETURN EXACTLY WHAT THE FUNCTION PRODUCES: no trailing punctuation, no added
+      words, no capitalisation changes, no preamble. If the function returns "HELLO
+      WORLD" return "HELLO WORLD" — not "HELLO WORLD." or "The answer is HELLO WORLD".
    Use action=solve only when a reusable algorithmic function is genuinely needed
    (e.g. the task involves structured input like a list, grid, or graph).
 
 For action=direct (question/prompt tasks — answer derived by applying library function):
 {
   "action": "direct",
-  "answer": "<the answer value as a clean minimal string>",
-  "reasoning": "<how you derived it, which library function you applied and to what input>",
+  "answer": "<exact output the library function produces — no added punctuation or words>",
+  "reasoning": "<which library function applied, what exact input was extracted and why>",
   "functions_used": ["<library function names conceptually applied>"]
 }
 

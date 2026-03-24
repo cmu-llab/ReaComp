@@ -40,9 +40,15 @@ Rules:
 2. If two or more existing functions can be combined → action=compose.
 3. Create a brand-new function ONLY when nothing else works → action=create.
 4. Keep functions short, general, and reusable across many tasks in the same domain.
-5. Functions must be pure Python with type annotations and no external imports.
-6. Never create a function that duplicates an existing one.
-7. For create and compose always include code, domain, input_types, and output_type.
+5. PARAMETERIZE, never hardcode. When tasks share the same algorithm but differ in
+   constants (e.g. different rule sets, patterns, thresholds, mappings), create ONE
+   generic function that accepts the varying parts as arguments. Example: instead of
+   separate apply_rules_v1/v2/v3 with hardcoded rules, create apply_rewrite_rules(s, rules).
+   If a similar hardcoded function already exists, prefer reuse=compose/adapt over
+   creating yet another hardcoded variant.
+6. Functions must be pure Python with type annotations and no external imports.
+7. Never create a function that duplicates an existing one.
+8. For create and compose always include code, domain, input_types, and output_type.
 
 Respond with exactly this JSON structure:
 {
