@@ -265,15 +265,46 @@ def plot_cost(ax, dfs: list[pd.DataFrame], labels: list[str]):
     _ax_style(ax, "Cost Distribution", ylabel="Value")
 
 
+# ── individual plot saving ─────────────────────────────────────────────────────
+
+PANELS = [
+    ("reward_hist",            plot_reward_hist,            (6, 4)),
+    ("pass_rate_by_dataset",   plot_pass_rate_by_dataset,   (7, 4)),
+    ("mean_reward_by_dataset", plot_mean_reward_by_dataset, (7, 4)),
+    ("iter_breakdown",         plot_iter_breakdown,         (6, 4)),
+    ("blame_heatmap",          plot_blame_heatmap,          (7, 4)),
+    ("cost",                   plot_cost,                   (6, 4)),
+]
+
+
+def save_individual_plots(dfs, labels, out_dir: str, dpi: int = 150):
+    """Save each panel as a separate PNG in out_dir."""
+    out_path = Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+    for name, fn, figsize in PANELS:
+        fig, ax = plt.subplots(figsize=figsize)
+        fn(ax, dfs, labels)
+        plt.tight_layout()
+        dest = out_path / f"{name}.png"
+        fig.savefig(dest, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  Saved {dest}")
+
+
 # ── main ───────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Plot eval results for symbolic-library-agent runs.")
     parser.add_argument("files", nargs="+", metavar="FILE", help="One or more output JSONL files")
-    parser.add_argument("--out", default="outputs/eval_plots.png", metavar="FILE",
-                        help="Output image path (default: outputs/eval_plots.png)")
+    parser.add_argument("--out", default=None, metavar="FILE",
+                        help="Save combined 2x3 figure to this path")
+    parser.add_argument("--out-dir", default=None, metavar="DIR",
+                        help="Save each panel as a separate PNG in this directory")
     parser.add_argument("--dpi", type=int, default=150)
     args = parser.parse_args()
+
+    if args.out is None and args.out_dir is None:
+        parser.error("Provide --out FILE and/or --out-dir DIR")
 
     dfs = [load_file(p) for p in args.files]
     labels = [Path(p).stem for p in args.files]
@@ -285,20 +316,23 @@ def main():
         short.append(lb)
     labels = short
 
-    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
-    fig.suptitle("Symbolic Library Agent — Eval Summary", fontsize=13, fontweight="bold", y=0.98)
+    if args.out_dir:
+        print(f"Saving individual panels to {args.out_dir}/")
+        save_individual_plots(dfs, labels, args.out_dir, dpi=args.dpi)
 
-    plot_reward_hist(axes[0, 0], dfs, labels)
-    plot_pass_rate_by_dataset(axes[0, 1], dfs, labels)
-    plot_mean_reward_by_dataset(axes[0, 2], dfs, labels)
-    plot_iter_breakdown(axes[1, 0], dfs, labels)
-    plot_blame_heatmap(axes[1, 1], dfs, labels)
-    plot_cost(axes[1, 2], dfs, labels)
-
-    plt.tight_layout(rect=[0, 0, 1, 0.97])
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(args.out, dpi=args.dpi, bbox_inches="tight")
-    print(f"Saved plot to {args.out}")
+    if args.out:
+        fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+        fig.suptitle("Symbolic Library Agent — Eval Summary", fontsize=13, fontweight="bold", y=0.98)
+        plot_reward_hist(axes[0, 0], dfs, labels)
+        plot_pass_rate_by_dataset(axes[0, 1], dfs, labels)
+        plot_mean_reward_by_dataset(axes[0, 2], dfs, labels)
+        plot_iter_breakdown(axes[1, 0], dfs, labels)
+        plot_blame_heatmap(axes[1, 1], dfs, labels)
+        plot_cost(axes[1, 2], dfs, labels)
+        plt.tight_layout(rect=[0, 0, 1, 0.97])
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(args.out, dpi=args.dpi, bbox_inches="tight")
+        print(f"Saved combined plot to {args.out}")
 
 
 if __name__ == "__main__":
