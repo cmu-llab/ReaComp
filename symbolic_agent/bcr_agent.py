@@ -67,6 +67,10 @@ Rules:
 4. Only decompose if the task is genuinely too complex for a direct solution.
 5. Keep solutions concise. Avoid reimplementing what is already in the library.
 6. All code must be pure Python (no external imports).
+   NAMESPACE RULE: All library functions are available directly by name in your solve
+   function — they share the same execution namespace. NEVER import them: do NOT write
+   `from __main__ import fn`, `from fn import fn`, or re-implement a function that is
+   already in the library. Just call it: `result = fn(args)`.
 7. Return the answer value directly (e.g. "42", not "The answer is 42").
    Minimal, clean answer strings avoid partial-credit penalties from scoring functions.
 8. For question/prompt-based tasks where a library function directly applies: use

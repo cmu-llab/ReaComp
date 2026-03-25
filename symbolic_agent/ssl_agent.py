@@ -50,6 +50,10 @@ Rules:
 6. Functions must be pure Python with type annotations and no external imports.
 7. Never create a function that duplicates an existing one.
 8. For create and compose always include code, domain, input_types, and output_type.
+9. All library functions share the same execution namespace — call other library functions
+   directly by name (e.g. `result = helper(x)`). NEVER use import statements to access
+   them: `from __main__ import helper`, `from helper import helper`, and similar patterns
+   will all fail at runtime.
 
 Respond with exactly this JSON structure:
 {
