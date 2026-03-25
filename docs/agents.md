@@ -32,6 +32,28 @@ Valid domains: `list_manipulation`, `string_manipulation`, `sequence`, `math`, `
 
 ---
 
+## Division of Responsibility: SSL vs BCR
+
+SSL and BCR have strictly complementary roles. Neither agent can substitute for the other.
+
+| Concern | SSL | BCR |
+|---|---|---|
+| Maintains the shared library | ✓ | — |
+| Decides what enters the library | ✓ | — |
+| Writes library functions | ✓ (create/compose) | — |
+| Solves the current task | — | ✓ |
+| Writes task solution code | — | ✓ |
+| Calls library functions | — | ✓ |
+| Produces a task answer | — | ✓ |
+
+**SSL is a library quality gate, not a solver.** It never produces a task answer. Its only output is a nomination of which library function(s) BCR should use (`active_functions`), and optionally a new function added to the library.
+
+**BCR is a task solver, not a library manager.** It never adds to the library directly. It receives `active_functions` from SSL and builds its solution around them — either by applying one mentally (direct), writing code that calls it (solve), or deferring by breaking the task into sub-problems (decompose).
+
+**The interface between them:** after SSL runs, `state["working_memory"]["active_functions"]` holds the names of the nominated function(s). BCR reads this list and uses the full code of those functions when constructing its solution.
+
+---
+
 ## SSL Agent — Symbolic Search and Library
 
 **File:** `symbolic_agent/ssl_agent.py`

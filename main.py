@@ -280,6 +280,18 @@ def main() -> None:
     parser.add_argument("--budget", type=float, default=15.0, help="Step budget per task")
     parser.add_argument("--lam", type=float, default=0.3, help="λ: regularisation weight for library cost in Objective = TaskLoss + λ·TotalCost (default: 0.3)")
     parser.add_argument(
+        "--redundancy-mode",
+        default="ast_jaccard",
+        choices=["ast_jaccard", "edit_distance"],
+        help=(
+            "Algorithm used to compute the redundancy penalty between library functions. "
+            "'ast_jaccard': max(Jaccard on AST node-type sets, Jaccard on callee-name sets) — "
+            "fast, captures structural shape and shared dependencies. "
+            "'edit_distance': 1 − normalised edit distance on DFS-linearised AST node sequences — "
+            "more precise, O(m·n) per pair. (default: ast_jaccard)"
+        ),
+    )
+    parser.add_argument(
         "--base-url",
         default=None,
         help="OpenAI-compatible base URL for local vLLM (e.g. http://localhost:8000/v1). "
@@ -342,7 +354,14 @@ def main() -> None:
             print("ERROR: ANTHROPIC_API_KEY is not set.  Add it to .env or export it.", file=sys.stderr)
             sys.exit(1)
 
-    controller = Controller(api_key=api_key, model=args.model, base_url=args.base_url, debug_dir=args.debug_dir, lam=args.lam)
+    controller = Controller(
+        api_key=api_key,
+        model=args.model,
+        base_url=args.base_url,
+        debug_dir=args.debug_dir,
+        lam=args.lam,
+        redundancy_mode=args.redundancy_mode,
+    )
 
     if args.tasks_file:
         tasks = _load_tasks_file(args.tasks_file)

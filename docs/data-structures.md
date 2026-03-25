@@ -240,6 +240,49 @@ Objective = task_loss + λ·TotalCost
 
 **Reuse reward** — `Σ log(1 + usage_count)` over all library functions. Log-scale prevents a single heavily-used function from dominating.
 
+### Redundancy penalty
+
+The redundancy penalty fires when two library functions are structurally similar — a proxy for near-duplicate functions that should have been one parameterised function. Similarity is measured via one of two AST-based modes, selected with `--redundancy-mode`:
+
+**`ast_jaccard`** (default, `--redundancy-mode ast_jaccard`)
+
+For each pair of functions compute:
+
+```
+sim(f_i, f_j) = max(
+    Jaccard(node_type_set(f_i), node_type_set(f_j)),   # structural shape (A)
+    Jaccard(callee_name_set(f_i), callee_name_set(f_j)) # shared dependencies (B)
+)
+```
+
+- `node_type_set`: set of all AST node-type names present in the function (e.g. `{FunctionDef, If, Return, Call, ...}`).
+- `callee_name_set`: set of all function/method names called anywhere in the function body.
+- Taking the max of the two signals catches cases where functions differ in node count but call the same helpers, and vice versa.
+- Time complexity: O(N²) pairs, O(n) per function to build features.
+
+**`edit_distance`** (`--redundancy-mode edit_distance`)
+
+```
+sim(f_i, f_j) = 1 − edit_distance(seq_i, seq_j) / max(|seq_i|, |seq_j|)
+```
+
+where `seq` is the DFS-linearised sequence of AST node-type names. Standard unit-cost insert/delete/substitute edit distance, normalised to [0, 1]. More sensitive to structural ordering than set overlap, at the cost of O(m·n) per pair.
+
+In both modes, a pair contributes `sim` to the penalty only when `sim > 0.8` (configurable via `REDUNDANCY_THRESHOLD` in `costs.py`).
+
+### Why redundancy penalty ≠ reuse reward
+
+These two terms measure orthogonal properties of the library:
+
+| | Redundancy penalty | Reuse reward |
+|---|---|---|
+| **What it measures** | Static structural similarity between function *definitions* | Dynamic utilisation — how often each function is *called* across tasks |
+| **When it fires** | When two functions implement nearly the same logic (duplicate code) | Continuously, as functions are used; rewards high-use functions |
+| **What it prevents / promotes** | Prevents accidental code duplication (same algorithm written twice) | Promotes picking up and reusing existing functions rather than writing new ones |
+| **Can be high while the other is low?** | Yes — a library of 50 unique functions each used once: low redundancy, low reuse reward | Yes — a library with one function used 100 times: high reuse reward, zero redundancy if only one function |
+
+A healthy library has **low redundancy** (no near-duplicates) and **high reuse** (existing functions applied broadly). Both terms in the cost function are needed: redundancy alone cannot detect under-utilisation, and reuse reward alone cannot detect structural duplication.
+
 ### Default weights
 
 | Symbol | Name | Default | CLI flag |
@@ -249,5 +292,6 @@ Objective = task_loss + λ·TotalCost
 | γ | redundancy penalty | 2.0 | — |
 | δ | reuse reward | 0.5 | — |
 | λ | regularisation | 0.3 | `--lam` |
+| — | redundancy mode | `ast_jaccard` | `--redundancy-mode` |
 
 `task_loss` is set by `solve_with_reward()` to `1 - best_reward` per task and accumulates across tasks. It remains 0 when using `solve()` without a reward function.

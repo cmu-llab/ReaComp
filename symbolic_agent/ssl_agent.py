@@ -40,12 +40,13 @@ Rules:
 2. If two or more existing functions can be combined → action=compose.
 3. Create a brand-new function ONLY when nothing else works → action=create.
 4. Keep functions short, general, and reusable across many tasks in the same domain.
-5. PARAMETERIZE, never hardcode. When tasks share the same algorithm but differ in
-   constants (e.g. different rule sets, patterns, thresholds, mappings), create ONE
-   generic function that accepts the varying parts as arguments. Example: instead of
-   separate apply_rules_v1/v2/v3 with hardcoded rules, create apply_rewrite_rules(s, rules).
-   If a similar hardcoded function already exists, prefer reuse=compose/adapt over
-   creating yet another hardcoded variant.
+5. PARAMETERIZE, never hardcode. When tasks share the same algorithm but differ only
+   in constants (rule sets, patterns, thresholds, mappings), create ONE generic function
+   that accepts the varying parts as arguments — e.g. fn(data, params) not fn_v1/fn_v2.
+   If the library already contains such a generic function, choose action=reuse and let
+   BCR supply the task-specific arguments inline. Do NOT add per-task wrappers that
+   merely call a generic function with hardcoded constants: a single-use wrapper defeats
+   parameterisation and pollutes the library.
 6. Functions must be pure Python with type annotations and no external imports.
 7. Never create a function that duplicates an existing one.
 8. For create and compose always include code, domain, input_types, and output_type.
@@ -99,14 +100,27 @@ class SSLAgent:
             if relevant_names else "Library is empty — create a new function."
         )
 
+        budget_info = cost_tracker.budget_summary()
+        gate_active = cost_tracker.library_gate()
+        if gate_active:
+            decision_instruction = (
+                "BUDGET GATE ACTIVE — action=create is PROHIBITED this turn. "
+                "You MUST return action=reuse or action=compose."
+            )
+        else:
+            decision_instruction = (
+                "Decide: reuse an existing function, compose existing functions, "
+                "or create a new one. Prefer reuse > compose > create."
+            )
+
         user_msg = (
+            f"[Budget] {budget_info}\n\n"
             f"Task type: {task_type}\n"
             f"Task: {task}\n\n"
             f"{spec_block}"
             f"{library.format_for_prompt(full_code_for=relevant_names)}\n\n"
             f"{relevant_note}\n\n"
-            "Decide: reuse an existing function, compose existing functions, "
-            "or create a new one. Prefer reuse > compose > create."
+            f"{decision_instruction}"
         )
 
         result = self.client.create(

@@ -57,6 +57,7 @@ class Controller:
         base_url: Optional[str] = None,
         debug_dir: Optional[str] = None,
         lam: float = 0.3,
+        redundancy_mode: str = "ast_jaccard",
     ):
         """
         Parameters
@@ -67,6 +68,9 @@ class Controller:
             Model used for all agents (TaskParser, SSL, BCR, Reporting).
         base_url : str, optional
             OpenAI-compatible base URL for local vLLM, e.g. "http://localhost:8000/v1".
+        redundancy_mode : str
+            Algorithm for the redundancy penalty: "ast_jaccard" (node-type + callee
+            Jaccard) or "edit_distance" (normalised AST sequence edit distance).
         """
         if base_url:
             backend = "openai"
@@ -79,7 +83,7 @@ class Controller:
 
         self.client = client
         self.library = FunctionLibrary()
-        self.cost_tracker = CostTracker(lam=lam)
+        self.cost_tracker = CostTracker(lam=lam, redundancy_mode=redundancy_mode)
         self.task_parser = TaskParser(client, model=model)
         self.ssl_agent = SSLAgent(client, model)
         self.bcr_agent = BCRAgent(client, model)

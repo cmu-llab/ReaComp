@@ -73,10 +73,25 @@ These come from `CostTracker` (see `symbolic_agent/costs.py`):
 | `num_new_functions` | — | Total functions created in the library during this session. |
 | `total_function_length` | — | Sum of line counts across all created functions. |
 | `reuse_count` | — | Total number of library function reuse events across all tasks. |
-| `redundancy_penalty` | `γ · Σ name_similarity(f_i, f_j)` | Penalises functions with suspiciously similar names (proxy for duplicates). γ = 2.0. |
+| `redundancy_penalty` | `γ · Σ sim(f_i, f_j)` for pairs with sim > 0.8 | Penalises structurally similar function pairs (AST-based, see below). γ = 2.0. |
 | `reuse_reward` | `δ · Σ log(1 + uses_i)` | Rewards reusing functions. δ = 0.5. |
 | `total_cost` | `α·N + β·L + γ·Rpen − δ·Rrew` | Full library complexity cost. α=1.0, β=0.05. |
 | `objective` | `task_loss + λ·total_cost` | Combined objective (lower is better). λ = 0.3. |
+| `redundancy_mode` | — | Algorithm used: `ast_jaccard` or `edit_distance` (see `--redundancy-mode`). |
+
+#### Redundancy penalty modes (`--redundancy-mode`)
+
+**`ast_jaccard`** (default): `sim = max(Jaccard(node_type_sets), Jaccard(callee_name_sets))`. Captures structural shape (A) and shared function dependencies (B). O(N²) pairs, O(n) per function.
+
+**`edit_distance`**: `sim = 1 − normalised_edit_distance(DFS_node_sequence_i, DFS_node_sequence_j)`. More sensitive to ordering; O(m·n) per pair.
+
+#### Why redundancy penalty ≠ reuse reward
+
+These terms are complementary, not redundant:
+- **Redundancy penalty** is a *static structural* property: fires when two function *definitions* implement similar logic (duplicate code). Does not depend on how often functions are called.
+- **Reuse reward** is a *dynamic behavioural* property: measures how often existing functions are actually *used* across tasks. A library with 50 unique functions each used once has zero redundancy but low reuse reward.
+
+A healthy library has low redundancy **and** high reuse. Both terms are needed — redundancy alone cannot detect under-utilisation, and reuse reward alone cannot detect structural duplication.
 
 ### Library Panels (ckpt-based)
 
