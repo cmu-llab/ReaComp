@@ -7,6 +7,28 @@ from .models import Function
 if TYPE_CHECKING:
     from .task_parser import TaskSpec
 
+try:
+    from sentence_transformers import SentenceTransformer as _ST
+    _ST_AVAILABLE = True
+except ImportError:
+    _ST_AVAILABLE = False
+
+
+def _cosine(a, b) -> float:
+    """Cosine similarity between two float sequences."""
+    if not a or not b:
+        return 0.0
+    try:
+        import numpy as np
+        va, vb = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+        denom = np.linalg.norm(va) * np.linalg.norm(vb)
+        return float(np.dot(va, vb) / denom) if denom > 0 else 0.0
+    except ImportError:
+        dot = sum(x * y for x, y in zip(a, b))
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(x * x for x in b))
+        return dot / (na * nb) if na and nb else 0.0
+
 # --------------------------------------------------------------------------
 # Domain affinity matrix
 #
@@ -134,18 +156,37 @@ class FunctionLibrary:
     Shared library of reusable functions.
 
     Retrieval combines four signals:
-      - Text similarity (Jaccard over tokens)
+      - Text similarity: Jaccard over tokens of (name + description) when no encoder
+        is provided; cosine similarity of sentence embeddings when one is.
       - Domain affinity (using DOMAIN_AFFINITY matrix)
       - Argument-type overlap (base Python types)
       - Usage popularity (log-scaled)
+
+    Pass a ``SentenceTransformer`` instance as ``encoder`` to enable semantic retrieval.
+    Embeddings are computed on ``"<name>: <description>"`` for each function and cached
+    on ``Function.embedding``.  Use ``recompute_embeddings()`` after restoring a
+    checkpoint to rebuild embeddings for previously loaded functions.
     """
 
-    def __init__(self):
+    def __init__(self, encoder=None):
         self.functions: List[Function] = []
+        self.encoder = encoder  # SentenceTransformer instance or None
 
     # ------------------------------------------------------------------
     # Mutation
     # ------------------------------------------------------------------
+
+    def _embed(self, func: Function) -> None:
+        """Compute and cache embedding for *func* if an encoder is available."""
+        if self.encoder is not None:
+            text = f"{func.name}: {func.description}"
+            func.embedding = self.encoder.encode(text).tolist()
+
+    def recompute_embeddings(self) -> None:
+        """Recompute embeddings for all functions (call after checkpoint restore)."""
+        for func in self.functions:
+            func.embedding = None
+            self._embed(func)
 
     def add(self, func: Function) -> None:
         """Add or update a function by name."""
@@ -156,7 +197,9 @@ class FunctionLibrary:
             existing.domain = func.domain or existing.domain
             existing.input_types = func.input_types or existing.input_types
             existing.output_type = func.output_type or existing.output_type
+            self._embed(existing)
         else:
+            self._embed(func)
             self.functions.append(func)
 
     def remove(self, name: str) -> bool:
@@ -190,22 +233,33 @@ class FunctionLibrary:
         if not self.functions:
             return []
 
-        query_tokens = set(re.findall(r"\w+", query.lower()))
         task_domain = task_spec.domain if task_spec else None
         task_itypes = task_spec.input_types if task_spec else []
 
+        # Pre-compute query embedding once if semantic retrieval is enabled.
+        query_emb = None
+        if self.encoder is not None:
+            query_emb = self.encoder.encode(query).tolist()
+
+        query_tokens = set(re.findall(r"\w+", query.lower())) if query_emb is None else None
+
         scored: List[tuple] = []
         for func in self.functions:
-            text = f"{func.name} {func.description} {func.code}".lower()
-            func_tokens = set(re.findall(r"\w+", text))
-
             # --- text similarity ---
-            if query_tokens and func_tokens:
-                inter = len(query_tokens & func_tokens)
-                union = len(query_tokens | func_tokens)
-                text_score = inter / union
+            if query_emb is not None and func.embedding is not None:
+                # Semantic path: cosine similarity of sentence embeddings
+                text_score = _cosine(query_emb, func.embedding)
             else:
-                text_score = 0.0
+                # Lexical path: Jaccard over tokens of name + description only
+                # (excluding code to avoid noise from implementation details)
+                func_text = f"{func.name} {func.description}".lower()
+                func_tokens = set(re.findall(r"\w+", func_text))
+                if query_tokens and func_tokens:
+                    inter = len(query_tokens & func_tokens)
+                    union = len(query_tokens | func_tokens)
+                    text_score = inter / union
+                else:
+                    text_score = 0.0
 
             # --- domain affinity ---
             dom_score = (

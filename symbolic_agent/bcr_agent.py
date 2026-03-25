@@ -36,6 +36,26 @@ def _bcr_max_tokens(task_spec) -> int:
     words = {w for hint in task_spec.operation_hints for w in hint.lower().split()}
     return 8192 if words & _COMPLEX_HINTS else 4096
 
+_PATCH_SYSTEM = """\
+You are a reasoning assistant. A symbolic solver attempted a task but only reached a
+partial solution after exhausting all retries.
+
+Your job:
+1. Study the task carefully.
+2. Review the best partial answer the symbolic solver produced and the full reward
+   feedback explaining what is wrong or incomplete.
+3. Starting from that partial answer, reason through the task and produce the CORRECT
+   final answer. Correct or complete it — do not start from scratch unless the
+   symbolic answer is entirely wrong.
+
+You are NOT writing code. You are NOT using library functions.
+The "answer" field must contain ONLY the exact final answer value — no preamble,
+no trailing punctuation, no explanation text.
+
+Return exactly this JSON:
+{"answer": "<exact final answer>"}
+"""
+
 _SYSTEM = """\
 You are the BCR (Bottom-up Conceptual Reasoning) agent in a symbolic reasoning system.
 Your job is to solve symbolic reasoning tasks using the shared function library.
@@ -59,6 +79,12 @@ Rules:
       verbatim.
    Use action=solve only when a reusable algorithmic function is genuinely needed
    (e.g. the task involves structured input like a list, grid, or graph).
+9. When the active function accepts task-specific parameters (e.g. a list of rules,
+   patterns, or mappings), extract those values from the task description and pass
+   them as arguments in your solve code. Do NOT write a helper function that hardcodes
+   those values and delegates to the generic function — that is a one-use wrapper that
+   does not belong in the library. Keep task-specific constants local to your solve
+   function only.
 
 For action=direct (question/prompt tasks — answer derived by applying library function):
 {
@@ -263,3 +289,68 @@ class BCRAgent:
             logger.warning("BCR: unrecognised action %r, skipping. keys: %s", action, list(result.keys()))
 
         return state
+
+    def patch_solve(
+        self,
+        task_input,
+        best_answer,
+        reward_history: list,
+        task_spec=None,
+    ):
+        """Neural patch: one final stripped-down LLM call after all symbolic iterations fail.
+
+        No library context, no active functions — pure reasoning starting from the best
+        partial symbolic answer.  Uses a large token budget so the model can reason at
+        length in its chain-of-thought without being cut off.
+
+        Returns {"answer": str, "reasoning": str} or None on parse failure.
+        The "reasoning" field is populated from the model's chain-of-thought
+        (reasoning_content) captured in the task log rather than from the JSON response,
+        so no extra output tokens are spent on it.
+        """
+        # Show only the question for reasoning_gym tasks (same logic as run())
+        if isinstance(task_input, dict) and "question" in task_input:
+            task_display = task_input["question"]
+        else:
+            task_display = task_input
+
+        best_reward = max((h["reward"] for h in reward_history), default=0.0)
+
+        history_lines = ["Reward history from symbolic iterations:"]
+        for h in reward_history:
+            history_lines.append(
+                f"  iter={h['iteration']}  reward={h['reward']:.3f}  blame={h.get('blame', '?')}\n"
+                f"  feedback: {h.get('message', '')}\n"
+                f"  approach: {h.get('solution_summary', '')[:120]}"
+            )
+
+        user_msg = (
+            f"Task:\n{task_display}\n\n"
+            f"Best symbolic answer (reward={best_reward:.3f}):\n{best_answer}\n\n"
+            f"{chr(10).join(history_lines)}\n\n"
+            "Starting from the symbolic answer above, produce the correct final answer.\n"
+            "Return ONLY the answer value in the 'answer' field."
+        )
+
+        result = self.client.create(
+            model=self.model,
+            max_tokens=16384,
+            system=_PATCH_SYSTEM,
+            messages=[{"role": "user", "content": user_msg}],
+            tag="bcr_patch",
+        )
+
+        answer = result.get("answer")
+        if answer is None:
+            logger.warning("BCR patch: missing 'answer' in response. keys: %s", list(result.keys()))
+            return None
+
+        # Pull CoT from task log (reasoning_content for openai/vLLM reasoning models;
+        # falls back to empty string on Anthropic where CoT is internal).
+        reasoning = ""
+        if self.client._task_log:
+            last = self.client._task_log[-1]
+            reasoning = last.get("response", {}).get("reasoning_content", "") or ""
+
+        logger.info("BCR patch: answer=%s  cot_len=%d", str(answer)[:80], len(reasoning))
+        return {"action": "patch", "answer": str(answer), "reasoning": reasoning}

@@ -239,6 +239,9 @@ def _load_checkpoint(controller: Controller, checkpoint_file: str) -> int:
         controller.cost_tracker.task_loss = ct.get("task_loss", 0.0)
         controller.cost_tracker.log = ct.get("log", [])
 
+        # Recompute embeddings for restored functions if semantic retrieval is active.
+        controller.library.recompute_embeddings()
+
         last_index = ckpt.get("last_completed_index", -1)
         next_index = last_index + 1
         logger.info(
@@ -329,6 +332,21 @@ def main() -> None:
              "(e.g. 'reasoning_gym'). Enables the reward loop for the whole run.",
     )
     parser.add_argument(
+        "--semantic-retrieval",
+        action="store_true",
+        default=False,
+        help="Use sentence_transformers for library retrieval (cosine similarity on "
+             "name+description embeddings) instead of token Jaccard. Requires: "
+             "pip install sentence_transformers. (default: off)",
+    )
+    parser.add_argument(
+        "--semantic-model",
+        default="all-MiniLM-L6-v2",
+        metavar="MODEL",
+        help="Sentence transformer model for --semantic-retrieval. "
+             "(default: all-MiniLM-L6-v2)",
+    )
+    parser.add_argument(
         "--debug-dir",
         default=None,
         metavar="DIR",
@@ -361,6 +379,8 @@ def main() -> None:
         debug_dir=args.debug_dir,
         lam=args.lam,
         redundancy_mode=args.redundancy_mode,
+        semantic_retrieval=args.semantic_retrieval,
+        semantic_model=args.semantic_model,
     )
 
     if args.tasks_file:

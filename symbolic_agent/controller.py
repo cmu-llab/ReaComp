@@ -58,6 +58,8 @@ class Controller:
         debug_dir: Optional[str] = None,
         lam: float = 0.3,
         redundancy_mode: str = "ast_jaccard",
+        semantic_retrieval: bool = False,
+        semantic_model: str = "all-MiniLM-L6-v2",
     ):
         """
         Parameters
@@ -71,6 +73,10 @@ class Controller:
         redundancy_mode : str
             Algorithm for the redundancy penalty: "ast_jaccard" (node-type + callee
             Jaccard) or "edit_distance" (normalised AST sequence edit distance).
+        semantic_retrieval : bool
+            Use sentence_transformers for library retrieval instead of token Jaccard.
+        semantic_model : str
+            Sentence transformer model name (default: all-MiniLM-L6-v2).
         """
         if base_url:
             backend = "openai"
@@ -81,8 +87,20 @@ class Controller:
 
         client = LLMClient(backend=backend, base_url=base_url, api_key=key, debug_dir=debug_dir)
 
+        encoder = None
+        if semantic_retrieval:
+            try:
+                from sentence_transformers import SentenceTransformer
+                encoder = SentenceTransformer(semantic_model)
+                logger.info("Semantic retrieval enabled with model '%s'", semantic_model)
+            except ImportError:
+                logger.warning(
+                    "sentence_transformers not installed — falling back to lexical retrieval. "
+                    "Install with: pip install sentence_transformers"
+                )
+
         self.client = client
-        self.library = FunctionLibrary()
+        self.library = FunctionLibrary(encoder=encoder)
         self.cost_tracker = CostTracker(lam=lam, redundancy_mode=redundancy_mode)
         self.task_parser = TaskParser(client, model=model)
         self.ssl_agent = SSLAgent(client, model)
@@ -290,6 +308,55 @@ class Controller:
             if reward_value >= 1.0:
                 logger.info("Perfect reward achieved, stopping.")
                 break
+
+        # ------------------------------------------------------------------
+        # Neural patch: one final stripped-down LLM reasoning pass after all
+        # symbolic iterations are exhausted.  Only attempted when the symbolic
+        # solver produced at least one executable result to start from.
+        # ------------------------------------------------------------------
+        if state.get("best_reward", 0.0) < 1.0 and best_raw_result is not None:
+            logger.info(
+                "All symbolic iterations exhausted (best_reward=%.3f) — attempting neural patch",
+                state.get("best_reward", 0.0),
+            )
+            patch_result = self.bcr_agent.patch_solve(
+                task_input=task_input,
+                best_answer=best_raw_result,
+                reward_history=state["reward_history"],
+                task_spec=task_spec,
+            )
+            if patch_result:
+                patch_raw = patch_result["answer"]
+                patch_reward_result = reward_fn(patch_raw, True, entry)
+                patch_reward_value = float(patch_reward_result.get("value", 0.0))
+                old_best = state.get("best_reward", 0.0)
+                improved = patch_reward_value > old_best
+
+                state["reward_history"].append({
+                    "iteration": max_reward_iters,  # sentinel beyond last symbolic iter
+                    "reward": patch_reward_value,
+                    "message": patch_reward_result.get("message", ""),
+                    "blame": "patch" if improved else "patch_failed",
+                    "solution_summary": patch_result["reasoning"][:200],
+                })
+                final_reward = patch_reward_result
+
+                if improved:
+                    state["best_reward"] = patch_reward_value
+                    best_raw_result = patch_raw
+                    # Represent as a direct-action solution so Reporting skips re-execution
+                    state["solution"] = {
+                        "action": "direct",
+                        "answer": patch_raw,
+                        "reasoning": patch_result["reasoning"],
+                        "functions_used": [],
+                    }
+
+                logger.info(
+                    "Neural patch: reward=%.3f  (symbolic best was %.3f)%s",
+                    patch_reward_value, old_best,
+                    "  — improved!" if improved else "",
+                )
 
         self.cost_tracker.task_loss += 1.0 - state.get("best_reward", 0.0)
         state["solved"] = state.get("best_reward", 0.0) >= 1.0
