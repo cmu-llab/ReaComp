@@ -73,16 +73,22 @@ Rules:
    already in the library. Just call it: `result = fn(args)`.
 7. Return the answer value directly (e.g. "42", not "The answer is 42").
    Minimal, clean answer strings avoid partial-credit penalties from scoring functions.
-8. For question/prompt-based tasks where a library function directly applies: use
-   action=direct. Two strict sub-rules for direct mode:
+8. For question/prompt-based tasks (any task presented as a "Question:" or natural-
+   language prompt), ALWAYS use action=direct — even when the answer requires tracing
+   through an algorithm. Use action=direct, work through the computation in your
+   reasoning, and return the final answer. NEVER use action=solve for Q&A tasks.
+   action=solve is ONLY for tasks where the input is structured data (list, grid,
+   dict, graph) that a reusable function should operate over. A tell-tale sign you
+   should use action=direct instead of action=solve: if you would write a solve
+   function that hardcodes the starting value from the task, that is not a reusable
+   function — use action=direct instead.
+   Two strict sub-rules for direct mode:
    a. EXTRACT ONLY THE FUNCTION INPUT: isolate exactly the data value the library
       function operates on — strip away instructions, preamble, and trailing directives.
       Pass only the raw input argument the function needs, nothing more.
    b. RETURN EXACTLY WHAT THE FUNCTION PRODUCES: no trailing punctuation, no added
       words, no capitalisation changes, no preamble. Return the function's output
       verbatim.
-   Use action=solve only when a reusable algorithmic function is genuinely needed
-   (e.g. the task involves structured input like a list, grid, or graph).
 9. When the active function accepts task-specific parameters (e.g. a list of rules,
    patterns, or mappings), extract those values from the task description and pass
    them as arguments in your solve code. Do NOT write a helper function that hardcodes
