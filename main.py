@@ -25,6 +25,8 @@ from examples.tasks import TASKS
 from rewards import load_reward
 from symbolic_agent import Controller
 from symbolic_agent.models import Function
+from symbolic_agent.baselines.trove import TroVEController
+from symbolic_agent.baselines.regal import ReGALController
 
 # --------------------------------------------------------------------------
 # Logging
@@ -279,6 +281,14 @@ def main() -> None:
     parser.add_argument("--task", type=int, default=None, help="Run a single built-in task by index")
     parser.add_argument("--list", action="store_true", help="List built-in example tasks")
     parser.add_argument("--stats", action="store_true", help="Print library stats after run")
+    parser.add_argument(
+        "--framework",
+        default="ssl_bcr",
+        choices=["ssl_bcr", "trove", "regal"],
+        help="Solution framework to use. 'ssl_bcr': symbolic library agent (default). "
+             "'trove': TroVE online function induction baseline. "
+             "'regal': ReGAL offline refactoring baseline. (default: ssl_bcr)",
+    )
     parser.add_argument("--model", default="claude-sonnet-4-5", help="Model name to use")
     parser.add_argument("--budget", type=float, default=15.0, help="Step budget per task")
     parser.add_argument("--lam", type=float, default=0.3, help="λ: regularisation weight for library cost in Objective = TaskLoss + λ·TotalCost (default: 0.3)")
@@ -354,6 +364,97 @@ def main() -> None:
              "chain-of-thought, extracted tool calls).  Each run creates a timestamped "
              "subdirectory so logs from multiple runs are never overwritten.",
     )
+    # TroVE-specific flags
+    parser.add_argument(
+        "--trove-k",
+        type=int,
+        default=5,
+        metavar="K",
+        help="[TroVE] Number of samples per mode (IMPORT/CREATE/SKIP). Paper default: 5. "
+             "Set to 1 for fast/cheap runs. (default: 5)",
+    )
+    parser.add_argument(
+        "--trove-trim-every",
+        type=int,
+        default=500,
+        metavar="N",
+        help="[TroVE] Trim low-frequency toolbox functions every N tasks. "
+             "Paper default: 500. Set to 9999 to disable for small datasets. (default: 500)",
+    )
+    # ReGAL-specific flags
+    parser.add_argument(
+        "--regal-train-file",
+        default=None,
+        metavar="FILE",
+        help="[ReGAL] Path to JSONL training file with 'program' key in each record. "
+             "Triggers offline training before the test run. (default: None — test-only mode)",
+    )
+    parser.add_argument(
+        "--regal-retrieval",
+        default="sentence_transformers",
+        choices=["sentence_transformers", "chromadb"],
+        help="[ReGAL] Vector retrieval backend for CodeBank/DemoBank. "
+             "'sentence_transformers': local cosine similarity (default). "
+             "'chromadb': chromadb PersistentClient with sentence_transformer embeddings.",
+    )
+    parser.add_argument(
+        "--regal-embedding-model",
+        default="all-MiniLM-L6-v2",
+        metavar="MODEL",
+        help="[ReGAL] Sentence transformer model for query embedding (clustering + retrieval). "
+             "(default: all-MiniLM-L6-v2)",
+    )
+    parser.add_argument(
+        "--regal-codebank-dir",
+        default=None,
+        metavar="DIR",
+        help="[ReGAL] Directory to save/load trained CodeBank and DemoBank. "
+             "If set and the directory contains regal_codebank.json, it is loaded before the test run. "
+             "After training (--regal-train-file), the banks are saved here.",
+    )
+    parser.add_argument(
+        "--regal-batch-size",
+        type=int,
+        default=4,
+        metavar="N",
+        help="[ReGAL] Examples per refactoring batch during training. Paper: 3–5. (default: 4)",
+    )
+    parser.add_argument(
+        "--regal-edit-codebank",
+        action="store_true",
+        default=False,
+        help="[ReGAL] Enable Stage 3a editCodeBank: periodically prompt the LLM to improve "
+             "failing helper functions. Off by default. (default: off)",
+    )
+    parser.add_argument(
+        "--regal-edit-every",
+        type=int,
+        default=5,
+        metavar="N",
+        help="[ReGAL] Run editCodeBank every N training batches. (default: 5)",
+    )
+    parser.add_argument(
+        "--regal-prune-every",
+        type=int,
+        default=5,
+        metavar="N",
+        help="[ReGAL] Run pruneCodeBank every N training batches. (default: 5)",
+    )
+    parser.add_argument(
+        "--regal-icl-budget",
+        type=int,
+        default=10,
+        metavar="N",
+        help="[ReGAL] Total number of ICL examples in the test-time agent prompt. (default: 10)",
+    )
+    parser.add_argument(
+        "--regal-icl-split",
+        type=float,
+        default=0.5,
+        metavar="R",
+        help="[ReGAL] Fraction of ICL budget drawn from DemoBank (refactored demos) vs "
+             "primitive training examples. Paper default: 0.5. (default: 0.5)",
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -372,16 +473,70 @@ def main() -> None:
             print("ERROR: ANTHROPIC_API_KEY is not set.  Add it to .env or export it.", file=sys.stderr)
             sys.exit(1)
 
-    controller = Controller(
-        api_key=api_key,
-        model=args.model,
-        base_url=args.base_url,
-        debug_dir=args.debug_dir,
-        lam=args.lam,
-        redundancy_mode=args.redundancy_mode,
-        semantic_retrieval=args.semantic_retrieval,
-        semantic_model=args.semantic_model,
-    )
+    if args.framework == "trove":
+        controller = TroVEController(
+            api_key=api_key,
+            model=args.model,
+            base_url=args.base_url,
+            debug_dir=args.debug_dir,
+            k=args.trove_k,
+            trim_every=args.trove_trim_every,
+        )
+        logger.info("Framework: TroVE (k=%d, trim_every=%d)", args.trove_k, args.trove_trim_every)
+    elif args.framework == "regal":
+        from pathlib import Path as _Path
+        controller = ReGALController(
+            api_key=api_key,
+            model=args.model,
+            base_url=args.base_url,
+            debug_dir=args.debug_dir,
+            retrieval=args.regal_retrieval,
+            embedding_model=args.regal_embedding_model,
+            chroma_path=(
+                str(_Path(args.regal_codebank_dir) / "chroma")
+                if args.regal_codebank_dir and args.regal_retrieval == "chromadb"
+                else None
+            ),
+            edit_codebank=args.regal_edit_codebank,
+            edit_every=args.regal_edit_every,
+            prune_every=args.regal_prune_every,
+            icl_budget=args.regal_icl_budget,
+            icl_split=args.regal_icl_split,
+        )
+        # Load pre-trained banks if available
+        if args.regal_codebank_dir:
+            cb_path = str(_Path(args.regal_codebank_dir) / "regal_codebank.json")
+            db_path = str(_Path(args.regal_codebank_dir) / "regal_demobank.json")
+            if _Path(cb_path).exists() and _Path(db_path).exists():
+                controller.load(cb_path, db_path)
+                logger.info("ReGAL: loaded pre-trained banks from %s", args.regal_codebank_dir)
+        # Offline training
+        if args.regal_train_file:
+            train_tasks = _load_tasks_file(args.regal_train_file)
+            logger.info("ReGAL: training on %d examples (batch_size=%d)", len(train_tasks), args.regal_batch_size)
+            controller.train(train_tasks, batch_size=args.regal_batch_size)
+            if args.regal_codebank_dir:
+                _Path(args.regal_codebank_dir).mkdir(parents=True, exist_ok=True)
+                controller.save(
+                    str(_Path(args.regal_codebank_dir) / "regal_codebank.json"),
+                    str(_Path(args.regal_codebank_dir) / "regal_demobank.json"),
+                )
+        logger.info(
+            "Framework: ReGAL (retrieval=%s, codebank=%d fns, demobank=%d demos)",
+            args.regal_retrieval, len(controller.codebank), len(controller.demobank),
+        )
+    else:
+        controller = Controller(
+            api_key=api_key,
+            model=args.model,
+            base_url=args.base_url,
+            debug_dir=args.debug_dir,
+            lam=args.lam,
+            redundancy_mode=args.redundancy_mode,
+            semantic_retrieval=args.semantic_retrieval,
+            semantic_model=args.semantic_model,
+        )
+        logger.info("Framework: ssl_bcr")
 
     if args.tasks_file:
         tasks = _load_tasks_file(args.tasks_file)
@@ -393,20 +548,23 @@ def main() -> None:
             if args.output_file else None
         )
 
-        # Auto-resume: if both output file and checkpoint exist, restore state and skip done tasks
+        # Auto-resume: if both output file and checkpoint exist, restore state and skip done tasks.
+        # Checkpointing is only supported for the ssl_bcr framework (TroVE rebuilds from stream;
+        # ReGAL is trained offline before the test run and has no per-task state to checkpoint).
         start_index = 0
-        if (
-            ckpt_file
-            and Path(ckpt_file).exists()
-            and args.output_file
-            and Path(args.output_file).exists()
-        ):
-            start_index = _load_checkpoint(controller, ckpt_file)
-        elif ckpt_file and Path(ckpt_file).exists():
-            logger.warning(
-                "Checkpoint found but output file %s is missing — ignoring checkpoint and starting fresh.",
-                args.output_file,
-            )
+        if args.framework == "ssl_bcr":
+            if (
+                ckpt_file
+                and Path(ckpt_file).exists()
+                and args.output_file
+                and Path(args.output_file).exists()
+            ):
+                start_index = _load_checkpoint(controller, ckpt_file)
+            elif ckpt_file and Path(ckpt_file).exists():
+                logger.warning(
+                    "Checkpoint found but output file %s is missing — ignoring checkpoint and starting fresh.",
+                    args.output_file,
+                )
 
         for i, task in enumerate(tasks):
             if i < start_index:
@@ -431,9 +589,17 @@ def main() -> None:
             _print_result(result, i)
             if args.output_file:
                 _append_task_output(result, i, args.output_file)
-            if ckpt_file:
+            if ckpt_file and args.framework == "ssl_bcr":
                 _save_checkpoint(controller, i, ckpt_file)
-            logger.info("Library size after task %d: %d functions", i + 1, len(controller.library))
+            # Library size: ssl_bcr uses controller.library, TroVE uses controller.toolbox,
+            # ReGAL uses controller.codebank
+            if args.framework == "trove":
+                lib_size = len(controller.toolbox)
+            elif args.framework == "regal":
+                lib_size = len(controller.codebank)
+            else:
+                lib_size = len(controller.library)
+            logger.info("Library size after task %d: %d functions", i + 1, lib_size)
         if args.stats:
             _print_library_stats(controller)
     elif args.task is not None:
