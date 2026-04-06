@@ -112,6 +112,8 @@ class TroVEController:
         self,
         task_input: dict,
         task_type: str = "symbolic",
+        reward_fn: Optional[Callable] = None,
+        entry: Optional[dict] = None,
         **kwargs,
     ) -> dict:
         """
@@ -125,7 +127,9 @@ class TroVEController:
         example_idx = self._n_processed
 
         # 3-way generation
-        best_mode, best_resp = self._multi_way_generation(question, example_idx)
+        best_mode, best_resp, best_reward_score = self._multi_way_generation(
+            question, example_idx, reward_fn=reward_fn, entry=entry
+        )
 
         # Update library
         self._update_library(best_mode, best_resp, example_idx)
@@ -151,6 +155,7 @@ class TroVEController:
             best_resp=best_resp,
             is_success=is_success,
             output=output,
+            best_reward_score=best_reward_score,
         )
 
     def solve_with_reward(
@@ -170,17 +175,26 @@ class TroVEController:
         reward.  The reward is recorded in reward_history for eval compatibility
         but no retry loop is performed.
         """
-        result = self.solve(task_input, task_type, **kwargs)
+        result = self.solve(task_input, task_type, reward_fn=reward_fn, entry=entry, **kwargs)
 
         if reward_fn is None or entry is None:
             return result
 
-        output = (result.get("final_output") or {}).get("execution_result", "") or ""
-        try:
-            reward, message = reward_fn(output, entry)
-        except Exception as exc:
-            logger.warning("Reward function error: %s", exc)
-            reward, message = 0.0, str(exc)
+        # Reuse the reward score already computed during candidate selection.
+        # Re-evaluate only if selection ran in majority-vote mode (no reward_fn at solve time).
+        cached = result.pop("_best_reward_score", None)
+        if cached is not None:
+            reward, message = cached
+        else:
+            output = (result.get("final_output") or {}).get("execution_result", "") or ""
+            is_success = result.get("solved", False)
+            try:
+                reward_dict = reward_fn(output, is_success, entry)
+                reward = reward_dict.get("value", 0.0)
+                message = reward_dict.get("message", "")
+            except Exception as exc:
+                logger.warning("Reward function error: %s", exc)
+                reward, message = 0.0, str(exc)
 
         reward_history = [
             {
@@ -219,10 +233,21 @@ class TroVEController:
     # Core generation pipeline
     # ------------------------------------------------------------------
 
-    def _multi_way_generation(self, question: str, example_idx: int):
+    def _multi_way_generation(
+        self,
+        question: str,
+        example_idx: int,
+        reward_fn: Optional[Callable] = None,
+        entry: Optional[dict] = None,
+    ):
         """
         Generate K candidates per mode, pick best per mode, then best overall.
-        Returns (winning_mode, best_response_dict).
+        Returns (winning_mode, best_response_dict, best_reward_score_or_None).
+
+        When reward_fn + entry are provided, candidate selection uses reward-based
+        scoring instead of majority vote on stdout.  This is more reliable for
+        PBEBench (program lists rarely match exactly as strings) and equally good
+        for reasoning_gym.
         """
         toolbox_str = self.toolbox.format_toolbox()
 
@@ -239,10 +264,14 @@ class TroVEController:
                     self.toolbox.get_full_code(),
                 )
                 import_candidates.append({**parsed, "is_success": is_ok, "exec_output": out})
-            best_import = import_candidates[self._select_best(import_candidates)]
+            best_import_idx, best_import_score = self._select_best(
+                import_candidates, reward_fn=reward_fn, entry=entry
+            )
+            best_import = import_candidates[best_import_idx]
+            best_import["_reward_score"] = best_import_score
         else:
             best_import = {"solution_code": "", "tools_code": "", "functions": [],
-                           "is_success": False, "exec_output": ""}
+                           "is_success": False, "exec_output": "", "_reward_score": None}
 
         # --- CREATE mode ---
         create_candidates = []
@@ -250,14 +279,17 @@ class TroVEController:
             prompt = build_create_prompt(question)
             raw = self.llm.call(prompt, self.model, max_tokens=DEFAULT_MAX_TOKENS, tag="trove_create")
             parsed = parse_response(raw)
-            # CREATE mode: run without any toolbox (model defines its own functions inline)
             is_ok, out = run_solution(
                 parsed["solution_code"],
                 parsed["tools_code"],
                 toolbox_code="",
             )
             create_candidates.append({**parsed, "is_success": is_ok, "exec_output": out})
-        best_create = create_candidates[self._select_best(create_candidates)]
+        best_create_idx, best_create_score = self._select_best(
+            create_candidates, reward_fn=reward_fn, entry=entry
+        )
+        best_create = create_candidates[best_create_idx]
+        best_create["_reward_score"] = best_create_score
 
         # --- SKIP mode ---
         skip_candidates = []
@@ -271,7 +303,11 @@ class TroVEController:
                 toolbox_code="",
             )
             skip_candidates.append({**parsed, "is_success": is_ok, "exec_output": out})
-        best_skip = skip_candidates[self._select_best(skip_candidates)]
+        best_skip_idx, best_skip_score = self._select_best(
+            skip_candidates, reward_fn=reward_fn, entry=entry
+        )
+        best_skip = skip_candidates[best_skip_idx]
+        best_skip["_reward_score"] = best_skip_score
 
         # --- Select across modes ---
         mode_candidates = []
@@ -284,19 +320,76 @@ class TroVEController:
         mode_candidates.append(best_skip)
         mode_names.append("skip")
 
-        best_idx = self._select_best(mode_candidates)
+        best_idx, best_score = self._select_best(
+            mode_candidates, reward_fn=reward_fn, entry=entry
+        )
         winning_mode = mode_names[best_idx]
         best_resp = mode_candidates[best_idx]
 
         logger.debug(
-            "Task %d: winning_mode=%s, is_success=%s, output=%r",
-            self._n_processed, winning_mode, best_resp["is_success"], best_resp["exec_output"][:80],
+            "Task %d: winning_mode=%s, is_success=%s, reward=%s, output=%r",
+            self._n_processed, winning_mode, best_resp["is_success"],
+            f"{best_score[0]:.3f}" if best_score else "n/a",
+            best_resp["exec_output"][:80],
         )
-        return winning_mode, best_resp
+        return winning_mode, best_resp, best_score
 
-    def _select_best(self, candidates: List[dict]) -> int:
+    def _select_best(
+        self,
+        candidates: List[dict],
+        reward_fn: Optional[Callable] = None,
+        entry: Optional[dict] = None,
+    ):
         """
-        Self-consistency selection over a list of response dicts.
+        Select the best candidate from a list of response dicts.
+
+        Returns (best_index, score_or_None) where score is (reward, message)
+        when reward-based selection is used, or None for majority-vote mode.
+
+        Two selection strategies:
+        1. Reward-based (when reward_fn + entry provided):
+           Score all K candidates with reward_fn; pick highest reward,
+           tiebreak by minimum AST node count (simplest solution).
+           This is reliable for PBEBench (program lists rarely match exactly
+           as strings) and equally good for reasoning_gym.
+        2. Majority-vote fallback (original TroVE algorithm):
+           Filter successes → majority vote on stdout → min AST tiebreak.
+           Used when no reward function is available (e.g. bare solve()).
+        """
+        if reward_fn is not None and entry is not None:
+            return self._select_best_by_reward(candidates, reward_fn, entry)
+        return self._select_best_by_consistency(candidates), None
+
+    def _select_best_by_reward(
+        self,
+        candidates: List[dict],
+        reward_fn: Callable,
+        entry: dict,
+    ):
+        """Reward-based candidate selection. Returns (best_index, (reward, message))."""
+        best_idx = 0
+        best_reward = -1.0
+        best_ast = float("inf")
+        best_message = ""
+        for i, c in enumerate(candidates):
+            try:
+                rd = reward_fn(c.get("exec_output", ""), c.get("is_success", False), entry)
+                score = rd.get("value", 0.0)
+                msg = rd.get("message", "")
+            except Exception as exc:
+                logger.debug("Reward scoring error for candidate %d: %s", i, exc)
+                score, msg = 0.0, str(exc)
+            ast_size = count_ast_nodes(c.get("solution_code", ""))
+            if score > best_reward or (score == best_reward and ast_size < best_ast):
+                best_idx = i
+                best_reward = score
+                best_ast = ast_size
+                best_message = msg
+        return best_idx, (best_reward, best_message)
+
+    def _select_best_by_consistency(self, candidates: List[dict]) -> int:
+        """
+        Original TroVE self-consistency selection (majority vote on stdout).
 
         Algorithm (faithful to select_best_solution in TroVE utils/code.py):
           1. Filter successes (is_success=True).
@@ -309,11 +402,9 @@ class TroVEController:
         if not successes:
             return 0
 
-        # Majority vote
         output_counter: Counter = Counter(c["exec_output"] for _, c in successes)
         majority_output = output_counter.most_common(1)[0][0]
 
-        # Min AST among majority
         majority = [(i, c) for i, c in successes if c["exec_output"] == majority_output]
         best_i, _ = min(
             majority,
@@ -352,6 +443,7 @@ class TroVEController:
         best_resp: dict,
         is_success: bool,
         output: str,
+        best_reward_score=None,
     ) -> dict:
         """
         Build a result dict compatible with main.py's _print_result() and
@@ -383,4 +475,6 @@ class TroVEController:
             "reward_history": [],
             "best_reward": None,
             "final_reward": None,
+            # Cached score from reward-based selection; consumed and removed by solve_with_reward.
+            "_best_reward_score": best_reward_score,
         }

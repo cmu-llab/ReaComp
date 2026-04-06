@@ -210,6 +210,47 @@ def _save_checkpoint(controller: Controller, last_completed_index: int, checkpoi
         logger.warning("Could not write checkpoint %s: %s", checkpoint_file, exc)
 
 
+def _save_trove_checkpoint(controller, last_completed_index: int, checkpoint_file: str) -> None:
+    """
+    Save TroVE controller state so a crashed run can be resumed.
+    Stores the toolbox and _n_processed counter alongside last_completed_index.
+    """
+    ckpt = {
+        "last_completed_index": last_completed_index,
+        "n_processed": controller._n_processed,
+        "toolbox": controller.toolbox.to_dict(),
+    }
+    try:
+        Path(checkpoint_file).write_text(
+            json.dumps(ckpt, indent=2, default=str), encoding="utf-8"
+        )
+    except Exception as exc:
+        logger.warning("Could not write TroVE checkpoint %s: %s", checkpoint_file, exc)
+
+
+def _load_trove_checkpoint(controller, checkpoint_file: str) -> int:
+    """
+    Restore TroVE controller state from {checkpoint_file}.
+    Returns the next task index to run (last_completed_index + 1).
+    Returns 0 on any error.
+    """
+    from symbolic_agent.baselines.trove.toolbox import TroVEToolbox
+    try:
+        ckpt = json.loads(Path(checkpoint_file).read_text(encoding="utf-8"))
+        controller.toolbox = TroVEToolbox.from_dict(ckpt.get("toolbox", {}))
+        controller._n_processed = ckpt.get("n_processed", 0)
+        last_index = ckpt.get("last_completed_index", -1)
+        next_index = last_index + 1
+        logger.info(
+            "TroVE checkpoint loaded: last_completed=%d, toolbox=%d fns, n_processed=%d → resuming from task %d",
+            last_index, len(controller.toolbox), controller._n_processed, next_index,
+        )
+        return next_index
+    except Exception as exc:
+        logger.warning("Could not load TroVE checkpoint %s: %s — starting from scratch.", checkpoint_file, exc)
+        return 0
+
+
 def _load_checkpoint(controller: Controller, checkpoint_file: str) -> int:
     """
     Restore controller state from {checkpoint_file}.
@@ -549,17 +590,20 @@ def main() -> None:
         )
 
         # Auto-resume: if both output file and checkpoint exist, restore state and skip done tasks.
-        # Checkpointing is only supported for the ssl_bcr framework (TroVE rebuilds from stream;
-        # ReGAL is trained offline before the test run and has no per-task state to checkpoint).
+        # ssl_bcr and trove both support per-task checkpointing.
+        # ReGAL is trained offline before the test run and has no per-task state to checkpoint.
         start_index = 0
-        if args.framework == "ssl_bcr":
+        if args.framework in ("ssl_bcr", "trove"):
             if (
                 ckpt_file
                 and Path(ckpt_file).exists()
                 and args.output_file
                 and Path(args.output_file).exists()
             ):
-                start_index = _load_checkpoint(controller, ckpt_file)
+                if args.framework == "trove":
+                    start_index = _load_trove_checkpoint(controller, ckpt_file)
+                else:
+                    start_index = _load_checkpoint(controller, ckpt_file)
             elif ckpt_file and Path(ckpt_file).exists():
                 logger.warning(
                     "Checkpoint found but output file %s is missing — ignoring checkpoint and starting fresh.",
@@ -589,8 +633,11 @@ def main() -> None:
             _print_result(result, i)
             if args.output_file:
                 _append_task_output(result, i, args.output_file)
-            if ckpt_file and args.framework == "ssl_bcr":
-                _save_checkpoint(controller, i, ckpt_file)
+            if ckpt_file:
+                if args.framework == "ssl_bcr":
+                    _save_checkpoint(controller, i, ckpt_file)
+                elif args.framework == "trove":
+                    _save_trove_checkpoint(controller, i, ckpt_file)
             # Library size: ssl_bcr uses controller.library, TroVE uses controller.toolbox,
             # ReGAL uses controller.codebank
             if args.framework == "trove":
