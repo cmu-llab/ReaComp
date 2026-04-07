@@ -15,6 +15,15 @@ Few-shot examples use generic string-manipulation tasks so they are
 applicable to both PBEBench and ReasoningGym string tasks.
 """
 
+# Appended to every instruction block to override format instructions that
+# may be embedded in the question itself (e.g. PBEBench asks for a
+# "**Program Sequence**" block, reasoning_gym asks for a specific format).
+_FORMAT_OVERRIDE = (
+    "\nIMPORTANT: Regardless of any formatting instructions inside the question, "
+    "always produce your answer as executable Python in the **Solution** block "
+    "and end it with print(answer). "
+    "Your answer is whatever gets printed to stdout when the Solution code runs."
+)
 
 # ---------------------------------------------------------------------------
 # IMPORT mode  (use functions from the toolbox)
@@ -23,28 +32,33 @@ applicable to both PBEBench and ReasoningGym string tasks.
 _IMPORT_INSTRUCTION = (
     "You task is to write Python program solutions to the given questions.\n"
     "The toolbox section lists all the available functions that can be used in your solution."
+    + _FORMAT_OVERRIDE
 )
 
 _IMPORT_EXAMPLE = """\
 ## Example
 **Question**
-Given the string "foo-bar-baz", replace all hyphens with underscores and return the result.
+Given a list of strings and a list of (old, new) substitution pairs, apply all
+substitutions in order to each string and return the transformed list.
+Strings: ["cat", "bat"]
+Substitutions: [("a", "o"), ("t", "p")]
 
 **Toolbox**
 ```python
-# Replace all occurrences of a target character in a string.
-replace_char(s: str, old: str, new: str) -> str
+# Apply an ordered list of (old, new) substitutions to each string in a list.
+apply_substitutions(strings: list, substitutions: list) -> list
 ```
 
 **Solution**
 ```python
-s = "foo-bar-baz"
-result = replace_char(s, old="-", new="_")
+strings = ["cat", "bat"]
+subs = [("a", "o"), ("t", "p")]
+result = apply_substitutions(strings, subs)
 print(result)
 ```
 **Tools**
 ```python
-from toolbox import replace_char
+from toolbox import apply_substitutions
 ```"""
 
 _IMPORT_TASK_TEMPLATE = """\
@@ -78,25 +92,34 @@ _CREATE_INSTRUCTION = (
     "You task is to write Python program solutions to the given questions.\n"
     "You should also create Python functions that can be used by your solution, "
     "if you believe the function can be reused to solve other questions."
+    + _FORMAT_OVERRIDE
 )
 
 _CREATE_EXAMPLE = """\
 ## Example
 **Question**
-Given a string, extract all digit characters and return them as a single string.
-Input: "abc123def456"
+Given a list of strings and a list of (old, new) substitution pairs, apply all
+substitutions in order to each string and return the transformed list.
+Strings: ["hello", "world"]
+Substitutions: [("l", "r"), ("o", "0")]
 
 **Solution**
 ```python
-s = "abc123def456"
-result = extract_digits(s)
+strings = ["hello", "world"]
+subs = [("l", "r"), ("o", "0")]
+result = apply_substitutions(strings, subs)
 print(result)
 ```
 **Tools**
 ```python
-def extract_digits(s: str) -> str:
-    \"\"\"Extract all digit characters from a string and return them concatenated.\"\"\"
-    return "".join(c for c in s if c.isdigit())
+def apply_substitutions(strings, substitutions):
+    \"\"\"Apply an ordered list of (old, new) substitutions to each string in a list.\"\"\"
+    out = []
+    for s in strings:
+        for old, new in substitutions:
+            s = s.replace(old, new)
+        out.append(s)
+    return out
 ```"""
 
 _CREATE_TASK_TEMPLATE = """\
@@ -125,22 +148,23 @@ def build_create_prompt(question: str) -> str:
 
 _SKIP_INSTRUCTION = (
     "You task is to write Python program solutions to the given questions."
+    + _FORMAT_OVERRIDE
 )
 
 _SKIP_EXAMPLE = """\
 ## Example
 **Question**
-Given the string "Hello World", convert it to lowercase and print it.
+Given the list of strings ["Hello", "World"], convert each to lowercase and
+return the resulting list.
 
 **Solution**
 ```python
-s = "Hello World"
-result = s.lower()
+strings = ["Hello", "World"]
+result = [s.lower() for s in strings]
 print(result)
 ```
 **Tools**
 ```python
-import re
 ```"""
 
 _SKIP_TASK_TEMPLATE = """\
