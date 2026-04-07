@@ -137,12 +137,12 @@ class TroVELLMClient:
             except Exception as exc:
                 last_exc = exc
                 if getattr(exc, "status_code", None) == 400:
-                    logger.error(
-                        "Anthropic call got 400 (tag=%s): %s\n--- PROMPT ---\n%s\n--- END PROMPT ---",
-                        tag, exc, prompt,
+                    logger.warning(
+                        "Anthropic call got 400 (tag=%s, likely multi-segment reasoning model output): %s",
+                        tag, exc,
                     )
-                    self._record(tag, model, prompt, f"[400 ERROR] {exc}", max_tokens)
-                    raise
+                    self._record(tag, model, prompt, "", max_tokens)
+                    return ""
                 if attempt < 2:
                     wait = 5 * (2 ** attempt)
                     logger.warning(
@@ -172,12 +172,12 @@ class TroVELLMClient:
             except Exception as exc:
                 last_exc = exc
                 if getattr(exc, "status_code", None) == 400:
-                    logger.error(
-                        "OpenAI call got 400 (tag=%s): %s\n--- PROMPT ---\n%s\n--- END PROMPT ---",
-                        tag, exc, prompt,
+                    logger.warning(
+                        "OpenAI call got 400 (tag=%s, likely multi-segment reasoning model output): %s",
+                        tag, exc,
                     )
-                    self._record(tag, model, prompt, f"[400 ERROR] {exc}", max_tokens)
-                    raise
+                    self._record(tag, model, prompt, "", max_tokens)
+                    return ""
                 if attempt < 2:
                     wait = 5 * (2 ** attempt)
                     logger.warning(
