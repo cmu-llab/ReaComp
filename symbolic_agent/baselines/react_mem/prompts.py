@@ -29,7 +29,7 @@ Submit your final answer:
 Rules:
 - execute: use print() to emit output; that becomes your observation.
 - submit: only when confident. Exact value requested, not prose.
-- Output a single JSON object and nothing else.\
+- Always wrap your response in a ```json fence — nothing outside the fence.\
 """
 
 

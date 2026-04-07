@@ -38,7 +38,7 @@ Rules:
   Self-contained Python; no os/sys/subprocess.
   Same name overwrites any prior definition.
 - submit: only when confident. Exact value requested, not prose.
-- Output a single JSON object and nothing else.\
+- Always wrap your response in a ```json fence — nothing outside the fence.\
 """
 
 

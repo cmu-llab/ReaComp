@@ -51,7 +51,8 @@ def _print_result(result: dict, task_index: int) -> None:
         iters = len(result["reward_history"])
         print(f"Reward : best={best:.3f}  iters={iters}")
         for h in result["reward_history"]:
-            print(f"  iter={h['iteration']}  r={h['reward']:.3f}  blame={h.get('blame','?')}  {h.get('message','')[:80]}")
+            idx = h.get('iteration', h.get('step', '?'))
+            print(f"  iter={idx}  r={h['reward']:.3f}  blame={h.get('blame','?')}  {h.get('message','')[:80]}")
 
     final = result.get("final_output", {})
     if "error" in final:
