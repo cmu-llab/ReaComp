@@ -137,7 +137,12 @@ class TroVELLMClient:
             except Exception as exc:
                 last_exc = exc
                 if getattr(exc, "status_code", None) == 400:
-                    raise
+                    logger.warning(
+                        "Anthropic call got 400 (tag=%s): %s. Treating as empty response.",
+                        tag, exc,
+                    )
+                    self._record(tag, model, prompt, "", max_tokens)
+                    return ""
                 if attempt < 2:
                     wait = 5 * (2 ** attempt)
                     logger.warning(
@@ -167,7 +172,12 @@ class TroVELLMClient:
             except Exception as exc:
                 last_exc = exc
                 if getattr(exc, "status_code", None) == 400:
-                    raise
+                    logger.warning(
+                        "OpenAI call got 400 (tag=%s): %s. Treating as empty response.",
+                        tag, exc,
+                    )
+                    self._record(tag, model, prompt, "", max_tokens)
+                    return ""
                 if attempt < 2:
                     wait = 5 * (2 ** attempt)
                     logger.warning(
