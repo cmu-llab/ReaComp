@@ -54,7 +54,8 @@ Constraints:
 - Each program must have the form replace(A, B) where A and B are strings.
 - len(A) must be between 1 and {program_length} characters; len(B) must be between 0 and {program_length} characters.
 - At most {program_num} programs in the sequence.
-- Only the Python str.replace() function may be used.\
+- Only the Python str.replace() function may be used.
+- Your answer must be a Python list of replace() call strings, e.g. ["replace('ab','c')", "replace('d','ef')"].\
 """
 
 def _build_prompt(rec: dict, program_length: int = 3, program_num: int = 5) -> str:
