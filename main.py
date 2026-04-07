@@ -289,6 +289,41 @@ def _load_react_mem_checkpoint(controller, checkpoint_file: str) -> int:
         return 0
 
 
+def _save_react_library_checkpoint(controller, last_completed_index: int, checkpoint_file: str) -> None:
+    """Save ReAct+Library controller state (function library + session tokens) to checkpoint."""
+    ckpt = {
+        "last_completed_index": last_completed_index,
+        "library": controller.library.to_list(),
+        "session_tokens": controller.get_session_token_usage(),
+    }
+    try:
+        Path(checkpoint_file).write_text(json.dumps(ckpt, indent=2, default=str), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Could not write react_library checkpoint %s: %s", checkpoint_file, exc)
+
+
+def _load_react_library_checkpoint(controller, checkpoint_file: str) -> int:
+    """Restore ReAct+Library controller state from checkpoint. Returns next task index."""
+    from symbolic_agent.baselines.react_library.library import ReactLibrary
+    try:
+        ckpt = json.loads(Path(checkpoint_file).read_text(encoding="utf-8"))
+        controller.library = ReactLibrary.from_list(ckpt.get("library", []))
+        if ckpt.get("session_tokens"):
+            controller.restore_session_tokens(ckpt["session_tokens"])
+        last_index = ckpt.get("last_completed_index", -1)
+        next_index = last_index + 1
+        logger.info(
+            "react_library checkpoint loaded: last_completed=%d, library=%d fns → resuming from task %d",
+            last_index, len(controller.library), next_index,
+        )
+        return next_index
+    except Exception as exc:
+        logger.warning(
+            "Could not load react_library checkpoint %s: %s — starting from scratch.", checkpoint_file, exc
+        )
+        return 0
+
+
 def _save_best_of_k_checkpoint(controller, last_completed_index: int, checkpoint_file: str) -> None:
     """Save Best-of-K state (no cross-task library, only token counts) to checkpoint."""
     ckpt = {
@@ -423,11 +458,12 @@ def main() -> None:
     parser.add_argument(
         "--framework",
         default="ssl_bcr",
-        choices=["ssl_bcr", "trove", "regal", "react_mem", "best_of_k"],
+        choices=["ssl_bcr", "trove", "regal", "react_mem", "react_library", "best_of_k"],
         help="Solution framework to use. 'ssl_bcr': symbolic library agent (default). "
              "'trove': TroVE online function induction baseline. "
              "'regal': ReGAL offline refactoring baseline. "
              "'react_mem': ReAct agent with episodic memory. "
+             "'react_library': ReAct agent with a shared growing Python function library. "
              "'best_of_k': K independent sampling attempts, best-of-K by reward. "
              "(default: ssl_bcr)",
     )
@@ -575,7 +611,15 @@ def main() -> None:
         type=int,
         default=5,
         metavar="N",
-        help="[react_mem] Maximum ReAct steps (thought/code/observe cycles) per task. (default: 5)",
+        help="[react_mem/react_library] Maximum ReAct steps (thought/code/observe cycles) per task. (default: 5)",
+    )
+    # ---- ReAct+Library-specific flags ----
+    parser.add_argument(
+        "--react-lib-k",
+        type=int,
+        default=5,
+        metavar="K",
+        help="[react_library] Number of library functions retrieved for each task. (default: 5)",
     )
     # ---- Best-of-K-specific flags ----
     parser.add_argument(
@@ -753,6 +797,21 @@ def main() -> None:
             max_tokens=args.max_tokens or 4096,
         )
         logger.info("Framework: ReAct+Memory (k=%d, max_steps=%d)", args.react_mem_k, args.react_max_steps)
+    elif args.framework == "react_library":
+        from symbolic_agent.baselines.react_library import ReActLibraryController
+        controller = ReActLibraryController(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            debug_dir=args.debug_dir,
+            library_k=args.react_lib_k,
+            max_steps=args.react_max_steps,
+            max_tokens=args.max_tokens or 4096,
+        )
+        logger.info(
+            "Framework: ReAct+Library (library_k=%d, max_steps=%d)",
+            args.react_lib_k, args.react_max_steps,
+        )
     elif args.framework == "best_of_k":
         from symbolic_agent.baselines.best_of_k import BestOfKController
         controller = BestOfKController(
@@ -844,10 +903,10 @@ def main() -> None:
         )
 
         # Auto-resume: all frameworks support checkpointing.
-        # ssl_bcr/trove/react_mem: full state (library/toolbox/memory) + session tokens.
+        # ssl_bcr/trove/react_mem/react_library: full state (library/toolbox/memory) + session tokens.
         # best_of_k/regal: session tokens + last_completed_index only (no cross-task library).
         start_index = 0
-        if args.framework in ("ssl_bcr", "trove", "react_mem", "best_of_k", "regal"):
+        if args.framework in ("ssl_bcr", "trove", "react_mem", "react_library", "best_of_k", "regal"):
             if (
                 ckpt_file
                 and Path(ckpt_file).exists()
@@ -858,6 +917,8 @@ def main() -> None:
                     start_index = _load_trove_checkpoint(controller, ckpt_file)
                 elif args.framework == "react_mem":
                     start_index = _load_react_mem_checkpoint(controller, ckpt_file)
+                elif args.framework == "react_library":
+                    start_index = _load_react_library_checkpoint(controller, ckpt_file)
                 elif args.framework == "best_of_k":
                     start_index = _load_best_of_k_checkpoint(controller, ckpt_file)
                 elif args.framework == "regal":
@@ -900,6 +961,8 @@ def main() -> None:
                     _save_trove_checkpoint(controller, i, ckpt_file)
                 elif args.framework == "react_mem":
                     _save_react_mem_checkpoint(controller, i, ckpt_file)
+                elif args.framework == "react_library":
+                    _save_react_library_checkpoint(controller, i, ckpt_file)
                 elif args.framework == "best_of_k":
                     _save_best_of_k_checkpoint(controller, i, ckpt_file)
                 elif args.framework == "regal":

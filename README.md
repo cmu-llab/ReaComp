@@ -63,6 +63,7 @@ symbolic-library-agent/
 │       ├── trove/          # TroVE online function induction (--framework trove)
 │       ├── regal/          # ReGAL offline refactoring (--framework regal)
 │       ├── react_mem/      # ReAct + episodic memory (--framework react_mem)
+│       ├── react_library/  # ReAct + shared Python function library (--framework react_library)
 │       └── best_of_k/      # Best-of-K sampling (--framework best_of_k)
 ├── examples/
 │   └── tasks.py            # Built-in example tasks
@@ -156,7 +157,7 @@ export VLLM_API_KEY=your-key
 
 | Flag | Default | Description |
 |---|---|---|
-| `--framework NAME` | `ssl_bcr` | `ssl_bcr` · `trove` · `regal` · `react_mem` · `best_of_k` |
+| `--framework NAME` | `ssl_bcr` | `ssl_bcr` · `trove` · `regal` · `react_mem` · `react_library` · `best_of_k` |
 | `--model NAME` | `claude-sonnet-4-5` | Model name. Aliases: `sonnet`, `opus`, `haiku`, `gpt4o`, `gpt4omini` |
 | `--backend NAME` | auto | `anthropic` · `openai` · `vllm`. Auto-inferred from model name and `--base-url` |
 | `--base-url URL` | — | OpenAI-compatible endpoint for vLLM (e.g. `http://localhost:8002/v1`) |
@@ -170,7 +171,7 @@ export VLLM_API_KEY=your-key
 | `--max-tokens-patch N` | `16384` | Max_tokens for neural patch call |
 | `--max-tokens-parser N` | `512` | Max_tokens for TaskParser call |
 | `--show-projected-budget` | off | Print projected max token budget per task, then exit |
-| `--max-reward-iters N` | `3` | Max reward-feedback iterations (ssl_bcr, react_mem) |
+| `--max-reward-iters N` | `3` | Max reward-feedback iterations (ssl_bcr, react_mem, react_library) |
 
 **General:**
 
@@ -193,7 +194,8 @@ export VLLM_API_KEY=your-key
 | `--trove-k K` | trove | `5` | Samples per mode |
 | `--trove-trim-every N` | trove | `500` | Trim toolbox every N tasks |
 | `--react-mem-k K` | react_mem | `3` | Memory examples retrieved per task |
-| `--react-max-steps N` | react_mem | `5` | ReAct steps per task |
+| `--react-max-steps N` | react_mem / react_library | `5` | ReAct steps per task |
+| `--react-lib-k K` | react_library | `5` | Library functions retrieved per task |
 | `--bok-k K` | best_of_k | `5` | Independent attempts per task |
 | `--regal-train-file FILE` | regal | — | Training JSONL with `program` key |
 
@@ -207,11 +209,13 @@ Five frameworks are available via `--framework`:
 | `trove` | TroVE: online function induction | `--trove-k`, `--trove-trim-every` |
 | `regal` | ReGAL: offline refactoring + code bank | `--regal-train-file`, `--regal-retrieval` |
 | `react_mem` | ReAct agent + episodic memory retrieval | `--react-mem-k`, `--react-max-steps` |
+| `react_library` | ReAct agent + shared growing Python function library | `--react-lib-k`, `--react-max-steps` |
 | `best_of_k` | K independent samples, best by reward | `--bok-k` |
 
 **Compute matching:** to compare baselines at equal token budget, set each framework's `K × max_tokens` to the same value. Example — matching ssl_bcr at `3 iters × 8192 tokens`:
 - `best_of_k --bok-k 3 --max-tokens 8192`
 - `react_mem --max-reward-iters 3 --max-tokens 4096 --react-max-steps 2`
+- `react_library --max-reward-iters 3 --max-tokens 4096 --react-max-steps 2`
 
 Show the projected budget formula without running:
 ```bash
