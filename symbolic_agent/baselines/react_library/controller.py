@@ -129,11 +129,20 @@ class ReActLibraryController:
                         "reasoning_tokens": 0,
                     }
                 else:
-                    oai_msgs = [{"role": "system", "content": system}] + messages
-                    # No response_format — gpt-oss-120b (and other reasoning models on vLLM)
-                    # produce [reasoning, final] as 2 internal output segments; json_object
-                    # mode conflicts with this 2-part structure and returns 400.
-                    # We instruct via the system prompt instead (_JSON_INSTRUCTION).
+                    # For vLLM reasoning models (gpt-oss-120b etc.) the chat template
+                    # does NOT support a separate "system" role message.  vLLM processes
+                    # the system content through its own tokeniser which creates N segments,
+                    # and then returns 400 "Expected 2 output messages but got N".
+                    # Fix: inject the system instructions into the first user message so
+                    # the conversation is a clean alternating user/assistant sequence.
+                    if messages and messages[0]["role"] == "user":
+                        first_content = system + "\n\n" + messages[0]["content"]
+                        oai_msgs = [{"role": "user", "content": first_content}] + messages[1:]
+                    else:
+                        oai_msgs = [{"role": "user", "content": system}] + messages
+                    # No response_format — reasoning models produce [reasoning, final] as
+                    # 2 internal segments; json_object mode conflicts and returns 400.
+                    # JSON output is enforced via the system prompt (_JSON_INSTRUCTION).
                     resp = self._client.chat.completions.create(
                         model=self.model,
                         max_tokens=self.max_tokens,

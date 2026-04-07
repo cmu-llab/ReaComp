@@ -106,6 +106,7 @@ class ReActMemController:
 
         for attempt in range(3):
             try:
+                reasoning_raw = ""
                 if self._backend == "anthropic":
                     resp = self._client.messages.create(
                         model=self.model,
@@ -122,14 +123,22 @@ class ReActMemController:
                         "reasoning_tokens": 0,
                     }
                 else:
-                    oai_msgs = [{"role": "system", "content": system}] + messages
+                    # Inject system into first user message — gpt-oss-120b's vLLM chat
+                    # template does not support the "system" role and returns 400 when it
+                    # encounters it.  No response_format for the same reason.
+                    if messages and messages[0]["role"] == "user":
+                        first_content = system + "\n\n" + messages[0]["content"]
+                        oai_msgs = [{"role": "user", "content": first_content}] + messages[1:]
+                    else:
+                        oai_msgs = [{"role": "user", "content": system}] + messages
                     resp = self._client.chat.completions.create(
                         model=self.model,
                         max_tokens=self.max_tokens,
                         messages=oai_msgs,
-                        response_format={"type": "json_object"},
                     )
-                    raw = resp.choices[0].message.content or ""
+                    msg = resp.choices[0].message
+                    raw = msg.content or ""
+                    reasoning_raw = getattr(msg, "reasoning_content", "") or ""
                     u = getattr(resp, "usage", None)
                     details = getattr(u, "completion_tokens_details", None)
                     usage = {
@@ -169,6 +178,9 @@ class ReActMemController:
                 })
                 if self._debug_dir:
                     self._write_debug(tag, messages, raw, usage, result)
+                # Pass raw + reasoning back to the loop for proper assistant message construction.
+                result["_raw"] = raw
+                result["_reasoning"] = reasoning_raw
                 return result
 
             except Exception as exc:
@@ -247,9 +259,14 @@ class ReActMemController:
             messages.append({"role": "user", "content": user_content})
             result = self._call_llm(messages, tag=f"react_step{step}")
 
+            raw_response = result.pop("_raw", "")
+            reasoning_response = result.pop("_reasoning", "")
             thought = result.get("thought", "")
             action_type = result.get("action_type", "")
-            messages.append({"role": "assistant", "content": str(result)})
+            asst_msg: Dict = {"role": "assistant", "content": raw_response or "{}"}
+            if reasoning_response:
+                asst_msg["reasoning_content"] = reasoning_response
+            messages.append(asst_msg)
 
             if action_type == "finish":
                 last_answer = result.get("answer")
