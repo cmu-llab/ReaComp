@@ -62,7 +62,7 @@ from toolbox import apply_substitutions
 ```"""
 
 _IMPORT_TASK_TEMPLATE = """\
-## Example
+## Task
 **Question**
 {question}
 
@@ -123,7 +123,7 @@ def apply_substitutions(strings, substitutions):
 ```"""
 
 _CREATE_TASK_TEMPLATE = """\
-## Example
+## Task
 **Question**
 {question}
 
@@ -168,7 +168,7 @@ print(result)
 ```"""
 
 _SKIP_TASK_TEMPLATE = """\
-## Example
+## Task
 **Question**
 {question}
 
