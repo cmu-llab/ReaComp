@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_K = 5
 DEFAULT_TRIM_EVERY = 500
-DEFAULT_MAX_TOKENS = 512
+DEFAULT_MAX_TOKENS = 4096  # reasoning models (e.g. gpt-oss-120b) consume tokens for CoT
 
 
 class TroVEController:

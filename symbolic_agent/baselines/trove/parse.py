@@ -54,6 +54,35 @@ def _extract_code_block(text: str, header: str) -> Optional[str]:
     return None
 
 
+def _extract_any_python_block(text: str) -> Optional[str]:
+    """
+    Fallback: return the content of the first ```python...``` block found anywhere.
+    Returns None if no such block exists.
+    """
+    m = re.search(r"```python\s*\n(.*?)```", text, re.DOTALL)
+    return m.group(1).strip() if m else None
+
+
+def _make_executable(code: str) -> str:
+    """
+    Ensure code ends with a print() so execution captures the answer.
+
+    If the code is a bare list literal (e.g. ["replace('a','b')"]), wrap it
+    in print().  If it already contains a print() or is multi-line executable
+    code, return as-is.
+    """
+    if not code:
+        return code
+    stripped = code.strip()
+    # Already has a print call
+    if "print(" in stripped:
+        return stripped
+    # Bare list or string literal — wrap in print()
+    if stripped.startswith("[") or stripped.startswith('"') or stripped.startswith("'"):
+        return f"print({stripped})"
+    return stripped
+
+
 def parse_response(text: str) -> dict:
     """
     Parse a TroVE-format LLM response.
@@ -65,9 +94,25 @@ def parse_response(text: str) -> dict:
         "tools_code":    str,         # code inside **Tools** block
         "functions":     list[dict],  # parsed tool dicts from the Tools block
     }
+
+    Fallback behaviour
+    ------------------
+    Tasks like PBEBench embed their own format instructions (e.g. "output a
+    **Program Sequence** block") that can override the TroVE **Solution**
+    header.  When no **Solution** block is found we grab the first ```python```
+    block in the response and, if it is a bare list/string literal, wrap it
+    in print() so it can be executed and its stdout captured as the answer.
     """
     solution_code = _extract_code_block(text, "Solution") or ""
     tools_code = _extract_code_block(text, "Tools") or ""
+
+    # Fallback: model followed the task's own format (e.g. **Program Sequence**)
+    # instead of the TroVE **Solution** header.
+    if not solution_code:
+        raw = _extract_any_python_block(text)
+        if raw:
+            solution_code = _make_executable(raw)
+
     functions = parse_tools_in_chunk(tools_code) if tools_code else []
     return {
         "solution_code": solution_code,
