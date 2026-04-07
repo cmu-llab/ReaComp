@@ -333,6 +333,8 @@ def plot_library_growth(ax, ckpts: list, labels: list[str]):
                 count += 1
             xs.append(i)
             ys.append(count)
+        if not xs:
+            continue
         ax.plot(xs, ys, label=label, color=color, linewidth=1.5)
         ax.text(xs[-1] + 1, ys[-1], f"{ys[-1]}", fontsize=7, color=color, va="center")
 
