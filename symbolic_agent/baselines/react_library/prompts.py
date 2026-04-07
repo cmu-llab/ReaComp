@@ -1,132 +1,85 @@
 """
 Prompts for the ReAct + Library baseline.
 
-The agent interleaves Thought and Action in a ReAct loop.  Unlike the
-plain ReAct+Memory baseline, it maintains a shared library of reusable
-Python helper functions.  Library functions are always in the execution
-namespace so the agent calls them by name directly.
+Stateless per-step context design: each LLM call receives a single
+self-contained message with the current task, top-K retrieved library
+functions, the last execution output, and the latest verifier feedback.
+No prior trajectory is included — the model's own chain-of-thought
+(reasoning_content) serves as implicit state.
 
-Three action types:
-  execute_code    — run Python; library functions are available by name.
-  add_to_library  — define and register a new reusable helper function.
-  finish          — emit the final answer.
+Three flat actions:
+  execute      — run Python; library functions are in the namespace.
+  add_function — register a new reusable helper in the shared library.
+  submit       — propose a final answer; triggers immediate reward eval.
 """
 
 from typing import Dict, List, Optional
 
 
 _SYSTEM = """\
-You are a ReAct agent that solves programming and reasoning tasks.
-You maintain a shared library of reusable Python helper functions that grows as you work.
+You are a programming agent that solves tasks by writing and testing Python code.
+You have access to a shared library of reusable helper functions (always pre-loaded in scope).
 
-At each step respond with a single valid JSON object in one of these three formats:
+Output exactly one JSON action and nothing else:
 
-Format A — execute Python code (library functions are already in scope):
-{
-  "thought": "My reasoning about what to try next",
-  "action_type": "execute_code",
-  "code": "# call library helpers by name; use print() to see output\\nresult = my_helper(x)\\nprint(result)"
-}
+Run code (library functions are in scope; use print() for output):
+{"action": "execute", "code": "<python code>"}
 
-Format B — add a reusable helper to the library:
-{
-  "thought": "I need a reusable helper for this pattern",
-  "action_type": "add_to_library",
-  "name": "snake_case_function_name",
-  "description": "One-line description of what this function does",
-  "code": "def snake_case_function_name(...):\\n    ..."
-}
+Add a reusable helper to the shared library:
+{"action": "add_function", "name": "<snake_case>", "description": "<one-line>", "code": "<def snake_case(...): ...>"}
 
-Format C — provide the final answer:
-{
-  "thought": "I now have the correct answer",
-  "action_type": "finish",
-  "answer": "<exact final answer>"
-}
+Submit your final answer:
+{"action": "submit", "answer": "<exact answer>"}
 
 Rules:
-- execute_code: library functions are pre-loaded into the namespace — call them by name directly.
-  Never use 'from __main__ import fn' or re-implement a library function inline.
-  Use print() to emit output; that output becomes your Observation.
-- add_to_library: only add *genuinely reusable* functions (parameterised, not task-specific).
-  The function must be self-contained Python (no os/sys/subprocess imports).
-  A function with that name overwrites any prior definition.
-- finish: use ONLY when you are confident in the answer.
-  The answer must be the exact value requested (not a sentence).
-- Do not output prose outside the JSON object.
+- execute: library functions are pre-loaded by name — call them directly, no imports.
+  Use print() to emit output; that becomes your observation.
+- add_function: parameterised helpers only, no task-specific hardcoding.
+  Self-contained Python; no os/sys/subprocess.
+  Same name overwrites any prior definition.
+- submit: only when confident. Exact value requested, not prose.
+- Output a single JSON object and nothing else.\
 """
 
 
 def _format_library_block(functions: List[Dict]) -> str:
     if not functions:
         return ""
-    lines = ["--- Available library functions ---"]
+    lines = ["Available library functions:"]
     for fn in functions:
-        lines.append(f"\n{fn['name']}: {fn['description']}")
-        lines.append(f"```python\n{fn['code']}\n```")
-    lines.append("--- End of library ---\n")
+        lines.append(f"  {fn['name']}: {fn['description']}")
+        lines.append(f"  ```python\n  {fn['code']}\n  ```")
     return "\n".join(lines)
 
 
-def build_initial_prompt(
+def build_prompt(
     task: str,
     library_functions: List[Dict],
-    step: int = 0,
+    last_result: Optional[str] = None,
+    verifier_feedback: Optional[str] = None,
 ) -> str:
-    """Build the user message for the first ReAct step."""
+    """
+    Build a self-contained single-turn prompt for one ReAct step.
+
+    Parameters
+    ----------
+    task : str
+        The task description shown every step.
+    library_functions : List[Dict]
+        Top-K retrieved library functions to show.
+    last_result : str, optional
+        Stdout / stderr from the last execute action (None on first step).
+    verifier_feedback : str, optional
+        Reward score + message from the last submit action (None if no submit yet).
+    """
+    parts = []
     lib_block = _format_library_block(library_functions)
-    return (
-        f"{lib_block}"
-        f"Task:\n{task}\n\n"
-        "Step 1: Think about how to solve this task.\n"
-        "If a library function covers part of the work, call it directly in execute_code.\n"
-        "If you need a reusable helper that is not in the library, add it first with add_to_library.\n"
-        "Remember: print() your result in execute_code so you can see the output."
-    )
-
-
-def build_followup_prompt(
-    task: str,
-    history: List[Dict],
-    step: int,
-    library_functions: Optional[List[Dict]] = None,
-    reward_feedback: Optional[str] = None,
-) -> str:
-    """
-    Build the user message for subsequent ReAct steps.
-
-    library_functions: current top-K relevant library functions (may have grown since step 0).
-    history: list of step dicts produced during the loop.
-    """
-    lines = [f"Task:\n{task}\n"]
-
-    for i, h in enumerate(history, 1):
-        lines.append(f"Step {i}:")
-        lines.append(f"  Thought: {h['thought']}")
-        atype = h["action_type"]
-        if atype == "execute_code":
-            code_preview = h.get("code", "")[:400]
-            lines.append(f"  Action: execute_code\n  Code:\n```python\n{code_preview}\n```")
-            obs = h.get("observation", "")
-            lines.append(f"  Observation: {obs[:500] if obs else '(no output)'}")
-        elif atype == "add_to_library":
-            lines.append(
-                f"  Action: add_to_library → {h.get('name', '?')} "
-                f"({h.get('description', '')[:80]})"
-            )
-            lines.append(f"  Observation: {h.get('observation', '')}")
-        elif atype == "finish":
-            lines.append(f"  Action: finish → {h.get('answer', '')}")
-
-    if library_functions:
-        lines.append("")
-        lines.append(_format_library_block(library_functions))
-
-    if reward_feedback:
-        lines.append(f"\nFeedback on previous answer: {reward_feedback}")
-
-    lines.append(
-        f"\nStep {step + 1}: Continue reasoning. "
-        "Execute code, add a library helper, or provide the final answer."
-    )
-    return "\n".join(lines)
+    if lib_block:
+        parts.append(lib_block)
+    parts.append(f"Task:\n{task}")
+    if last_result is not None:
+        parts.append(f"\nExecution output:\n{last_result}")
+    if verifier_feedback is not None:
+        parts.append(f"\nVerifier:\n{verifier_feedback}")
+    parts.append("\nNext action:")
+    return "\n\n".join(parts)

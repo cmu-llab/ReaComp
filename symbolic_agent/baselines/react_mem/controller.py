@@ -1,19 +1,23 @@
 """
 ReAct + Memory Controller.
 
-Implements a ReAct agent (Yao et al. 2022) with an episodic memory store
-that retrieves similar past solutions as in-context examples for new tasks.
-Inspired by the memory module in Hypothetical Minds (Cross et al. 2024).
+Stateless per-step design: each LLM call is a single-turn message
+containing only the current task, top-K retrieved memory examples
+(similar past solutions), the most recent execution output, and the
+most recent verifier feedback.  No prior trajectory is accumulated —
+the model's own chain-of-thought (reasoning_content) is the working memory.
 
-Architecture:
-  For each task:
-    1. Retrieve top-K similar solved tasks from memory.
-    2. Run ReAct loop (Thought → Code → Observation) for up to max_steps.
-    3. Evaluate with reward_fn.
-    4. Store the best solution in memory for future tasks.
+Two actions the agent may take per step:
+  execute — run Python code and observe output.
+  submit  — propose a final answer; triggers immediate reward evaluation.
 
-The agent never maintains a shared function library — all generalisation
-happens through few-shot retrieval from memory.
+The reward-iteration loop is folded into the step loop: each 'submit'
+action calls the reward function immediately and feeds the score +
+message back as verifier feedback in the next step's prompt.  The loop
+exits when reward >= 1.0 or max_steps is exhausted.
+
+The best solution is stored in memory after the task completes so that
+future tasks can retrieve it as a few-shot example.
 """
 
 import logging
@@ -22,14 +26,9 @@ from typing import Any, Callable, Dict, List, Optional
 
 from .executor import run_code
 from .memory import ReActMemory
-from .prompts import _SYSTEM, build_followup_prompt, build_initial_prompt
+from .prompts import _SYSTEM, build_prompt
 
 logger = logging.getLogger(__name__)
-
-_JSON_INSTRUCTION = (
-    "\n\nRespond with a single valid JSON object and nothing else. "
-    "No markdown fences, no prose before or after the JSON."
-)
 
 
 class ReActMemController:
@@ -46,11 +45,9 @@ class ReActMemController:
     memory_k : int
         Number of memory examples to retrieve per task (default: 3).
     max_steps : int
-        Maximum ReAct steps per task (default: 5).
+        Maximum total actions (execute + submit) per task (default: 10).
     max_tokens : int
         Max tokens per LLM call (default: 4096).
-    temperature : float
-        Sampling temperature (default: 0.0 for greedy).
     """
 
     def __init__(
@@ -60,15 +57,13 @@ class ReActMemController:
         base_url: Optional[str] = None,
         debug_dir: Optional[str] = None,
         memory_k: int = 3,
-        max_steps: int = 5,
+        max_steps: int = 10,
         max_tokens: int = 4096,
-        temperature: float = 0.0,
     ):
         self.model = model
         self.memory_k = memory_k
         self.max_steps = max_steps
         self.max_tokens = max_tokens
-        self.temperature = temperature
 
         # Token usage tracking
         self._session_tokens: Dict[str, int] = {"input": 0, "output": 0, "reasoning": 0}
@@ -96,23 +91,25 @@ class ReActMemController:
         self.memory = ReActMemory(k=memory_k)
 
     # ------------------------------------------------------------------
-    # LLM call
+    # LLM call — single-turn, fresh context each step
     # ------------------------------------------------------------------
 
-    def _call_llm(self, messages: List[Dict], tag: str = "") -> Dict:
-        """Call the LLM and return parsed JSON dict."""
+    def _call_llm(self, prompt: str, tag: str = "") -> Dict:
+        """
+        Single-turn LLM call.  For vLLM the system prompt is prepended to
+        the user message (gpt-oss-120b's chat template rejects a separate
+        system role and returns 400).  Returns a parsed JSON dict.
+        """
         import json, re, time
-        system = _SYSTEM + _JSON_INSTRUCTION
 
         for attempt in range(3):
             try:
-                reasoning_raw = ""
                 if self._backend == "anthropic":
                     resp = self._client.messages.create(
                         model=self.model,
                         max_tokens=self.max_tokens,
-                        system=system,
-                        messages=messages,
+                        system=_SYSTEM,
+                        messages=[{"role": "user", "content": prompt}],
                     )
                     raw = next(
                         (b.text for b in resp.content if getattr(b, "type", None) == "text"), ""
@@ -123,37 +120,39 @@ class ReActMemController:
                         "reasoning_tokens": 0,
                     }
                 else:
-                    # Inject system into first user message — gpt-oss-120b's vLLM chat
-                    # template does not support the "system" role and returns 400 when it
-                    # encounters it.  No response_format for the same reason.
-                    if messages and messages[0]["role"] == "user":
-                        first_content = system + "\n\n" + messages[0]["content"]
-                        oai_msgs = [{"role": "user", "content": first_content}] + messages[1:]
-                    else:
-                        oai_msgs = [{"role": "user", "content": system}] + messages
+                    # Inject system into user message — vLLM chat template for
+                    # gpt-oss-120b does not support the system role.
+                    # No temperature/top_p — reasoning models reject them (400).
+                    # No response_format — conflicts with 2-part reasoning output.
+                    combined = _SYSTEM + "\n\n" + prompt
                     resp = self._client.chat.completions.create(
                         model=self.model,
                         max_tokens=self.max_tokens,
-                        messages=oai_msgs,
+                        messages=[{"role": "user", "content": combined}],
                     )
                     msg = resp.choices[0].message
                     raw = msg.content or ""
-                    reasoning_raw = getattr(msg, "reasoning_content", "") or ""
                     u = getattr(resp, "usage", None)
                     details = getattr(u, "completion_tokens_details", None)
                     usage = {
                         "input_tokens": getattr(u, "prompt_tokens", 0) or 0,
                         "output_tokens": getattr(u, "completion_tokens", 0) or 0,
-                        "reasoning_tokens": getattr(details, "reasoning_tokens", 0) or 0 if details else 0,
+                        "reasoning_tokens": (
+                            getattr(details, "reasoning_tokens", 0) or 0 if details else 0
+                        ),
                     }
 
                 # Accumulate tokens
-                for key, sess_key in [("input_tokens", "input"), ("output_tokens", "output"), ("reasoning_tokens", "reasoning")]:
+                for key, sess_key in [
+                    ("input_tokens", "input"),
+                    ("output_tokens", "output"),
+                    ("reasoning_tokens", "reasoning"),
+                ]:
                     v = usage.get(key, 0) or 0
                     self._task_tokens[sess_key] += v
                     self._session_tokens[sess_key] += v
 
-                # Parse JSON
+                # Parse JSON (strip markdown fences if the model added them)
                 text = raw.strip()
                 if text.startswith("```"):
                     text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -167,20 +166,16 @@ class ReActMemController:
                     logger.warning("react_mem: JSON parse error (tag=%s): %s", tag, raw[:200])
                     result = {}
 
-                # Log
                 self._task_log.append({
                     "tag": tag,
                     "model": self.model,
-                    "request": {"messages": messages, "max_tokens": self.max_tokens},
+                    "request": {"prompt": prompt, "max_tokens": self.max_tokens},
                     "response": {"content": raw, "usage": usage},
                     "parsed_result": result,
                     "token_usage": usage,
                 })
                 if self._debug_dir:
-                    self._write_debug(tag, messages, raw, usage, result)
-                # Pass raw + reasoning back to the loop for proper assistant message construction.
-                result["_raw"] = raw
-                result["_reasoning"] = reasoning_raw
+                    self._write_debug(tag, prompt, raw, usage, result)
                 return result
 
             except Exception as exc:
@@ -188,13 +183,16 @@ class ReActMemController:
                     raise
                 if attempt < 2:
                     wait = 5 * (2 ** attempt)
-                    logger.warning("react_mem LLM call failed (attempt %d/3): %s. Retry in %ds.", attempt + 1, exc, wait)
+                    logger.warning(
+                        "react_mem LLM call failed (attempt %d/3): %s. Retry in %ds.",
+                        attempt + 1, exc, wait,
+                    )
                     time.sleep(wait)
                 else:
                     logger.error("react_mem LLM call failed after 3 attempts: %s", exc)
                     return {}
 
-    def _write_debug(self, tag, messages, raw, usage, parsed):
+    def _write_debug(self, tag: str, prompt: str, raw: str, usage: Dict, parsed: Dict) -> None:
         import json
         from datetime import datetime, timezone
         self._call_counter += 1
@@ -202,12 +200,15 @@ class ReActMemController:
         path = os.path.join(self._debug_dir, f"{self._call_counter:04d}_{tag}_{ts}.json")
         try:
             with open(path, "w", encoding="utf-8") as f:
-                json.dump({"tag": tag, "messages": messages, "raw": raw, "usage": usage, "parsed": parsed}, f, indent=2, default=str)
+                json.dump(
+                    {"tag": tag, "prompt": prompt, "raw": raw, "usage": usage, "parsed": parsed},
+                    f, indent=2, default=str,
+                )
         except Exception as exc:
             logger.warning("Could not write debug log %s: %s", path, exc)
 
     # ------------------------------------------------------------------
-    # Task log helpers (compatible with main.py session token logging)
+    # Task log helpers
     # ------------------------------------------------------------------
 
     def reset_task_log(self) -> None:
@@ -234,88 +235,99 @@ class ReActMemController:
     def _run_react_loop(
         self,
         task_description: str,
+        reward_fn: Callable,
+        entry: Dict,
         max_steps: int,
-        reward_feedback: Optional[str] = None,
+        max_submits: int,
     ) -> Dict:
         """
-        Run the ReAct loop for one attempt.
+        Run the ReAct loop for one task.
 
-        Returns a dict with keys: answer, code, history, steps_taken.
+        Memory examples are retrieved once per task (based on task description)
+        and included in every step's prompt.  Each step is a fresh single-turn
+        LLM call — no conversation history is accumulated.
+
+        Returns a dict: {answer, best_reward, reward_history, best_code, steps_taken}.
         """
+        # Retrieve similar past solutions once at task start
         examples = self.memory.retrieve(task_description)
-        history: List[Dict] = []
-        messages: List[Dict] = []
-        last_answer = None
-        last_code = None
+
+        last_result: Optional[str] = None      # stdout/stderr from last execute
+        verifier_feedback: Optional[str] = None  # score + message from last submit
+        best_reward = 0.0
+        best_answer = None
+        best_code: Optional[str] = None
+        submit_count = 0
+        reward_history: List[Dict] = []
 
         for step in range(max_steps):
-            if step == 0:
-                user_content = build_initial_prompt(task_description, examples, step=step)
-            else:
-                user_content = build_followup_prompt(
-                    task_description, history, step, reward_feedback=reward_feedback
-                )
+            prompt = build_prompt(task_description, examples, last_result, verifier_feedback)
+            result = self._call_llm(prompt, tag=f"step{step}")
 
-            messages.append({"role": "user", "content": user_content})
-            result = self._call_llm(messages, tag=f"react_step{step}")
+            action = result.get("action", "")
 
-            raw_response = result.pop("_raw", "")
-            reasoning_response = result.pop("_reasoning", "")
-            thought = result.get("thought", "")
-            action_type = result.get("action_type", "")
-            asst_msg: Dict = {"role": "assistant", "content": raw_response or "{}"}
-            if reasoning_response:
-                asst_msg["reasoning_content"] = reasoning_response
-            messages.append(asst_msg)
-
-            if action_type == "finish":
-                last_answer = result.get("answer")
-                history.append({
-                    "thought": thought,
-                    "action_type": "finish",
-                    "answer": last_answer,
-                    "observation": "",
-                })
-                logger.info("react_mem step %d: finish → %s", step, str(last_answer)[:80])
-                break
-
-            elif action_type == "execute_code":
+            # ---- execute ----
+            if action == "execute":
                 code = result.get("code", "")
-                last_code = code
-                ok, exec_result, err = run_code(code)
-                if ok:
-                    observation = str(exec_result) if exec_result is not None else "(no output)"
-                else:
-                    observation = f"ERROR: {err[:400]}"
-                logger.info("react_mem step %d: execute_code → %s", step, observation[:80])
-                history.append({
-                    "thought": thought,
-                    "action_type": "execute_code",
-                    "code": code,
-                    "observation": observation,
-                })
-                # Inject observation back into messages
-                messages.append({
-                    "role": "user",
-                    "content": f"Observation: {observation}",
-                })
+                ok, out, err = run_code(code)
+                last_result = (out[:800] if ok else f"ERROR: {err[:400]}") or "(no output)"
+                verifier_feedback = None
+                # Track the latest code attempted (used for memory storage)
+                if code:
+                    best_code = code
+                logger.info("react_mem step %d: execute → %s", step, last_result[:80])
 
-            else:
-                # Unknown action — treat as finish if answer present, else break
-                if result.get("answer") is not None:
-                    last_answer = result.get("answer")
-                history.append({
-                    "thought": thought,
-                    "action_type": action_type or "unknown",
-                    "observation": "",
+            # ---- submit ----
+            elif action == "submit":
+                answer = result.get("answer")
+                submit_count += 1
+                rr = reward_fn(answer, answer is not None, entry)
+                rv = float(rr.get("value", 0.0))
+                rm = rr.get("message", "")
+
+                if rv > best_reward:
+                    best_reward = rv
+                    best_answer = answer
+
+                reward_history.append({
+                    "step": step,
+                    "reward": rv,
+                    "message": rm,
+                    "blame": "react",
+                    "solution_summary": str(answer)[:200] if answer is not None else "",
                 })
+                verifier_feedback = f"score={rv:.2f}\n{rm}"
+                last_result = None
+                logger.info("react_mem step %d: submit → reward=%.3f  %s", step, rv, rm[:80])
+
+                if rv >= 1.0 or submit_count >= max_submits:
+                    break
+
+            # ---- unknown ----
+            else:
+                if result.get("answer") is not None:
+                    answer = result.get("answer")
+                    rr = reward_fn(answer, True, entry)
+                    rv = float(rr.get("value", 0.0))
+                    if rv > best_reward:
+                        best_reward = rv
+                        best_answer = answer
+                    reward_history.append({
+                        "step": step,
+                        "reward": rv,
+                        "message": rr.get("message", ""),
+                        "blame": "react",
+                        "solution_summary": str(answer)[:200],
+                    })
+                logger.warning("react_mem step %d: unknown action %r", step, action)
                 break
 
         return {
-            "answer": last_answer,
-            "code": last_code,
-            "history": history,
-            "steps_taken": len(history),
+            "answer": best_answer,
+            "best_reward": best_reward,
+            "reward_history": reward_history,
+            "best_code": best_code,
+            "steps_taken": step + 1,
         }
 
     # ------------------------------------------------------------------
@@ -332,60 +344,38 @@ class ReActMemController:
         max_reward_iters: int = 3,
     ) -> Dict:
         """
-        ReAct solve with reward-feedback iterations.
+        Solve a task with verifier feedback.
 
-        On each iteration the agent gets the reward feedback and retries.
-        The best result is stored in memory after the task.
+        max_reward_iters caps the number of 'submit' attempts within the
+        step loop.  The best solution is stored in memory after the task
+        so that future tasks can retrieve it as a few-shot example.
         """
         self.reset_task_log()
 
-        # Extract the text description for the task
         if isinstance(task_input, dict):
             task_description = (
-                task_input.get("question") or task_input.get("prompt") or task_input.get("task") or str(task_input)
+                task_input.get("question")
+                or task_input.get("prompt")
+                or task_input.get("task")
+                or str(task_input)
             )
         else:
             task_description = str(task_input)
 
-        best_reward = 0.0
-        best_answer = None
-        best_code = None
-        reward_history = []
-        reward_feedback: Optional[str] = None
+        loop_result = self._run_react_loop(
+            task_description,
+            reward_fn=reward_fn,
+            entry=entry,
+            max_steps=self.max_steps,
+            max_submits=max_reward_iters,
+        )
 
-        for iteration in range(max_reward_iters):
-            logger.info("react_mem: task iteration %d/%d", iteration + 1, max_reward_iters)
-            loop_result = self._run_react_loop(
-                task_description,
-                max_steps=self.max_steps,
-                reward_feedback=reward_feedback,
-            )
-            answer = loop_result["answer"]
-            code = loop_result.get("code")
+        best_reward = loop_result["best_reward"]
+        best_answer = loop_result["answer"]
+        best_code = loop_result["best_code"]
+        reward_history = loop_result["reward_history"]
 
-            reward_result = reward_fn(answer, answer is not None, entry)
-            reward_value = float(reward_result.get("value", 0.0))
-            reward_message = reward_result.get("message", "")
-
-            if reward_value > best_reward:
-                best_reward = reward_value
-                best_answer = answer
-                best_code = code
-
-            reward_history.append({
-                "iteration": iteration,
-                "reward": reward_value,
-                "message": reward_message,
-                "blame": "react",
-                "solution_summary": str(answer)[:200] if answer is not None else "",
-            })
-            logger.info("react_mem iter %d: reward=%.3f  %s", iteration + 1, reward_value, reward_message[:80])
-
-            if reward_value >= 1.0:
-                break
-            reward_feedback = reward_message
-
-        # Store best solution in memory for future tasks
+        # Store the best solution in memory for future tasks
         self.memory.store(task_description, best_code, best_answer, best_reward)
 
         solved = best_reward >= 1.0
@@ -397,7 +387,7 @@ class ReActMemController:
             "best_reward": best_reward,
             "final_reward": reward_history[-1] if reward_history else {},
             "reward_history": reward_history,
-            "trace": [{"agent": "react_mem", "step": h["steps_taken"]} for h in [loop_result]],
+            "trace": [{"agent": "react_mem", "steps_taken": loop_result["steps_taken"]}],
             "final_output": {
                 "answer": str(best_answer) if best_answer is not None else "",
                 "explanation": f"ReAct+Memory: {len(self.memory)} stored examples",
@@ -414,12 +404,24 @@ class ReActMemController:
         self.reset_task_log()
         if isinstance(task_input, dict):
             task_description = (
-                task_input.get("question") or task_input.get("prompt") or task_input.get("task") or str(task_input)
+                task_input.get("question")
+                or task_input.get("prompt")
+                or task_input.get("task")
+                or str(task_input)
             )
         else:
             task_description = str(task_input)
 
-        loop_result = self._run_react_loop(task_description, max_steps=self.max_steps)
+        def _dummy_reward(answer, has_answer, _entry):
+            return {"value": 1.0 if has_answer else 0.0, "message": ""}
+
+        loop_result = self._run_react_loop(
+            task_description,
+            reward_fn=_dummy_reward,
+            entry={},
+            max_steps=self.max_steps,
+            max_submits=1,
+        )
         answer = loop_result["answer"]
         solved = answer is not None
 
@@ -445,15 +447,13 @@ class ReActMemController:
 
     def projected_budget(self, max_reward_iters: int = 3) -> Dict:
         """Estimate the maximum token spend for one task."""
-        calls_per_iter = self.max_steps * 2  # user + observation per step
-        total = max_reward_iters * calls_per_iter * self.max_tokens
+        total = self.max_steps * self.max_tokens
         return {
-            "max_reward_iters": max_reward_iters,
             "max_steps": self.max_steps,
-            "calls_per_iter": calls_per_iter,
+            "max_submits": max_reward_iters,
             "max_tokens": self.max_tokens,
             "projected_max_tokens": total,
-            "formula": f"{max_reward_iters} iters × {calls_per_iter} calls × {self.max_tokens} tokens = {total}",
+            "formula": f"{self.max_steps} steps × {self.max_tokens} tokens = {total}",
         }
 
     # ------------------------------------------------------------------

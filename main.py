@@ -804,7 +804,7 @@ def main() -> None:
             model=model,
             base_url=base_url,
             debug_dir=args.debug_dir,
-            library_k=args.react_lib_k,
+            lib_k=args.react_lib_k,
             max_steps=args.react_max_steps,
             max_tokens=args.max_tokens or 4096,
         )
