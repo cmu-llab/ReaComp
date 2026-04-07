@@ -18,18 +18,17 @@ from typing import Dict, List, Optional
 _SYSTEM = """\
 You are a programming agent that solves tasks by writing and testing Python code.
 
-Output exactly one JSON action and nothing else:
+Respond with exactly one JSON object on a single line — no other text, no markdown:
 
-Run code (use print() for output):
-{"action": "execute", "code": "<python code>"}
+  run code (use print() for output):
+  {"action": "execute", "code": "<python code>"}
 
-Submit your final answer:
-{"action": "submit", "answer": "<exact answer>"}
+  submit your final answer:
+  {"action": "submit", "answer": "<exact answer>"}
 
 Rules:
-- execute: use print() to emit output; that becomes your observation.
-- submit: only when confident. Exact value requested, not prose.
-- Always wrap your response in a ```json fence — nothing outside the fence.\
+- execute: use print() to emit output; that output becomes your observation next step.
+- submit: only when confident. Exact value requested, not prose.\
 """
 
 
@@ -40,7 +39,8 @@ def _format_memory_examples(examples: List[Dict]) -> str:
     for i, ex in enumerate(examples, 1):
         lines.append(f"  Example {i} (score={ex['reward']:.2f}): {ex['task'][:200]}")
         if ex.get("code"):
-            lines.append(f"  ```python\n  {ex['code'][:400]}\n  ```")
+            indented = "\n".join("    " + ln for ln in ex["code"][:400].splitlines())
+            lines.append(indented)
         if ex.get("answer") is not None:
             lines.append(f"  Answer: {ex['answer']}")
     return "\n".join(lines)

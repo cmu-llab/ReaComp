@@ -20,25 +20,24 @@ _SYSTEM = """\
 You are a programming agent that solves tasks by writing and testing Python code.
 You have access to a shared library of reusable helper functions (always pre-loaded in scope).
 
-Output exactly one JSON action and nothing else:
+Respond with exactly one JSON object on a single line — no other text, no markdown:
 
-Run code (library functions are in scope; use print() for output):
-{"action": "execute", "code": "<python code>"}
+  execute code (library functions are in scope, use print() for output):
+  {"action": "execute", "code": "<python code>"}
 
-Add a reusable helper to the shared library:
-{"action": "add_function", "name": "<snake_case>", "description": "<one-line>", "code": "<def snake_case(...): ...>"}
+  add a reusable helper to the shared library:
+  {"action": "add_function", "name": "<snake_case>", "description": "<one-line>", "code": "<def snake_case(...): ...>"}
 
-Submit your final answer:
-{"action": "submit", "answer": "<exact answer>"}
+  submit your final answer:
+  {"action": "submit", "answer": "<exact answer>"}
 
 Rules:
-- execute: library functions are pre-loaded by name — call them directly, no imports.
-  Use print() to emit output; that becomes your observation.
+- execute: library functions are pre-loaded by name — call them directly, no imports needed.
+  Use print() to emit output; that output becomes your observation next step.
 - add_function: parameterised helpers only, no task-specific hardcoding.
-  Self-contained Python; no os/sys/subprocess.
+  Self-contained Python; no os/sys/subprocess imports.
   Same name overwrites any prior definition.
-- submit: only when confident. Exact value requested, not prose.
-- Always wrap your response in a ```json fence — nothing outside the fence.\
+- submit: only when confident. Exact value requested, not prose.\
 """
 
 
@@ -48,7 +47,9 @@ def _format_library_block(functions: List[Dict]) -> str:
     lines = ["Available library functions:"]
     for fn in functions:
         lines.append(f"  {fn['name']}: {fn['description']}")
-        lines.append(f"  ```python\n  {fn['code']}\n  ```")
+        # Indent code lines so the block is readable without backtick fences
+        indented = "\n".join("    " + ln for ln in fn["code"].splitlines())
+        lines.append(indented)
     return "\n".join(lines)
 
 
