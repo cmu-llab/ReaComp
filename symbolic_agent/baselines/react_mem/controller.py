@@ -120,15 +120,21 @@ class ReActMemController:
                         "reasoning_tokens": 0,
                     }
                 else:
-                    # Inject system into user message — vLLM chat template for
-                    # gpt-oss-120b does not support the system role.
-                    # No temperature/top_p — reasoning models reject them (400).
-                    # No response_format — conflicts with 2-part reasoning output.
-                    combined = _SYSTEM + "\n\n" + prompt
+                    # gpt-oss-120b uses the Harmony format via vLLM.
+                    # - Use "developer" role for the system prompt (the chat
+                    #   template maps "developer"/"system" to the developer block).
+                    #   Injecting system content into the user message caused the
+                    #   "Expected 2 output messages, got N" error.
+                    # - No response_format — model outputs 2-part Harmony response
+                    #   (analysis CoT + final); json_object mode conflicts.
+                    # - No temperature/top_p — rejected by the vLLM endpoint.
                     resp = self._client.chat.completions.create(
                         model=self.model,
                         max_tokens=self.max_tokens,
-                        messages=[{"role": "user", "content": combined}],
+                        messages=[
+                            {"role": "developer", "content": _SYSTEM},
+                            {"role": "user", "content": prompt},
+                        ],
                     )
                     msg = resp.choices[0].message
                     raw = msg.content or ""
