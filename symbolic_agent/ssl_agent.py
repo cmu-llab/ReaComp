@@ -24,12 +24,12 @@ _COMPLEX_HINTS = {
 }
 
 
-def _ssl_max_tokens(task_spec) -> int:
+def _ssl_max_tokens(task_spec, base: int = 2048, complex_: int = 4096) -> int:
     """Scale SSL output budget up for tasks that require complex function bodies."""
     if task_spec is None:
-        return 2048
+        return base
     words = {w for hint in task_spec.operation_hints for w in hint.lower().split()}
-    return 4096 if words & _COMPLEX_HINTS else 2048
+    return complex_ if words & _COMPLEX_HINTS else base
 
 _SYSTEM = """\
 You are the SSL (Symbolic Search and Library) agent in a symbolic reasoning system.
@@ -70,9 +70,17 @@ Respond with exactly this JSON structure:
 
 
 class SSLAgent:
-    def __init__(self, client, model: str = "claude-sonnet-4-5"):
+    def __init__(
+        self,
+        client,
+        model: str = "claude-sonnet-4-5",
+        max_tokens_base: int = 2048,
+        max_tokens_complex: int = 4096,
+    ):
         self.client = client
         self.model = model
+        self.max_tokens_base = max_tokens_base
+        self.max_tokens_complex = max_tokens_complex
 
     def run(
         self,
@@ -129,7 +137,7 @@ class SSLAgent:
 
         result = self.client.create(
             model=self.model,
-            max_tokens=_ssl_max_tokens(task_spec),
+            max_tokens=_ssl_max_tokens(task_spec, self.max_tokens_base, self.max_tokens_complex),
             system=_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
             tag="ssl",

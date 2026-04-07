@@ -21,20 +21,20 @@ _LONG_OUTPUT_HINTS = {
 }
 
 
-def _reporting_max_tokens(task_spec) -> int:
+def _reporting_max_tokens(task_spec, base: int = 1024, complex_: int = 2048) -> int:
     """Scale reporting budget up for tasks whose answers can be long sequences or grids.
 
     task_spec may be a TaskSpec dataclass (from agents) or a plain dict (from state).
     """
     if task_spec is None:
-        return 1024
+        return base
     hints = (
         task_spec.get("operation_hints", [])
         if isinstance(task_spec, dict)
         else task_spec.operation_hints
     )
     words = {w for hint in hints for w in hint.lower().split()}
-    return 2048 if words & _LONG_OUTPUT_HINTS else 1024
+    return complex_ if words & _LONG_OUTPUT_HINTS else base
 
 _SYSTEM = """\
 You are the Reporting agent in a symbolic reasoning system.
@@ -52,9 +52,17 @@ Respond with exactly this JSON:
 
 
 class ReportingAgent:
-    def __init__(self, client, model: str = "claude-sonnet-4-5"):
+    def __init__(
+        self,
+        client,
+        model: str = "claude-sonnet-4-5",
+        max_tokens_base: int = 1024,
+        max_tokens_complex: int = 2048,
+    ):
         self.client = client
         self.model = model
+        self.max_tokens_base = max_tokens_base
+        self.max_tokens_complex = max_tokens_complex
 
     def run(self, state: Dict, library: FunctionLibrary) -> Dict:
         if not state.get("solved") or not state.get("solution"):
@@ -110,7 +118,7 @@ class ReportingAgent:
         task_spec = state.get("task_spec")
         result = self.client.create(
             model=self.model,
-            max_tokens=_reporting_max_tokens(task_spec),
+            max_tokens=_reporting_max_tokens(task_spec, self.max_tokens_base, self.max_tokens_complex),
             system=_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
             tag="reporting",

@@ -61,15 +61,16 @@ class TaskSpec:
 class TaskParser:
     """Lightweight LLM call to turn an NL prompt into a TaskSpec."""
 
-    def __init__(self, client, model: str = "claude-sonnet-4-5"):
+    def __init__(self, client, model: str = "claude-sonnet-4-5", max_tokens: int = 512):
         self.client = client
         self.model = model
+        self.max_tokens = max_tokens
 
     def parse(self, prompt: str) -> TaskSpec:
         try:
             result = self.client.create(
                 model=self.model,
-                max_tokens=512,
+                max_tokens=self.max_tokens,
                 system=_SYSTEM,
                 messages=[{"role": "user", "content": f"Parse this task:\n\n{prompt}"}],
                 tag="task_parser",

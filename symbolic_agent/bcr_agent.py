@@ -22,7 +22,7 @@ _COMPLEX_HINTS = {
 }
 
 
-def _bcr_max_tokens(task_spec) -> int:
+def _bcr_max_tokens(task_spec, base: int = 4096, complex_: int = 8192) -> int:
     """Scale BCR output budget up for tasks requiring complex solution code.
 
     Reasoning models (e.g. gpt-oss-120b) consume their chain-of-thought tokens
@@ -32,9 +32,9 @@ def _bcr_max_tokens(task_spec) -> int:
     response after reasoning.
     """
     if task_spec is None:
-        return 4096
+        return base
     words = {w for hint in task_spec.operation_hints for w in hint.lower().split()}
-    return 8192 if words & _COMPLEX_HINTS else 4096
+    return complex_ if words & _COMPLEX_HINTS else base
 
 _PATCH_SYSTEM = """\
 You are a reasoning assistant. A symbolic solver attempted a task but only reached a
@@ -142,9 +142,19 @@ def _format_reward_history(history: list) -> str:
 
 
 class BCRAgent:
-    def __init__(self, client, model: str = "claude-sonnet-4-5"):
+    def __init__(
+        self,
+        client,
+        model: str = "claude-sonnet-4-5",
+        max_tokens_base: int = 4096,
+        max_tokens_complex: int = 8192,
+        max_tokens_patch: int = 16384,
+    ):
         self.client = client
         self.model = model
+        self.max_tokens_base = max_tokens_base
+        self.max_tokens_complex = max_tokens_complex
+        self.max_tokens_patch = max_tokens_patch
 
     def run(
         self,
@@ -206,7 +216,7 @@ class BCRAgent:
 
         result = self.client.create(
             model=self.model,
-            max_tokens=_bcr_max_tokens(task_spec),
+            max_tokens=_bcr_max_tokens(task_spec, self.max_tokens_base, self.max_tokens_complex),
             system=_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
             tag="bcr",
@@ -344,7 +354,7 @@ class BCRAgent:
 
         result = self.client.create(
             model=self.model,
-            max_tokens=16384,
+            max_tokens=self.max_tokens_patch,
             system=_PATCH_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
             tag="bcr_patch",

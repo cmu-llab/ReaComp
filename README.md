@@ -58,7 +58,12 @@ symbolic-library-agent/
 │   ├── ssl_agent.py        # SSL agent — library management
 │   ├── bcr_agent.py        # BCR agent — solve / decompose
 │   ├── reporting_agent.py  # Reporting agent — format final answer
-│   └── controller.py       # Main controller loop
+│   ├── controller.py       # Main controller loop
+│   └── baselines/
+│       ├── trove/          # TroVE online function induction (--framework trove)
+│       ├── regal/          # ReGAL offline refactoring (--framework regal)
+│       ├── react_mem/      # ReAct + episodic memory (--framework react_mem)
+│       └── best_of_k/      # Best-of-K sampling (--framework best_of_k)
 ├── examples/
 │   └── tasks.py            # Built-in example tasks
 ├── scripts/
@@ -81,10 +86,18 @@ symbolic-library-agent/
 pip install -r requirements.txt
 ```
 
-Create a `.env` file for Anthropic:
+Create a `.env` file — add the key(s) for the backends you want to use:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_API_KEY=sk-ant-...   # for claude-* models
+OPENAI_API_KEY=sk-...          # for gpt-4o / o1 / o3 (--backend openai)
+VLLM_API_KEY=EMPTY             # optional, for local vLLM
+```
+
+Optional — better memory retrieval for `react_mem`:
+```bash
+pip install rank_bm25             # fast BM25 retrieval
+pip install sentence_transformers # semantic embedding retrieval
 ```
 
 ---
@@ -139,20 +152,71 @@ export VLLM_API_KEY=your-key
 
 ### All CLI flags
 
+**Framework and model:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--framework NAME` | `ssl_bcr` | `ssl_bcr` · `trove` · `regal` · `react_mem` · `best_of_k` |
+| `--model NAME` | `claude-sonnet-4-5` | Model name. Aliases: `sonnet`, `opus`, `haiku`, `gpt4o`, `gpt4omini` |
+| `--backend NAME` | auto | `anthropic` · `openai` · `vllm`. Auto-inferred from model name and `--base-url` |
+| `--base-url URL` | — | OpenAI-compatible endpoint for vLLM (e.g. `http://localhost:8002/v1`) |
+
+**Token budget:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--max-tokens N` | per-agent | Base max_tokens/call (SSL: 2048, BCR: 4096, Reporting: 1024) |
+| `--max-tokens-complex N` | per-agent | Max_tokens for complex tasks (SSL: 4096, BCR: 8192, Reporting: 2048) |
+| `--max-tokens-patch N` | `16384` | Max_tokens for neural patch call |
+| `--max-tokens-parser N` | `512` | Max_tokens for TaskParser call |
+| `--show-projected-budget` | off | Print projected max token budget per task, then exit |
+| `--max-reward-iters N` | `3` | Max reward-feedback iterations (ssl_bcr, react_mem) |
+
+**General:**
+
 | Flag | Default | Description |
 |---|---|---|
 | `--task N` | — | Run a single built-in task by index |
 | `--list` | — | List built-in example tasks |
 | `--tasks-file FILE` | — | Run tasks from a JSON or JSONL file |
-| `--model NAME` | `claude-sonnet-4-5` | LLM model name |
-| `--base-url URL` | — | OpenAI-compatible endpoint (enables vLLM mode) |
-| `--budget FLOAT` | `15.0` | Step budget per task |
-| `--lam FLOAT` | `0.3` | λ regularisation weight: `Objective = TaskLoss + λ·TotalCost` |
-| `--output-file FILE` | — | Append each task result live to a JSONL file (response + trajectory + agent messages) |
-| `--default-reward NAME` | — | Reward module to use for all tasks (e.g. `reasoning_gym`); overridden per-task by the `reward` field |
-| `--max-reward-iters N` | `3` | Max reward-feedback iterations when a reward is set |
-| `--debug-dir DIR` | — | Write per-call LLM debug logs (request, CoT, parsed result) |
-| `--stats` | — | Print library and cost stats after the run |
+| `--budget FLOAT` | `15.0` | Step budget per task (ssl_bcr) |
+| `--lam FLOAT` | `0.3` | λ regularisation weight |
+| `--output-file FILE` | — | Append each completed task to a JSONL file (includes `token_usage`) |
+| `--default-reward NAME` | — | Reward module for all tasks (e.g. `reasoning_gym`, `pbebench`) |
+| `--debug-dir DIR` | — | Per-call LLM debug logs |
+| `--stats` | — | Print library/cost stats after the run |
+
+**Framework-specific:**
+
+| Flag | Framework | Default | Description |
+|---|---|---|---|
+| `--trove-k K` | trove | `5` | Samples per mode |
+| `--trove-trim-every N` | trove | `500` | Trim toolbox every N tasks |
+| `--react-mem-k K` | react_mem | `3` | Memory examples retrieved per task |
+| `--react-max-steps N` | react_mem | `5` | ReAct steps per task |
+| `--bok-k K` | best_of_k | `5` | Independent attempts per task |
+| `--regal-train-file FILE` | regal | — | Training JSONL with `program` key |
+
+### Baselines
+
+Five frameworks are available via `--framework`:
+
+| Framework | Description | Key flags |
+|---|---|---|
+| `ssl_bcr` | SSL + BCR symbolic library agent (default) | `--max-reward-iters`, `--lam` |
+| `trove` | TroVE: online function induction | `--trove-k`, `--trove-trim-every` |
+| `regal` | ReGAL: offline refactoring + code bank | `--regal-train-file`, `--regal-retrieval` |
+| `react_mem` | ReAct agent + episodic memory retrieval | `--react-mem-k`, `--react-max-steps` |
+| `best_of_k` | K independent samples, best by reward | `--bok-k` |
+
+**Compute matching:** to compare baselines at equal token budget, set each framework's `K × max_tokens` to the same value. Example — matching ssl_bcr at `3 iters × 8192 tokens`:
+- `best_of_k --bok-k 3 --max-tokens 8192`
+- `react_mem --max-reward-iters 3 --max-tokens 4096 --react-max-steps 2`
+
+Show the projected budget formula without running:
+```bash
+python main.py --framework ssl_bcr --max-tokens 4096 --max-reward-iters 3 --show-projected-budget
+```
 
 ---
 

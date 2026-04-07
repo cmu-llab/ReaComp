@@ -174,6 +174,8 @@ def _append_task_output(result: dict, task_index: int, output_file: str) -> None
         "reward_history": result.get("reward_history", []),
         "best_reward": result.get("best_reward"),
         "final_reward": result.get("final_reward"),
+        # token usage for this task (input/output/reasoning tokens)
+        "token_usage": result.get("token_usage", {}),
     }
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as f:
@@ -251,6 +253,34 @@ def _load_trove_checkpoint(controller, checkpoint_file: str) -> int:
         return 0
 
 
+def _save_react_mem_checkpoint(controller, last_completed_index: int, checkpoint_file: str) -> None:
+    """Save ReAct+Memory controller state (episodic memory) to checkpoint."""
+    ckpt = {
+        "last_completed_index": last_completed_index,
+        "memory": controller.memory.to_dict(),
+    }
+    try:
+        Path(checkpoint_file).write_text(json.dumps(ckpt, indent=2, default=str), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Could not write react_mem checkpoint %s: %s", checkpoint_file, exc)
+
+
+def _load_react_mem_checkpoint(controller, checkpoint_file: str) -> int:
+    """Restore ReAct+Memory controller state from checkpoint. Returns next task index."""
+    from symbolic_agent.baselines.react_mem.memory import ReActMemory
+    try:
+        ckpt = json.loads(Path(checkpoint_file).read_text(encoding="utf-8"))
+        controller.memory = ReActMemory.from_dict(ckpt.get("memory", []), k=controller.memory_k)
+        last_index = ckpt.get("last_completed_index", -1)
+        next_index = last_index + 1
+        logger.info("react_mem checkpoint loaded: last_completed=%d, memory=%d entries → resuming from task %d",
+                    last_index, len(controller.memory), next_index)
+        return next_index
+    except Exception as exc:
+        logger.warning("Could not load react_mem checkpoint %s: %s — starting from scratch.", checkpoint_file, exc)
+        return 0
+
+
 def _load_checkpoint(controller: Controller, checkpoint_file: str) -> int:
     """
     Restore controller state from {checkpoint_file}.
@@ -325,12 +355,33 @@ def main() -> None:
     parser.add_argument(
         "--framework",
         default="ssl_bcr",
-        choices=["ssl_bcr", "trove", "regal"],
+        choices=["ssl_bcr", "trove", "regal", "react_mem", "best_of_k"],
         help="Solution framework to use. 'ssl_bcr': symbolic library agent (default). "
              "'trove': TroVE online function induction baseline. "
-             "'regal': ReGAL offline refactoring baseline. (default: ssl_bcr)",
+             "'regal': ReGAL offline refactoring baseline. "
+             "'react_mem': ReAct agent with episodic memory. "
+             "'best_of_k': K independent sampling attempts, best-of-K by reward. "
+             "(default: ssl_bcr)",
     )
-    parser.add_argument("--model", default="claude-sonnet-4-5", help="Model name to use")
+    parser.add_argument("--model", default="claude-sonnet-4-5", help=(
+        "Model name to use. Common values: "
+        "claude-sonnet-4-5 (Anthropic, default), claude-opus-4-6 (Anthropic), "
+        "gpt-4o / gpt-4o-mini (OpenAI — requires --backend openai), "
+        "openai/gpt-oss-120b (vLLM — requires --base-url). "
+        "Short aliases supported: sonnet→claude-sonnet-4-5, opus→claude-opus-4-6, "
+        "haiku→claude-haiku-4-5-20251001, gpt4o→gpt-4o, gpt4omini→gpt-4o-mini."
+    ))
+    parser.add_argument(
+        "--backend",
+        default=None,
+        choices=["anthropic", "openai", "vllm"],
+        help=(
+            "LLM backend to use. 'anthropic': Anthropic API (default when model starts with 'claude'). "
+            "'openai': OpenAI API (uses OPENAI_API_KEY; auto-set when model starts with 'gpt' or 'o1/o3'). "
+            "'vllm': local vLLM OpenAI-compatible server (requires --base-url). "
+            "If not set, backend is inferred from model name and --base-url."
+        ),
+    )
     parser.add_argument("--budget", type=float, default=15.0, help="Step budget per task")
     parser.add_argument("--lam", type=float, default=0.3, help="λ: regularisation weight for library cost in Objective = TaskLoss + λ·TotalCost (default: 0.3)")
     parser.add_argument(
@@ -375,6 +426,44 @@ def main() -> None:
         help="Maximum reward-feedback iterations per task when the task record has a 'reward' field. "
              "The agent retries until it achieves reward=1.0 or exhausts N iterations. (default: 3)",
     )
+    # ---- Token budget flags ----
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Base max_tokens per LLM call for simple tasks. "
+             "Overrides per-agent defaults (SSL: 2048, BCR: 4096, Reporting: 1024). "
+             "Set equal to --max-tokens-complex to disable complexity scaling.",
+    )
+    parser.add_argument(
+        "--max-tokens-complex",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Max_tokens per call for complex tasks (those with bfs/dfs/recursion hints). "
+             "Overrides per-agent defaults (SSL: 4096, BCR: 8192, Reporting: 2048).",
+    )
+    parser.add_argument(
+        "--max-tokens-patch",
+        type=int,
+        default=16384,
+        metavar="N",
+        help="Max_tokens for the neural patch call (default: 16384).",
+    )
+    parser.add_argument(
+        "--max-tokens-parser",
+        type=int,
+        default=512,
+        metavar="N",
+        help="Max_tokens for the TaskParser call (default: 512).",
+    )
+    parser.add_argument(
+        "--show-projected-budget",
+        action="store_true",
+        default=False,
+        help="Print the projected maximum token budget per task before the run, then exit.",
+    )
     parser.add_argument(
         "--default-reward",
         default=None,
@@ -404,6 +493,29 @@ def main() -> None:
         help="Directory to write per-call LLM debug logs (request, raw response including "
              "chain-of-thought, extracted tool calls).  Each run creates a timestamped "
              "subdirectory so logs from multiple runs are never overwritten.",
+    )
+    # ---- ReAct+Memory-specific flags ----
+    parser.add_argument(
+        "--react-mem-k",
+        type=int,
+        default=3,
+        metavar="K",
+        help="[react_mem] Number of memory examples retrieved for each task. (default: 3)",
+    )
+    parser.add_argument(
+        "--react-max-steps",
+        type=int,
+        default=5,
+        metavar="N",
+        help="[react_mem] Maximum ReAct steps (thought/code/observe cycles) per task. (default: 5)",
+    )
+    # ---- Best-of-K-specific flags ----
+    parser.add_argument(
+        "--bok-k",
+        type=int,
+        default=5,
+        metavar="K",
+        help="[best_of_k] Number of independent sampling attempts per task. (default: 5)",
     )
     # TroVE-specific flags
     parser.add_argument(
@@ -505,20 +617,90 @@ def main() -> None:
             print(f"  [{i}]  type={t['type']:20s}  {desc}")
         return
 
-    if args.base_url:
+    # ---- Model alias resolution ----
+    _MODEL_ALIASES = {
+        "sonnet":     "claude-sonnet-4-6",
+        "opus":       "claude-opus-4-6",
+        "haiku":      "claude-haiku-4-5-20251001",
+        "gpt4o":      "gpt-4o",
+        "gpt4omini":  "gpt-4o-mini",
+        "gpt-4o-mini-alias": "gpt-4o-mini",
+    }
+    model = _MODEL_ALIASES.get(args.model, args.model)
+
+    # ---- Backend resolution ----
+    # Priority: --backend > --base-url (vllm) > model-name inference
+    if args.backend == "vllm" or (args.backend is None and args.base_url):
+        resolved_backend = "vllm"
         api_key = os.environ.get("VLLM_API_KEY", "EMPTY")
-        logger.info("Using vLLM backend at %s with model %s", args.base_url, args.model)
+        base_url = args.base_url
+        if not base_url:
+            print("ERROR: --base-url is required for --backend vllm.", file=sys.stderr)
+            sys.exit(1)
+        logger.info("Backend: vLLM at %s  model=%s", base_url, model)
+    elif args.backend == "openai" or (
+        args.backend is None and (model.startswith("gpt-") or model.startswith("o1") or model.startswith("o3"))
+    ):
+        resolved_backend = "openai"
+        api_key = os.environ.get("OPENAI_API_KEY")
+        base_url = "https://api.openai.com/v1"
+        if not api_key:
+            print("ERROR: OPENAI_API_KEY is not set.  Add it to .env or export it.", file=sys.stderr)
+            sys.exit(1)
+        logger.info("Backend: OpenAI API  model=%s", model)
     else:
+        resolved_backend = "anthropic"
         api_key = os.environ.get("ANTHROPIC_API_KEY")
+        base_url = None
         if not api_key:
             print("ERROR: ANTHROPIC_API_KEY is not set.  Add it to .env or export it.", file=sys.stderr)
             sys.exit(1)
+        logger.info("Backend: Anthropic  model=%s", model)
 
-    if args.framework == "trove":
+    # --show-projected-budget: print budget and exit (only for ssl_bcr)
+    if args.show_projected_budget:
+        from symbolic_agent import Controller as _C
+        _c = _C(
+            model=model,
+            max_tokens_base=args.max_tokens,
+            max_tokens_complex=args.max_tokens_complex,
+            max_tokens_patch=args.max_tokens_patch,
+            max_tokens_parser=args.max_tokens_parser,
+        )
+        pb = _c.projected_budget(max_reward_iters=args.max_reward_iters)
+        print("Projected token budget per task:")
+        for k, v in pb.items():
+            print(f"  {k}: {v}")
+        return
+
+    if args.framework == "react_mem":
+        from symbolic_agent.baselines.react_mem import ReActMemController
+        controller = ReActMemController(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            debug_dir=args.debug_dir,
+            memory_k=args.react_mem_k,
+            max_steps=args.react_max_steps,
+            max_tokens=args.max_tokens or 4096,
+        )
+        logger.info("Framework: ReAct+Memory (k=%d, max_steps=%d)", args.react_mem_k, args.react_max_steps)
+    elif args.framework == "best_of_k":
+        from symbolic_agent.baselines.best_of_k import BestOfKController
+        controller = BestOfKController(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            debug_dir=args.debug_dir,
+            k=args.bok_k,
+            max_tokens=args.max_tokens or 4096,
+        )
+        logger.info("Framework: Best-of-K (k=%d)", args.bok_k)
+    elif args.framework == "trove":
         controller = TroVEController(
             api_key=api_key,
-            model=args.model,
-            base_url=args.base_url,
+            model=model,
+            base_url=base_url,
             debug_dir=args.debug_dir,
             k=args.trove_k,
             trim_every=args.trove_trim_every,
@@ -528,8 +710,8 @@ def main() -> None:
         from pathlib import Path as _Path
         controller = ReGALController(
             api_key=api_key,
-            model=args.model,
-            base_url=args.base_url,
+            model=model,
+            base_url=base_url,
             debug_dir=args.debug_dir,
             retrieval=args.regal_retrieval,
             embedding_model=args.regal_embedding_model,
@@ -569,13 +751,17 @@ def main() -> None:
     else:
         controller = Controller(
             api_key=api_key,
-            model=args.model,
-            base_url=args.base_url,
+            model=model,
+            base_url=base_url,
             debug_dir=args.debug_dir,
             lam=args.lam,
             redundancy_mode=args.redundancy_mode,
             semantic_retrieval=args.semantic_retrieval,
             semantic_model=args.semantic_model,
+            max_tokens_base=args.max_tokens,
+            max_tokens_complex=args.max_tokens_complex,
+            max_tokens_patch=args.max_tokens_patch,
+            max_tokens_parser=args.max_tokens_parser,
         )
         logger.info("Framework: ssl_bcr")
 
@@ -590,10 +776,10 @@ def main() -> None:
         )
 
         # Auto-resume: if both output file and checkpoint exist, restore state and skip done tasks.
-        # ssl_bcr and trove both support per-task checkpointing.
-        # ReGAL is trained offline before the test run and has no per-task state to checkpoint.
+        # ssl_bcr, trove, and react_mem support per-task checkpointing.
+        # ReGAL and best_of_k have no cross-task state to checkpoint.
         start_index = 0
-        if args.framework in ("ssl_bcr", "trove"):
+        if args.framework in ("ssl_bcr", "trove", "react_mem"):
             if (
                 ckpt_file
                 and Path(ckpt_file).exists()
@@ -602,6 +788,8 @@ def main() -> None:
             ):
                 if args.framework == "trove":
                     start_index = _load_trove_checkpoint(controller, ckpt_file)
+                elif args.framework == "react_mem":
+                    start_index = _load_react_mem_checkpoint(controller, ckpt_file)
                 else:
                     start_index = _load_checkpoint(controller, ckpt_file)
             elif ckpt_file and Path(ckpt_file).exists():
@@ -638,17 +826,37 @@ def main() -> None:
                     _save_checkpoint(controller, i, ckpt_file)
                 elif args.framework == "trove":
                     _save_trove_checkpoint(controller, i, ckpt_file)
-            # Library size: ssl_bcr uses controller.library, TroVE uses controller.toolbox,
-            # ReGAL uses controller.codebank
+                elif args.framework == "react_mem":
+                    _save_react_mem_checkpoint(controller, i, ckpt_file)
+            # Library/memory size logging
             if args.framework == "trove":
                 lib_size = len(controller.toolbox)
             elif args.framework == "regal":
                 lib_size = len(controller.codebank)
+            elif args.framework == "react_mem":
+                lib_size = len(controller.memory)
+            elif args.framework == "best_of_k":
+                lib_size = 0  # no library
             else:
                 lib_size = len(controller.library)
             logger.info("Library size after task %d: %d functions", i + 1, lib_size)
         if args.stats:
             _print_library_stats(controller)
+        # Log session-wide token usage
+        _su_src = None
+        if hasattr(controller, "get_session_token_usage"):
+            _su_src = controller
+        else:
+            _inner = getattr(controller, "client", None) or getattr(controller, "llm", None)
+            if _inner and hasattr(_inner, "get_session_token_usage"):
+                _su_src = _inner
+        if _su_src:
+            su = _su_src.get_session_token_usage()
+            logger.info(
+                "Session token usage: input=%d  output=%d  reasoning=%d  total=%d",
+                su["input"], su["output"], su["reasoning"],
+                su["input"] + su["output"] + su["reasoning"],
+            )
     elif args.task is not None:
         if args.task >= len(TASKS):
             print(f"Task index {args.task} out of range (0–{len(TASKS)-1}).", file=sys.stderr)

@@ -59,6 +59,9 @@ class LLMClient:
         self.backend = backend
         self._call_counter = 0
         self._task_log: List[Dict] = []
+        # Token usage accumulators — reset per task and accumulated session-wide
+        self._task_tokens: Dict[str, int] = {"input": 0, "output": 0, "reasoning": 0}
+        self._session_tokens: Dict[str, int] = {"input": 0, "output": 0, "reasoning": 0}
 
         if debug_dir:
             run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
@@ -84,12 +87,21 @@ class LLMClient:
     # ------------------------------------------------------------------
 
     def reset_task_log(self) -> None:
-        """Clear the in-memory message log. Call before starting each task."""
+        """Clear the in-memory message log and reset per-task token counters."""
         self._task_log = []
+        self._task_tokens = {"input": 0, "output": 0, "reasoning": 0}
 
     def get_task_log(self) -> List[Dict]:
         """Return all messages recorded since the last reset_task_log() call."""
         return list(self._task_log)
+
+    def get_task_token_usage(self) -> Dict[str, int]:
+        """Return token counts accumulated since the last reset_task_log() call."""
+        return dict(self._task_tokens)
+
+    def get_session_token_usage(self) -> Dict[str, int]:
+        """Return token counts accumulated across the entire session."""
+        return dict(self._session_tokens)
 
     # ------------------------------------------------------------------
     # Public API
@@ -132,6 +144,11 @@ class LLMClient:
                     "",
                 )
                 result = self._parse_json(raw, tag)
+                usage = {
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                    "reasoning_tokens": 0,  # Anthropic does not separate reasoning tokens
+                }
                 self._write_debug_log(
                     tag=tag,
                     model=model,
@@ -139,12 +156,10 @@ class LLMClient:
                     response={
                         "stop_reason": response.stop_reason,
                         "content": raw,
-                        "usage": {
-                            "input_tokens": response.usage.input_tokens,
-                            "output_tokens": response.usage.output_tokens,
-                        },
+                        "usage": usage,
                     },
                     parsed=result,
+                    usage=usage,
                 )
                 return result
             except Exception as exc:
@@ -174,6 +189,20 @@ class LLMClient:
                 msg = response.choices[0].message
                 content = msg.content or ""
                 reasoning = getattr(msg, "reasoning_content", "") or ""
+                # Extract token usage; reasoning_tokens is available for o1/o3/gpt-oss models
+                u = getattr(response, "usage", None)
+                input_toks = getattr(u, "prompt_tokens", 0) or 0
+                output_toks = getattr(u, "completion_tokens", 0) or 0
+                reasoning_toks = 0
+                if u:
+                    details = getattr(u, "completion_tokens_details", None)
+                    if details:
+                        reasoning_toks = getattr(details, "reasoning_tokens", 0) or 0
+                usage = {
+                    "input_tokens": input_toks,
+                    "output_tokens": output_toks,
+                    "reasoning_tokens": reasoning_toks,
+                }
                 result = self._parse_json(content, tag)
                 self._write_debug_log(
                     tag=tag,
@@ -183,8 +212,10 @@ class LLMClient:
                         "finish_reason": response.choices[0].finish_reason,
                         "content": content,
                         "reasoning_content": reasoning,
+                        "usage": usage,
                     },
                     parsed=result,
+                    usage=usage,
                 )
                 return result
             except Exception as exc:
@@ -235,7 +266,14 @@ class LLMClient:
         request: Dict,
         response: Dict,
         parsed: Dict,
+        usage: Optional[Dict] = None,
     ) -> None:
+        # Accumulate token counts
+        if usage:
+            for key, sess_key in [("input_tokens", "input"), ("output_tokens", "output"), ("reasoning_tokens", "reasoning")]:
+                v = usage.get(key, 0) or 0
+                self._task_tokens[sess_key] += v
+                self._session_tokens[sess_key] += v
         # Always record in the per-task in-memory log for training data export
         self._task_log.append({
             "tag": tag,
@@ -243,6 +281,7 @@ class LLMClient:
             "request": request,
             "response": response,
             "parsed_result": parsed,
+            "token_usage": usage or {},
         })
 
         if not self._debug_dir:

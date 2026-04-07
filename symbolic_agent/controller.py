@@ -60,6 +60,11 @@ class Controller:
         redundancy_mode: str = "ast_jaccard",
         semantic_retrieval: bool = False,
         semantic_model: str = "all-MiniLM-L6-v2",
+        # Token budget parameters
+        max_tokens_base: Optional[int] = None,
+        max_tokens_complex: Optional[int] = None,
+        max_tokens_patch: int = 16384,
+        max_tokens_parser: int = 512,
     ):
         """
         Parameters
@@ -77,6 +82,14 @@ class Controller:
             Use sentence_transformers for library retrieval instead of token Jaccard.
         semantic_model : str
             Sentence transformer model name (default: all-MiniLM-L6-v2).
+        max_tokens_base : int, optional
+            Base max_tokens per LLM call (simple tasks). Defaults per-agent if None.
+        max_tokens_complex : int, optional
+            Max_tokens for complex tasks. Defaults per-agent if None.
+        max_tokens_patch : int
+            Max_tokens for the neural patch call (default: 16384).
+        max_tokens_parser : int
+            Max_tokens for the TaskParser call (default: 512).
         """
         if base_url:
             backend = "openai"
@@ -99,13 +112,26 @@ class Controller:
                     "Install with: pip install sentence_transformers"
                 )
 
+        # Per-agent token budgets: use explicit overrides or per-agent defaults
+        ssl_base = max_tokens_base if max_tokens_base is not None else 2048
+        ssl_complex = max_tokens_complex if max_tokens_complex is not None else 4096
+        bcr_base = max_tokens_base if max_tokens_base is not None else 4096
+        bcr_complex = max_tokens_complex if max_tokens_complex is not None else 8192
+        rep_base = max_tokens_base if max_tokens_base is not None else 1024
+        rep_complex = max_tokens_complex if max_tokens_complex is not None else 2048
+
         self.client = client
         self.library = FunctionLibrary(encoder=encoder)
         self.cost_tracker = CostTracker(lam=lam, redundancy_mode=redundancy_mode)
-        self.task_parser = TaskParser(client, model=model)
-        self.ssl_agent = SSLAgent(client, model)
-        self.bcr_agent = BCRAgent(client, model)
-        self.reporting_agent = ReportingAgent(client, model)
+        self.task_parser = TaskParser(client, model=model, max_tokens=max_tokens_parser)
+        self.ssl_agent = SSLAgent(client, model, max_tokens_base=ssl_base, max_tokens_complex=ssl_complex)
+        self.bcr_agent = BCRAgent(client, model, max_tokens_base=bcr_base, max_tokens_complex=bcr_complex, max_tokens_patch=max_tokens_patch)
+        self.reporting_agent = ReportingAgent(client, model, max_tokens_base=rep_base, max_tokens_complex=rep_complex)
+
+        # Store token budget config for projected budget computation
+        self._max_tokens_base = bcr_base  # BCR is the largest consumer, use as reference
+        self._max_tokens_complex = bcr_complex
+        self._max_tokens_patch = max_tokens_patch
 
     # ------------------------------------------------------------------
     # Routing logic
@@ -162,11 +188,31 @@ class Controller:
             }
         return state, task_spec
 
+    def projected_budget(self, max_reward_iters: int = 3) -> Dict:
+        """
+        Estimate the maximum token spend for one task.
+
+        Formula: max_reward_iters × MAX_STEPS_PER_ITER × max_tokens_complex
+        where MAX_STEPS_PER_ITER counts ~3 agent calls (parser, SSL, BCR) per
+        reward iteration, plus 1 Reporting call and 1 patch call.
+        """
+        calls_per_iter = MAX_STEPS + 1  # loop steps + final BCR attempt
+        symbolic = max_reward_iters * calls_per_iter * self._max_tokens_complex
+        patch = self._max_tokens_patch
+        return {
+            "max_reward_iters": max_reward_iters,
+            "calls_per_iter": calls_per_iter,
+            "max_tokens_complex": self._max_tokens_complex,
+            "projected_max_tokens": symbolic + patch,
+            "formula": f"{max_reward_iters} iters × {calls_per_iter} calls × {self._max_tokens_complex} tokens + {patch} patch = {symbolic + patch}",
+        }
+
     def _finalize_state(self, state: Dict) -> Dict:
-        """Attach cost/library snapshot and agent message log to state."""
+        """Attach cost/library snapshot, agent message log, and token usage to state."""
         state["cost_summary"] = self.cost_tracker.summary(self.library.functions)
         state["library_snapshot"] = [f.to_dict() for f in self.library.functions]
         state["agent_messages"] = self.client.get_task_log()
+        state["token_usage"] = self.client.get_task_token_usage()
         return state
 
     def _run_solve_loop(self, state: Dict, task_spec: Optional[TaskSpec], budget: float) -> Dict:
