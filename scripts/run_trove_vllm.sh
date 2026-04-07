@@ -23,4 +23,5 @@ python main.py \
   --trove-trim-every 9999 \
   --default-reward pbebench \
   --output-file    outputs/pbebench_lite_full_trove.jsonl \
+  --debug-dir      debug_trove \
   --stats
