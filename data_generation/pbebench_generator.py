@@ -21,7 +21,8 @@ def load_pbebench_lite(path: str="changelinglab/PBEBench-Lite", first_k: int=-1)
 
 # main
 if __name__ == "__main__":
-    data = load_pbebench_lite(first_k=50)
-    write_path = "data/pbebench/lite_pilot_tasks.jsonl"
+    # data = load_pbebench_lite(first_k=50)
+    data = load_pbebench_lite(first_k=-1)
+    write_path = "data/pbebench/lite_tasks_full.jsonl"
     if not os.path.exists(write_path):
         write_jsonl(data, write_path)

@@ -1,5 +1,10 @@
 #!/bin/bash
 
+mkdir -p /tmp/$USER-tiktoken-cache /tmp/$USER-tmp
+chmod 700 /tmp/$USER-tiktoken-cache /tmp/$USER-tmp
+export TIKTOKEN_CACHE_DIR=/tmp/$USER-tiktoken-cache
+export TMPDIR=/tmp/$USER-tmp
+
 ts=$(date +%Y%m%d_%H%M%S)
 
 nohup python -m vllm.entrypoints.openai.api_server \

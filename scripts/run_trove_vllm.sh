@@ -10,16 +10,17 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+export PORT=8002
 export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 mkdir -p outputs
 
 python main.py \
   --framework      trove \
-  --tasks-file     data/interleaved/pbebench_rg_string_pilot.jsonl \
-  --base-url       "http://localhost:8002/v1" \
+  --tasks-file     data/pbebench/lite_tasks_full.jsonl \
+  --base-url       "http://localhost:${PORT}/v1" \
   --model          "openai/gpt-oss-120b" \
   --trove-k        5 \
   --trove-trim-every 9999 \
   --default-reward pbebench \
-  --output-file    outputs/pbebench_rg_string_pilot_trove.jsonl \
+  --output-file    outputs/pbebench_lite_full_trove.jsonl \
   --stats
