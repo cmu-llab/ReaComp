@@ -21,7 +21,7 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # Default generation parameters — match TroVE's original settings
-DEFAULT_TEMPERATURE = 0.3
+DEFAULT_TEMPERATURE = 0.6
 DEFAULT_TOP_P = 0.95
 DEFAULT_MAX_TOKENS = 512
 
