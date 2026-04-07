@@ -177,12 +177,16 @@ class TroVELLMClient:
         last_exc = None
         for attempt in range(3):
             try:
+                # Do NOT pass temperature/top_p for the openai/vLLM backend.
+                # Reasoning models (gpt-oss-120b, o1, DeepSeek-R1, etc.) reject
+                # non-default temperature values with a 400 BadRequest, which
+                # caused TroVE to silently produce empty responses and an empty
+                # toolbox.  temperature/top_p are passed for Anthropic only
+                # (where they control sampling diversity for K-shot generation).
                 response = self._client.chat.completions.create(
                     model=model,
                     max_tokens=max_tokens,
                     messages=messages,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
                     # No response_format — TroVE uses free-form text
                 )
                 raw = response.choices[0].message.content or ""

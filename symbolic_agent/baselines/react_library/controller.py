@@ -122,6 +122,7 @@ class ReActLibraryController:
                     raw = next(
                         (b.text for b in resp.content if getattr(b, "type", None) == "text"), ""
                     )
+                    reasoning_raw = ""
                     usage = {
                         "input_tokens": resp.usage.input_tokens,
                         "output_tokens": resp.usage.output_tokens,
@@ -129,13 +130,18 @@ class ReActLibraryController:
                     }
                 else:
                     oai_msgs = [{"role": "system", "content": system}] + messages
+                    # No response_format — gpt-oss-120b (and other reasoning models on vLLM)
+                    # produce [reasoning, final] as 2 internal output segments; json_object
+                    # mode conflicts with this 2-part structure and returns 400.
+                    # We instruct via the system prompt instead (_JSON_INSTRUCTION).
                     resp = self._client.chat.completions.create(
                         model=self.model,
                         max_tokens=self.max_tokens,
                         messages=oai_msgs,
-                        response_format={"type": "json_object"},
                     )
-                    raw = resp.choices[0].message.content or ""
+                    msg = resp.choices[0].message
+                    raw = msg.content or ""
+                    reasoning_raw = getattr(msg, "reasoning_content", "") or ""
                     u = getattr(resp, "usage", None)
                     details = getattr(u, "completion_tokens_details", None)
                     usage = {
@@ -177,12 +183,16 @@ class ReActLibraryController:
                     "tag": tag,
                     "model": self.model,
                     "request": {"messages": messages, "max_tokens": self.max_tokens},
-                    "response": {"content": raw, "usage": usage},
+                    "response": {"content": raw, "reasoning_content": reasoning_raw, "usage": usage},
                     "parsed_result": result,
                     "token_usage": usage,
                 })
                 if self._debug_dir:
                     self._write_debug(tag, messages, raw, usage, result)
+                # Embed raw response text so _run_react_loop can use it as the
+                # assistant message (not str(result)).  Callers must pop this key.
+                result["_raw"] = raw
+                result["_reasoning"] = reasoning_raw
                 return result
 
             except Exception as exc:
@@ -278,9 +288,20 @@ class ReActLibraryController:
             messages.append({"role": "user", "content": user_content})
             result = self._call_llm(messages, tag=f"react_lib_step{step}")
 
+            # Pop internal transport keys before using result as the parsed action.
+            raw_response = result.pop("_raw", "")
+            reasoning_response = result.pop("_reasoning", "")
+
             thought = result.get("thought", "")
             action_type = result.get("action_type", "")
-            messages.append({"role": "assistant", "content": str(result)})
+
+            # Build the assistant turn using the original response text.
+            # For gpt-oss-120b multi-turn, include reasoning_content if present so
+            # vLLM can validate the 2-part structure of historical assistant turns.
+            asst_msg: Dict = {"role": "assistant", "content": raw_response or "{}"}
+            if reasoning_response:
+                asst_msg["reasoning_content"] = reasoning_response
+            messages.append(asst_msg)
 
             # ---- finish ----
             if action_type == "finish":
