@@ -21,12 +21,9 @@ export PORT="${PORT:-8002}"
 export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 mkdir -p outputs
 
-TASKS_FILE="${1:-data/interleaved/pbebench_rg_string_pilot.jsonl}"
-OUT_FILE="outputs/$(basename "${TASKS_FILE%.jsonl}")_react_mem.jsonl"
-
 python main.py \
   --framework        react_mem \
-  --tasks-file       "${TASKS_FILE}" \
+  --tasks-file       data/pbebench/lite_tasks_full.jsonl \
   --base-url         "http://localhost:${PORT}/v1" \
   --model            "openai/gpt-oss-120b" \
   --react-mem-k      3 \
@@ -34,7 +31,7 @@ python main.py \
   --max-tokens       4096 \
   --max-reward-iters 3 \
   --default-reward   pbebench \
-  --output-file      "${OUT_FILE}" \
+  --output-file      outputs/pbebench_lite_full_react_mem.jsonl \
   --debug-dir        debug_react_mem \
   "$@"
 

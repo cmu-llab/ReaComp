@@ -31,7 +31,7 @@ python main.py \
   --base-url         "http://localhost:${PORT}/v1" \
   --model            "openai/gpt-oss-120b" \
   --bok-k            5 \
-  --max-tokens       4096 \
+  --max-tokens       16384 \
   --default-reward   pbebench \
   --output-file      "${OUT_FILE}" \
   --debug-dir        debug_best_of_k \

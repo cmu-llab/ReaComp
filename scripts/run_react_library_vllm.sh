@@ -7,7 +7,7 @@
 #
 # Token budget (upper bound per task):
 #   max_reward_iters × max_steps × (2 calls/step) × max_tokens
-#   = 3 × 6 × 2 × 4096 = 147,456 tokens
+#   = 3 × 6 × 2 × 16384 = 589,824 tokens
 #
 # Key difference from react_mem:
 #   react_mem  — retrieves similar past task solutions as few-shot examples.
@@ -23,20 +23,17 @@ export PORT="${PORT:-8002}"
 export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 mkdir -p outputs
 
-TASKS_FILE="${1:-data/interleaved/pbebench_rg_string_pilot.jsonl}"
-OUT_FILE="outputs/$(basename "${TASKS_FILE%.jsonl}")_react_library.jsonl"
-
 python main.py \
   --framework        react_library \
-  --tasks-file       "${TASKS_FILE}" \
+  --tasks-file       data/pbebench/lite_tasks_full.jsonl \
   --base-url         "http://localhost:${PORT}/v1" \
   --model            "openai/gpt-oss-120b" \
   --react-lib-k      5 \
   --react-max-steps  6 \
-  --max-tokens       4096 \
+  --max-tokens       16384 \
   --max-reward-iters 3 \
   --default-reward   pbebench \
-  --output-file      "${OUT_FILE}" \
+  --output-file      outputs/pbebench_lite_full_react_library.jsonl \
   --debug-dir        debug_react_library \
   "$@"
 
