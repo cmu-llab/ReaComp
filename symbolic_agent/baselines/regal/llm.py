@@ -42,6 +42,8 @@ class RegalLLMClient:
         self.debug_dir = debug_dir
 
         self._task_log: list = []
+        self._task_tokens: dict = {"input": 0, "output": 0, "reasoning": 0}
+        self._session_tokens: dict = {"input": 0, "output": 0, "reasoning": 0}
 
         if base_url:
             from openai import OpenAI
@@ -54,9 +56,20 @@ class RegalLLMClient:
 
     def reset_task_log(self) -> None:
         self._task_log = []
+        self._task_tokens = {"input": 0, "output": 0, "reasoning": 0}
 
     def get_task_log(self) -> list:
         return list(self._task_log)
+
+    def get_task_token_usage(self) -> dict:
+        return dict(self._task_tokens)
+
+    def get_session_token_usage(self) -> dict:
+        return dict(self._session_tokens)
+
+    def restore_session_tokens(self, d: dict) -> None:
+        for k in ("input", "output", "reasoning"):
+            self._session_tokens[k] = int(d.get(k, 0))
 
     def call(
         self,
@@ -83,6 +96,11 @@ class RegalLLMClient:
                         messages=[{"role": "user", "content": prompt}],
                     )
                     text = response.content[0].text.strip()
+                    usage = {
+                        "input_tokens": response.usage.input_tokens,
+                        "output_tokens": response.usage.output_tokens,
+                        "reasoning_tokens": 0,
+                    }
                 else:
                     response = self._client.chat.completions.create(
                         model=self.model,
@@ -91,11 +109,25 @@ class RegalLLMClient:
                         messages=[{"role": "user", "content": prompt}],
                     )
                     text = response.choices[0].message.content.strip()
+                    u = getattr(response, "usage", None)
+                    details = getattr(u, "completion_tokens_details", None)
+                    usage = {
+                        "input_tokens": getattr(u, "prompt_tokens", 0) or 0,
+                        "output_tokens": getattr(u, "completion_tokens", 0) or 0,
+                        "reasoning_tokens": getattr(details, "reasoning_tokens", 0) or 0 if details else 0,
+                    }
+
+                # Accumulate token counts
+                for key, sess_key in [("input_tokens", "input"), ("output_tokens", "output"), ("reasoning_tokens", "reasoning")]:
+                    v = usage.get(key, 0) or 0
+                    self._task_tokens[sess_key] += v
+                    self._session_tokens[sess_key] += v
 
                 entry = {
                     "tag": tag,
                     "prompt": prompt,
                     "response": text,
+                    "token_usage": usage,
                 }
                 self._task_log.append(entry)
 

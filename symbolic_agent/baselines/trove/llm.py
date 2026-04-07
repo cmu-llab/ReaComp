@@ -58,6 +58,8 @@ class TroVELLMClient:
         self.top_p = top_p
         self._call_counter = 0
         self._task_log: List[Dict] = []
+        self._task_tokens: Dict[str, int] = {"input": 0, "output": 0, "reasoning": 0}
+        self._session_tokens: Dict[str, int] = {"input": 0, "output": 0, "reasoning": 0}
 
         if debug_dir:
             run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
@@ -83,9 +85,21 @@ class TroVELLMClient:
 
     def reset_task_log(self) -> None:
         self._task_log = []
+        self._task_tokens = {"input": 0, "output": 0, "reasoning": 0}
 
     def get_task_log(self) -> List[Dict]:
         return list(self._task_log)
+
+    def get_task_token_usage(self) -> Dict[str, int]:
+        return dict(self._task_tokens)
+
+    def get_session_token_usage(self) -> Dict[str, int]:
+        return dict(self._session_tokens)
+
+    def restore_session_tokens(self, d: Dict[str, int]) -> None:
+        """Restore accumulated session token counts from a checkpoint."""
+        for k in ("input", "output", "reasoning"):
+            self._session_tokens[k] = int(d.get(k, 0))
 
     # ------------------------------------------------------------------
     # Public API
@@ -132,7 +146,12 @@ class TroVELLMClient:
                     (b.text for b in response.content if getattr(b, "type", None) == "text"),
                     "",
                 )
-                self._record(tag, model, prompt, raw, max_tokens)
+                usage = {
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                    "reasoning_tokens": 0,
+                }
+                self._record(tag, model, prompt, raw, max_tokens, usage)
                 return raw
             except Exception as exc:
                 last_exc = exc
@@ -141,7 +160,7 @@ class TroVELLMClient:
                         "Anthropic call got 400 (tag=%s, likely multi-segment reasoning model output): %s",
                         tag, exc,
                     )
-                    self._record(tag, model, prompt, "", max_tokens)
+                    self._record(tag, model, prompt, "", max_tokens, {})
                     return ""
                 if attempt < 2:
                     wait = 5 * (2 ** attempt)
@@ -167,7 +186,14 @@ class TroVELLMClient:
                     # No response_format — TroVE uses free-form text
                 )
                 raw = response.choices[0].message.content or ""
-                self._record(tag, model, prompt, raw, max_tokens)
+                u = getattr(response, "usage", None)
+                details = getattr(u, "completion_tokens_details", None)
+                usage = {
+                    "input_tokens": getattr(u, "prompt_tokens", 0) or 0,
+                    "output_tokens": getattr(u, "completion_tokens", 0) or 0,
+                    "reasoning_tokens": getattr(details, "reasoning_tokens", 0) or 0 if details else 0,
+                }
+                self._record(tag, model, prompt, raw, max_tokens, usage)
                 return raw
             except Exception as exc:
                 last_exc = exc
@@ -176,7 +202,7 @@ class TroVELLMClient:
                         "OpenAI call got 400 (tag=%s, likely multi-segment reasoning model output): %s",
                         tag, exc,
                     )
-                    self._record(tag, model, prompt, "", max_tokens)
+                    self._record(tag, model, prompt, "", max_tokens, {})
                     return ""
                 if attempt < 2:
                     wait = 5 * (2 ** attempt)
@@ -192,12 +218,18 @@ class TroVELLMClient:
     # Logging
     # ------------------------------------------------------------------
 
-    def _record(self, tag: str, model: str, prompt: str, raw: str, max_tokens: int) -> None:
+    def _record(self, tag: str, model: str, prompt: str, raw: str, max_tokens: int, usage: Dict) -> None:
+        # Accumulate token counts
+        for key, sess_key in [("input_tokens", "input"), ("output_tokens", "output"), ("reasoning_tokens", "reasoning")]:
+            v = usage.get(key, 0) or 0
+            self._task_tokens[sess_key] += v
+            self._session_tokens[sess_key] += v
         entry = {
             "tag": tag,
             "model": model,
             "request": {"prompt": prompt, "max_tokens": max_tokens},
-            "response": {"content": raw},
+            "response": {"content": raw, "usage": usage},
+            "token_usage": usage,
         }
         self._task_log.append(entry)
 

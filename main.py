@@ -192,6 +192,7 @@ def _save_checkpoint(controller: Controller, last_completed_index: int, checkpoi
       - last_completed_index : last task index that was written to the output file
       - library              : all Function objects (serialised via to_dict())
       - cost_tracker         : cumulative counters and log
+      - session_tokens       : accumulated input/output/reasoning token counts
     """
     ckpt = {
         "last_completed_index": last_completed_index,
@@ -203,6 +204,7 @@ def _save_checkpoint(controller: Controller, last_completed_index: int, checkpoi
             "task_loss": controller.cost_tracker.task_loss,
             "log": controller.cost_tracker.log,
         },
+        "session_tokens": controller.client.get_session_token_usage(),
     }
     try:
         Path(checkpoint_file).write_text(
@@ -215,12 +217,13 @@ def _save_checkpoint(controller: Controller, last_completed_index: int, checkpoi
 def _save_trove_checkpoint(controller, last_completed_index: int, checkpoint_file: str) -> None:
     """
     Save TroVE controller state so a crashed run can be resumed.
-    Stores the toolbox and _n_processed counter alongside last_completed_index.
+    Stores the toolbox, _n_processed counter, and session token counts.
     """
     ckpt = {
         "last_completed_index": last_completed_index,
         "n_processed": controller._n_processed,
         "toolbox": controller.toolbox.to_dict(),
+        "session_tokens": controller.llm.get_session_token_usage(),
     }
     try:
         Path(checkpoint_file).write_text(
@@ -241,6 +244,8 @@ def _load_trove_checkpoint(controller, checkpoint_file: str) -> int:
         ckpt = json.loads(Path(checkpoint_file).read_text(encoding="utf-8"))
         controller.toolbox = TroVEToolbox.from_dict(ckpt.get("toolbox", {}))
         controller._n_processed = ckpt.get("n_processed", 0)
+        if ckpt.get("session_tokens"):
+            controller.llm.restore_session_tokens(ckpt["session_tokens"])
         last_index = ckpt.get("last_completed_index", -1)
         next_index = last_index + 1
         logger.info(
@@ -254,10 +259,11 @@ def _load_trove_checkpoint(controller, checkpoint_file: str) -> int:
 
 
 def _save_react_mem_checkpoint(controller, last_completed_index: int, checkpoint_file: str) -> None:
-    """Save ReAct+Memory controller state (episodic memory) to checkpoint."""
+    """Save ReAct+Memory controller state (episodic memory + session tokens) to checkpoint."""
     ckpt = {
         "last_completed_index": last_completed_index,
         "memory": controller.memory.to_dict(),
+        "session_tokens": controller.get_session_token_usage(),
     }
     try:
         Path(checkpoint_file).write_text(json.dumps(ckpt, indent=2, default=str), encoding="utf-8")
@@ -271,6 +277,8 @@ def _load_react_mem_checkpoint(controller, checkpoint_file: str) -> int:
     try:
         ckpt = json.loads(Path(checkpoint_file).read_text(encoding="utf-8"))
         controller.memory = ReActMemory.from_dict(ckpt.get("memory", []), k=controller.memory_k)
+        if ckpt.get("session_tokens"):
+            controller.restore_session_tokens(ckpt["session_tokens"])
         last_index = ckpt.get("last_completed_index", -1)
         next_index = last_index + 1
         logger.info("react_mem checkpoint loaded: last_completed=%d, memory=%d entries → resuming from task %d",
@@ -278,6 +286,62 @@ def _load_react_mem_checkpoint(controller, checkpoint_file: str) -> int:
         return next_index
     except Exception as exc:
         logger.warning("Could not load react_mem checkpoint %s: %s — starting from scratch.", checkpoint_file, exc)
+        return 0
+
+
+def _save_best_of_k_checkpoint(controller, last_completed_index: int, checkpoint_file: str) -> None:
+    """Save Best-of-K state (no cross-task library, only token counts) to checkpoint."""
+    ckpt = {
+        "last_completed_index": last_completed_index,
+        "session_tokens": controller.get_session_token_usage(),
+    }
+    try:
+        Path(checkpoint_file).write_text(json.dumps(ckpt, indent=2, default=str), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Could not write best_of_k checkpoint %s: %s", checkpoint_file, exc)
+
+
+def _load_best_of_k_checkpoint(controller, checkpoint_file: str) -> int:
+    """Restore Best-of-K session token counts from checkpoint. Returns next task index."""
+    try:
+        ckpt = json.loads(Path(checkpoint_file).read_text(encoding="utf-8"))
+        if ckpt.get("session_tokens"):
+            controller.restore_session_tokens(ckpt["session_tokens"])
+        last_index = ckpt.get("last_completed_index", -1)
+        next_index = last_index + 1
+        logger.info("best_of_k checkpoint loaded: last_completed=%d → resuming from task %d",
+                    last_index, next_index)
+        return next_index
+    except Exception as exc:
+        logger.warning("Could not load best_of_k checkpoint %s: %s — starting from scratch.", checkpoint_file, exc)
+        return 0
+
+
+def _save_regal_checkpoint(controller, last_completed_index: int, checkpoint_file: str) -> None:
+    """Save ReGAL session token counts to checkpoint (codebank doesn't change during test)."""
+    ckpt = {
+        "last_completed_index": last_completed_index,
+        "session_tokens": controller.llm.get_session_token_usage(),
+    }
+    try:
+        Path(checkpoint_file).write_text(json.dumps(ckpt, indent=2, default=str), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Could not write regal checkpoint %s: %s", checkpoint_file, exc)
+
+
+def _load_regal_checkpoint(controller, checkpoint_file: str) -> int:
+    """Restore ReGAL session token counts from checkpoint. Returns next task index."""
+    try:
+        ckpt = json.loads(Path(checkpoint_file).read_text(encoding="utf-8"))
+        if ckpt.get("session_tokens"):
+            controller.llm.restore_session_tokens(ckpt["session_tokens"])
+        last_index = ckpt.get("last_completed_index", -1)
+        next_index = last_index + 1
+        logger.info("regal checkpoint loaded: last_completed=%d → resuming from task %d",
+                    last_index, next_index)
+        return next_index
+    except Exception as exc:
+        logger.warning("Could not load regal checkpoint %s: %s — starting from scratch.", checkpoint_file, exc)
         return 0
 
 
@@ -314,6 +378,10 @@ def _load_checkpoint(controller: Controller, checkpoint_file: str) -> int:
 
         # Recompute embeddings for restored functions if semantic retrieval is active.
         controller.library.recompute_embeddings()
+
+        # Restore session token counts so cumulative totals survive resume
+        if ckpt.get("session_tokens"):
+            controller.client.restore_session_tokens(ckpt["session_tokens"])
 
         last_index = ckpt.get("last_completed_index", -1)
         next_index = last_index + 1
@@ -775,11 +843,11 @@ def main() -> None:
             if args.output_file else None
         )
 
-        # Auto-resume: if both output file and checkpoint exist, restore state and skip done tasks.
-        # ssl_bcr, trove, and react_mem support per-task checkpointing.
-        # ReGAL and best_of_k have no cross-task state to checkpoint.
+        # Auto-resume: all frameworks support checkpointing.
+        # ssl_bcr/trove/react_mem: full state (library/toolbox/memory) + session tokens.
+        # best_of_k/regal: session tokens + last_completed_index only (no cross-task library).
         start_index = 0
-        if args.framework in ("ssl_bcr", "trove", "react_mem"):
+        if args.framework in ("ssl_bcr", "trove", "react_mem", "best_of_k", "regal"):
             if (
                 ckpt_file
                 and Path(ckpt_file).exists()
@@ -790,6 +858,10 @@ def main() -> None:
                     start_index = _load_trove_checkpoint(controller, ckpt_file)
                 elif args.framework == "react_mem":
                     start_index = _load_react_mem_checkpoint(controller, ckpt_file)
+                elif args.framework == "best_of_k":
+                    start_index = _load_best_of_k_checkpoint(controller, ckpt_file)
+                elif args.framework == "regal":
+                    start_index = _load_regal_checkpoint(controller, ckpt_file)
                 else:
                     start_index = _load_checkpoint(controller, ckpt_file)
             elif ckpt_file and Path(ckpt_file).exists():
@@ -828,6 +900,10 @@ def main() -> None:
                     _save_trove_checkpoint(controller, i, ckpt_file)
                 elif args.framework == "react_mem":
                     _save_react_mem_checkpoint(controller, i, ckpt_file)
+                elif args.framework == "best_of_k":
+                    _save_best_of_k_checkpoint(controller, i, ckpt_file)
+                elif args.framework == "regal":
+                    _save_regal_checkpoint(controller, i, ckpt_file)
             # Library/memory size logging
             if args.framework == "trove":
                 lib_size = len(controller.toolbox)

@@ -232,6 +232,10 @@ class BestOfKController:
     def get_session_token_usage(self) -> Dict[str, int]:
         return dict(self._session_tokens)
 
+    def restore_session_tokens(self, d: Dict[str, int]) -> None:
+        for k in ("input", "output", "reasoning"):
+            self._session_tokens[k] = int(d.get(k, 0))
+
     # ------------------------------------------------------------------
     # Core solve
     # ------------------------------------------------------------------

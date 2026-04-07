@@ -103,6 +103,11 @@ class LLMClient:
         """Return token counts accumulated across the entire session."""
         return dict(self._session_tokens)
 
+    def restore_session_tokens(self, d: Dict[str, int]) -> None:
+        """Restore accumulated session token counts from a checkpoint."""
+        for k in ("input", "output", "reasoning"):
+            self._session_tokens[k] = int(d.get(k, 0))
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
