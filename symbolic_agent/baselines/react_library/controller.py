@@ -1,21 +1,25 @@
 """
 ReAct + Library Controller.
 
-Stateless per-step design: each LLM call is a single-turn message
-containing only the current task, top-K retrieved library functions,
-the most recent execution output, and the most recent verifier feedback.
-No prior trajectory is accumulated — the model's own chain-of-thought
-(reasoning_content) serves as implicit working memory.
+Implements a ReAct agent (Yao et al. 2022) that grows a shared library of
+reusable Python helper functions across tasks, rather than storing episodic
+memories of past solutions.
 
-Three actions the agent may take per step:
-  execute      — run Python; library functions are pre-loaded in scope.
-  add_function — register a new reusable helper in the shared library.
-  submit       — propose a final answer; triggers immediate reward eval.
+Architecture:
+  Shared state:
+    - ReactLibrary: named helper functions that persist across all tasks.
 
-The reward-iteration loop is folded into the step loop: each 'submit'
-action calls the reward function immediately and feeds the score +
-message back as verifier feedback in the next step's prompt.  The loop
-exits when reward >= 1.0 or max_steps is exhausted.
+  For each task:
+    1. Retrieve top-K relevant library functions (BM25 on name+description).
+    2. Run ReAct loop (Thought → Action → Observation) for up to max_steps.
+       Actions: execute_code (library in namespace), add_to_library, finish.
+    3. Evaluate with reward_fn.
+    4. Up to max_reward_iters iterations with reward feedback.
+
+Differences from ReAct+Memory (react_mem):
+  - Memory stores (task, code, answer) pairs for few-shot retrieval.
+  - Library stores named helper *functions* loaded into the execution
+    namespace so the agent calls them directly, not by example.
 """
 
 import logging
@@ -24,9 +28,14 @@ from typing import Any, Callable, Dict, List, Optional
 
 from .executor import run_code_with_library
 from .library import ReactLibrary
-from .prompts import _SYSTEM, build_prompt
+from .prompts import _SYSTEM, build_followup_prompt, build_initial_prompt
 
 logger = logging.getLogger(__name__)
+
+_JSON_INSTRUCTION = (
+    "\n\nRespond with a single valid JSON object and nothing else. "
+    "No markdown fences, no prose before or after the JSON."
+)
 
 
 class ReActLibraryController:
@@ -40,12 +49,14 @@ class ReActLibraryController:
     base_url : str, optional
         OpenAI-compatible base URL for vLLM.
     debug_dir : str, optional
-    lib_k : int
-        Number of library functions to retrieve per step (default: 5).
+    library_k : int
+        Number of library functions to retrieve per task (default: 5).
     max_steps : int
-        Maximum total actions (execute + add_function + submit) per task (default: 10).
+        Maximum ReAct steps per task (default: 6).
     max_tokens : int
         Max tokens per LLM call (default: 4096).
+    temperature : float
+        Sampling temperature (default: 0.0 for greedy).
     """
 
     def __init__(
@@ -54,14 +65,16 @@ class ReActLibraryController:
         model: str = "claude-sonnet-4-5",
         base_url: Optional[str] = None,
         debug_dir: Optional[str] = None,
-        lib_k: int = 5,
-        max_steps: int = 10,
+        library_k: int = 5,
+        max_steps: int = 6,
         max_tokens: int = 4096,
+        temperature: float = 0.0,
     ):
         self.model = model
-        self.lib_k = lib_k
+        self.library_k = library_k
         self.max_steps = max_steps
         self.max_tokens = max_tokens
+        self.temperature = temperature
 
         # Token usage tracking
         self._session_tokens: Dict[str, int] = {"input": 0, "output": 0, "reasoning": 0}
@@ -89,16 +102,13 @@ class ReActLibraryController:
         self.library = ReactLibrary()
 
     # ------------------------------------------------------------------
-    # LLM call — single-turn, fresh context each step
+    # LLM call
     # ------------------------------------------------------------------
 
-    def _call_llm(self, prompt: str, tag: str = "") -> Dict:
-        """
-        Single-turn LLM call.  For vLLM the system prompt is prepended to
-        the user message (gpt-oss-120b's chat template rejects a separate
-        system role and returns 400).  Returns a parsed JSON dict.
-        """
+    def _call_llm(self, messages: List[Dict], tag: str = "") -> Dict:
+        """Call the LLM and return a parsed JSON dict."""
         import json, re, time
+        system = _SYSTEM + _JSON_INSTRUCTION
 
         for attempt in range(3):
             try:
@@ -106,43 +116,40 @@ class ReActLibraryController:
                     resp = self._client.messages.create(
                         model=self.model,
                         max_tokens=self.max_tokens,
-                        system=_SYSTEM,
-                        messages=[{"role": "user", "content": prompt}],
+                        system=system,
+                        messages=messages,
                     )
                     raw = next(
                         (b.text for b in resp.content if getattr(b, "type", None) == "text"), ""
                     )
+                    reasoning_raw = ""
                     usage = {
                         "input_tokens": resp.usage.input_tokens,
                         "output_tokens": resp.usage.output_tokens,
                         "reasoning_tokens": 0,
                     }
                 else:
-                    # gpt-oss-120b uses the Harmony format via vLLM.
-                    # - Use "developer" role for the system prompt (the chat
-                    #   template maps "developer"/"system" to the developer block).
-                    #   Injecting system content into the user message caused the
-                    #   "Expected 2 output messages, got N" error.
-                    # - No response_format — model outputs 2-part Harmony response
-                    #   (analysis CoT + final); json_object mode conflicts.
-                    # - No temperature/top_p — rejected by the vLLM endpoint.
+                    oai_msgs = [{"role": "system", "content": system}] + messages
+                    # No response_format — gpt-oss-120b (and other reasoning models on vLLM)
+                    # produce [reasoning, final] as 2 internal output segments; json_object
+                    # mode conflicts with this 2-part structure and returns 400.
+                    # We instruct via the system prompt instead (_JSON_INSTRUCTION).
                     resp = self._client.chat.completions.create(
                         model=self.model,
                         max_tokens=self.max_tokens,
-                        messages=[
-                            {"role": "developer", "content": _SYSTEM},
-                            {"role": "user", "content": prompt},
-                        ],
+                        messages=oai_msgs,
                     )
                     msg = resp.choices[0].message
                     raw = msg.content or ""
+                    reasoning_raw = getattr(msg, "reasoning_content", "") or ""
                     u = getattr(resp, "usage", None)
                     details = getattr(u, "completion_tokens_details", None)
                     usage = {
                         "input_tokens": getattr(u, "prompt_tokens", 0) or 0,
                         "output_tokens": getattr(u, "completion_tokens", 0) or 0,
                         "reasoning_tokens": (
-                            getattr(details, "reasoning_tokens", 0) or 0 if details else 0
+                            getattr(details, "reasoning_tokens", 0) or 0
+                            if details else 0
                         ),
                     }
 
@@ -156,7 +163,7 @@ class ReActLibraryController:
                     self._task_tokens[sess_key] += v
                     self._session_tokens[sess_key] += v
 
-                # Parse JSON (strip markdown fences if the model added them)
+                # Strip markdown fences if present
                 text = raw.strip()
                 if text.startswith("```"):
                     text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -175,13 +182,17 @@ class ReActLibraryController:
                 self._task_log.append({
                     "tag": tag,
                     "model": self.model,
-                    "request": {"prompt": prompt, "max_tokens": self.max_tokens},
-                    "response": {"content": raw, "usage": usage},
+                    "request": {"messages": messages, "max_tokens": self.max_tokens},
+                    "response": {"content": raw, "reasoning_content": reasoning_raw, "usage": usage},
                     "parsed_result": result,
                     "token_usage": usage,
                 })
                 if self._debug_dir:
-                    self._write_debug(tag, prompt, raw, usage, result)
+                    self._write_debug(tag, messages, raw, usage, result)
+                # Embed raw response text so _run_react_loop can use it as the
+                # assistant message (not str(result)).  Callers must pop this key.
+                result["_raw"] = raw
+                result["_reasoning"] = reasoning_raw
                 return result
 
             except Exception as exc:
@@ -198,23 +209,25 @@ class ReActLibraryController:
                     logger.error("react_library LLM call failed after 3 attempts: %s", exc)
                     return {}
 
-    def _write_debug(self, tag: str, prompt: str, raw: str, usage: Dict, parsed: Dict) -> None:
+    def _write_debug(self, tag, messages, raw, usage, parsed):
         import json
         from datetime import datetime, timezone
         self._call_counter += 1
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%f")
-        path = os.path.join(self._debug_dir, f"{self._call_counter:04d}_{tag}_{ts}.json")
+        path = os.path.join(
+            self._debug_dir, f"{self._call_counter:04d}_{tag}_{ts}.json"
+        )
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(
-                    {"tag": tag, "prompt": prompt, "raw": raw, "usage": usage, "parsed": parsed},
+                    {"tag": tag, "messages": messages, "raw": raw, "usage": usage, "parsed": parsed},
                     f, indent=2, default=str,
                 )
         except Exception as exc:
             logger.warning("Could not write debug log %s: %s", path, exc)
 
     # ------------------------------------------------------------------
-    # Task log helpers
+    # Task log helpers (compatible with main.py session token logging)
     # ------------------------------------------------------------------
 
     def reset_task_log(self) -> None:
@@ -241,111 +254,147 @@ class ReActLibraryController:
     def _run_react_loop(
         self,
         task_description: str,
-        reward_fn: Callable,
-        entry: Dict,
         max_steps: int,
-        max_submits: int,
+        reward_feedback: Optional[str] = None,
     ) -> Dict:
         """
-        Run the ReAct loop for one task.
+        Run one ReAct loop for the task.
 
-        Each step is a fresh single-turn LLM call.  The last execution
-        output and latest verifier feedback are passed forward as plain
-        text — no conversation history is accumulated in the prompt.
-
-        Returns a dict: {answer, best_reward, reward_history, library_additions, steps_taken}.
+        Returns a dict: {answer, code, history, steps_taken, library_additions}.
         """
-        last_result: Optional[str] = None      # stdout/stderr from last execute
-        verifier_feedback: Optional[str] = None  # score + message from last submit
-        best_reward = 0.0
-        best_answer = None
-        submit_count = 0
-        reward_history: List[Dict] = []
+        # Retrieve relevant library functions for this task
+        lib_functions = self.library.retrieve(task_description, k=self.library_k)
+
+        history: List[Dict] = []
+        messages: List[Dict] = []
+        last_answer = None
+        last_code = None
         library_additions: List[str] = []
 
         for step in range(max_steps):
-            lib_fns = self.library.retrieve(task_description, k=self.lib_k)
-            prompt = build_prompt(task_description, lib_fns, last_result, verifier_feedback)
-            result = self._call_llm(prompt, tag=f"step{step}")
-
-            action = result.get("action", "")
-
-            # ---- execute ----
-            if action == "execute":
-                code = result.get("code", "")
-                ok, out, err = run_code_with_library(code, self.library.namespace())
-                last_result = (out[:800] if ok else f"ERROR: {err[:400]}") or "(no output)"
-                verifier_feedback = None
-                logger.info("react_library step %d: execute → %s", step, last_result[:80])
-
-            # ---- add_function ----
-            elif action == "add_function":
-                name = result.get("name", "").strip()
-                desc = result.get("description", "").strip()
-                code = result.get("code", "").strip()
-                if name and code:
-                    added = self.library.add(name, desc, code)
-                    last_result = f"Function '{name}' {'added' if added else 'updated'} in library."
-                    library_additions.append(name)
-                    logger.info("react_library step %d: add_function '%s'", step, name)
-                else:
-                    last_result = "ERROR: add_function requires 'name' and 'code' fields."
-                    logger.warning("react_library step %d: add_function missing fields", step)
-                verifier_feedback = None
-
-            # ---- submit ----
-            elif action == "submit":
-                answer = result.get("answer")
-                submit_count += 1
-                rr = reward_fn(answer, answer is not None, entry)
-                rv = float(rr.get("value", 0.0))
-                rm = rr.get("message", "")
-
-                if rv > best_reward:
-                    best_reward = rv
-                    best_answer = answer
-
-                reward_history.append({
-                    "step": step,
-                    "reward": rv,
-                    "message": rm,
-                    "blame": "react_library",
-                    "solution_summary": str(answer)[:200] if answer is not None else "",
-                })
-                verifier_feedback = f"score={rv:.2f}\n{rm}"
-                last_result = None
-                logger.info(
-                    "react_library step %d: submit → reward=%.3f  %s", step, rv, rm[:80]
+            if step == 0:
+                user_content = build_initial_prompt(task_description, lib_functions, step=step)
+            else:
+                # Refresh relevant functions in case new ones were added
+                lib_functions = self.library.retrieve(task_description, k=self.library_k)
+                user_content = build_followup_prompt(
+                    task_description,
+                    history,
+                    step,
+                    library_functions=lib_functions,
+                    reward_feedback=reward_feedback,
                 )
 
-                if rv >= 1.0 or submit_count >= max_submits:
-                    break
+            messages.append({"role": "user", "content": user_content})
+            result = self._call_llm(messages, tag=f"react_lib_step{step}")
+
+            # Pop internal transport keys before using result as the parsed action.
+            raw_response = result.pop("_raw", "")
+            reasoning_response = result.pop("_reasoning", "")
+
+            thought = result.get("thought", "")
+            action_type = result.get("action_type", "")
+
+            # Build the assistant turn using the original response text.
+            # For gpt-oss-120b multi-turn, include reasoning_content if present so
+            # vLLM can validate the 2-part structure of historical assistant turns.
+            asst_msg: Dict = {"role": "assistant", "content": raw_response or "{}"}
+            if reasoning_response:
+                asst_msg["reasoning_content"] = reasoning_response
+            messages.append(asst_msg)
+
+            # ---- finish ----
+            if action_type == "finish":
+                last_answer = result.get("answer")
+                history.append({
+                    "thought": thought,
+                    "action_type": "finish",
+                    "answer": last_answer,
+                    "observation": "",
+                })
+                logger.info(
+                    "react_library step %d: finish → %s", step, str(last_answer)[:80]
+                )
+                break
+
+            # ---- execute_code ----
+            elif action_type == "execute_code":
+                code = result.get("code", "")
+                last_code = code
+                lib_ns = self.library.namespace()
+                ok, exec_result, err = run_code_with_library(code, library_namespace=lib_ns)
+                if ok:
+                    observation = (
+                        str(exec_result) if exec_result is not None else "(no output)"
+                    )
+                else:
+                    observation = f"ERROR: {err[:400]}"
+                logger.info(
+                    "react_library step %d: execute_code → %s", step, observation[:80]
+                )
+                history.append({
+                    "thought": thought,
+                    "action_type": "execute_code",
+                    "code": code,
+                    "observation": observation,
+                })
+                messages.append({
+                    "role": "user",
+                    "content": f"Observation: {observation}",
+                })
+
+            # ---- add_to_library ----
+            elif action_type == "add_to_library":
+                name = result.get("name", "").strip()
+                description = result.get("description", "").strip()
+                code = result.get("code", "").strip()
+
+                if not name or not code:
+                    observation = "ERROR: add_to_library requires 'name' and 'code' fields."
+                else:
+                    # Validate the function compiles and executes cleanly
+                    lib_ns = self.library.namespace()
+                    ok, _, err = run_code_with_library(code, library_namespace=lib_ns)
+                    if not ok:
+                        observation = f"ERROR: function code failed validation: {err[:300]}"
+                    else:
+                        self.library.update(name, description, code)
+                        library_additions.append(name)
+                        observation = f"Added '{name}' to library. ({len(self.library)} functions total)"
+                        logger.info(
+                            "react_library step %d: add_to_library '%s'", step, name
+                        )
+
+                history.append({
+                    "thought": thought,
+                    "action_type": "add_to_library",
+                    "name": name,
+                    "description": description,
+                    "code": code,
+                    "observation": observation,
+                })
+                messages.append({
+                    "role": "user",
+                    "content": f"Observation: {observation}",
+                })
 
             # ---- unknown ----
             else:
                 if result.get("answer") is not None:
-                    answer = result.get("answer")
-                    rr = reward_fn(answer, True, entry)
-                    rv = float(rr.get("value", 0.0))
-                    if rv > best_reward:
-                        best_reward = rv
-                        best_answer = answer
-                    reward_history.append({
-                        "step": step,
-                        "reward": rv,
-                        "message": rr.get("message", ""),
-                        "blame": "react_library",
-                        "solution_summary": str(answer)[:200],
-                    })
-                logger.warning("react_library step %d: unknown action %r", step, action)
+                    last_answer = result.get("answer")
+                history.append({
+                    "thought": thought,
+                    "action_type": action_type or "unknown",
+                    "observation": "",
+                })
                 break
 
         return {
-            "answer": best_answer,
-            "best_reward": best_reward,
-            "reward_history": reward_history,
+            "answer": last_answer,
+            "code": last_code,
+            "history": history,
+            "steps_taken": len(history),
             "library_additions": library_additions,
-            "steps_taken": step + 1,
         }
 
     # ------------------------------------------------------------------
@@ -362,11 +411,10 @@ class ReActLibraryController:
         max_reward_iters: int = 3,
     ) -> Dict:
         """
-        Solve a task with verifier feedback.
+        ReAct+Library solve with reward-feedback iterations.
 
-        max_reward_iters caps the number of 'submit' attempts within the
-        step loop.  Library functions added during this task persist and
-        are available to all subsequent tasks.
+        Any functions added to the library during this task persist and are
+        available to future tasks.
         """
         self.reset_task_log()
 
@@ -380,20 +428,53 @@ class ReActLibraryController:
         else:
             task_description = str(task_input)
 
-        loop_result = self._run_react_loop(
-            task_description,
-            reward_fn=reward_fn,
-            entry=entry,
-            max_steps=self.max_steps,
-            max_submits=max_reward_iters,
-        )
+        best_reward = 0.0
+        best_answer = None
+        best_code = None
+        reward_history = []
+        reward_feedback: Optional[str] = None
+        all_library_additions: List[str] = []
 
-        best_reward = loop_result["best_reward"]
-        best_answer = loop_result["answer"]
-        reward_history = loop_result["reward_history"]
-        library_additions = loop_result["library_additions"]
+        for iteration in range(max_reward_iters):
+            logger.info(
+                "react_library: task iteration %d/%d (library=%d fns)",
+                iteration + 1, max_reward_iters, len(self.library),
+            )
+            loop_result = self._run_react_loop(
+                task_description,
+                max_steps=self.max_steps,
+                reward_feedback=reward_feedback,
+            )
+            answer = loop_result["answer"]
+            code = loop_result.get("code")
+            all_library_additions.extend(loop_result.get("library_additions", []))
+
+            reward_result = reward_fn(answer, answer is not None, entry)
+            reward_value = float(reward_result.get("value", 0.0))
+            reward_message = reward_result.get("message", "")
+
+            if reward_value > best_reward:
+                best_reward = reward_value
+                best_answer = answer
+                best_code = code
+
+            reward_history.append({
+                "iteration": iteration,
+                "reward": reward_value,
+                "message": reward_message,
+                "blame": "react_library",
+                "solution_summary": str(answer)[:200] if answer is not None else "",
+            })
+            logger.info(
+                "react_library iter %d: reward=%.3f  %s",
+                iteration + 1, reward_value, reward_message[:80],
+            )
+
+            if reward_value >= 1.0:
+                break
+            reward_feedback = reward_message
+
         solved = best_reward >= 1.0
-
         return {
             "solved": solved,
             "task_type": task_type,
@@ -402,12 +483,12 @@ class ReActLibraryController:
             "best_reward": best_reward,
             "final_reward": reward_history[-1] if reward_history else {},
             "reward_history": reward_history,
-            "trace": [{"agent": "react_library", "steps_taken": loop_result["steps_taken"]}],
+            "trace": [{"agent": "react_library", "step": loop_result["steps_taken"]}],
             "final_output": {
                 "answer": str(best_answer) if best_answer is not None else "",
                 "explanation": (
-                    f"ReAct+Library: {len(self.library)} fns in library, "
-                    f"added {library_additions} this task"
+                    f"ReAct+Library: {len(self.library)} library fns, "
+                    f"added {all_library_additions} this task"
                 ),
                 "confidence": "high" if solved else "low",
             },
@@ -415,12 +496,14 @@ class ReActLibraryController:
             "token_usage": self.get_task_token_usage(),
             "cost_summary": {
                 "library_size": len(self.library),
-                "library_additions_this_task": library_additions,
+                "library_additions_this_task": all_library_additions,
             },
             "library_snapshot": self.library.to_list(),
         }
 
-    def solve(self, task_input: Any, task_type: str = "symbolic", budget: float = 15.0) -> Dict:
+    def solve(
+        self, task_input: Any, task_type: str = "symbolic", budget: float = 15.0
+    ) -> Dict:
         """Single-attempt solve (no reward feedback)."""
         self.reset_task_log()
         if isinstance(task_input, dict):
@@ -433,16 +516,7 @@ class ReActLibraryController:
         else:
             task_description = str(task_input)
 
-        def _dummy_reward(answer, has_answer, _entry):
-            return {"value": 1.0 if has_answer else 0.0, "message": ""}
-
-        loop_result = self._run_react_loop(
-            task_description,
-            reward_fn=_dummy_reward,
-            entry={},
-            max_steps=self.max_steps,
-            max_submits=1,
-        )
+        loop_result = self._run_react_loop(task_description, max_steps=self.max_steps)
         answer = loop_result["answer"]
         solved = answer is not None
 
@@ -468,13 +542,18 @@ class ReActLibraryController:
 
     def projected_budget(self, max_reward_iters: int = 3) -> Dict:
         """Estimate the maximum token spend for one task."""
-        total = self.max_steps * self.max_tokens
+        calls_per_iter = self.max_steps * 2
+        total = max_reward_iters * calls_per_iter * self.max_tokens
         return {
+            "max_reward_iters": max_reward_iters,
             "max_steps": self.max_steps,
-            "max_submits": max_reward_iters,
+            "calls_per_iter": calls_per_iter,
             "max_tokens": self.max_tokens,
             "projected_max_tokens": total,
-            "formula": f"{self.max_steps} steps × {self.max_tokens} tokens = {total}",
+            "formula": (
+                f"{max_reward_iters} iters × {calls_per_iter} calls "
+                f"× {self.max_tokens} tokens = {total}"
+            ),
         }
 
     # ------------------------------------------------------------------
