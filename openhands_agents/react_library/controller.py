@@ -97,6 +97,7 @@ class ReActLibraryController:
         # the resolution step and populate the private runtime map directly.
         agent.__pydantic_private__["_tools"] = {t.name: t for t in tool_instances}
         agent.__pydantic_private__["_initialized"] = True
+        logger.info("agent tools_map: %s", list(agent.tools_map.keys()))
         return agent
 
     def solve(
@@ -140,7 +141,9 @@ class ReActLibraryController:
             try:
                 conversation.run()
             except Exception as exc:
-                logger.warning("react_library conversation error (iter %d): %s", iteration + 1, exc)
+                import traceback
+                logger.warning("react_library conversation error (iter %d): %s\n%s",
+                               iteration + 1, exc, traceback.format_exc())
 
             # Extract answer
             answer = None
