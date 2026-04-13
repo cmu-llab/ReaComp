@@ -9,11 +9,15 @@ Three tools:
 Each tool follows the OpenHands Action / Observation / Executor pattern.
 The Executors hold references to the sandbox and library so they can be
 injected at controller init time.
+
+IMPORTANT: Action/Observation class names must be globally unique across all
+imported SDK modules. The SDK registers them in a discriminated union keyed by
+class name. Prefixing with "RL" (ReAct+Library) avoids collisions with SDK
+built-ins (e.g. openhands.sdk.tool.builtins.finish.FinishAction).
 """
 
 import os
 from collections.abc import Sequence
-from typing import Any, Optional
 
 from pydantic import Field
 
@@ -33,11 +37,11 @@ from ..pkg_library import PkgLibrary
 # ExecuteCode
 # ──────────────────────────────────────────────────────────────────────────────
 
-class ExecuteCodeAction(Action):
+class RLExecuteCodeAction(Action):
     code: str = Field(description="Complete Python program to execute. Use `from library import fn` to call library functions. Print the answer to stdout.")
 
 
-class ExecuteCodeObservation(Observation):
+class RLExecuteCodeObservation(Observation):
     ok: bool = False
     stdout: str = ""
     stderr: str = ""
@@ -51,20 +55,20 @@ class ExecuteCodeObservation(Observation):
         return [TextContent(text=f"Execution failed.\nstderr:\n{err}")]
 
 
-class ExecuteCodeExecutor(ToolExecutor[ExecuteCodeAction, ExecuteCodeObservation]):
+class RLExecuteCodeExecutor(ToolExecutor[RLExecuteCodeAction, RLExecuteCodeObservation]):
     def __init__(self, sandbox, library: PkgLibrary):
         self._sandbox = sandbox
         self._library = library
 
-    def __call__(self, action: ExecuteCodeAction, conversation=None) -> ExecuteCodeObservation:
+    def __call__(self, action: RLExecuteCodeAction, conversation=None) -> RLExecuteCodeObservation:
         ok, stdout, stderr = self._sandbox.run_code(
             action.code,
             lib_dir=self._library.pkg_dir if len(self._library) > 0 else None,
         )
-        return ExecuteCodeObservation(ok=ok, stdout=stdout, stderr=stderr)
+        return RLExecuteCodeObservation(ok=ok, stdout=stdout, stderr=stderr)
 
 
-class ExecuteCodeTool(ToolDefinition[ExecuteCodeAction, ExecuteCodeObservation]):
+class ExecuteCodeTool(ToolDefinition[RLExecuteCodeAction, RLExecuteCodeObservation]):
     @classmethod
     def create(cls, sandbox, library: PkgLibrary) -> "list[ExecuteCodeTool]":
         return [cls(
@@ -73,9 +77,9 @@ class ExecuteCodeTool(ToolDefinition[ExecuteCodeAction, ExecuteCodeObservation])
                 "Import shared library functions with `from library import fn_name`. "
                 "Print the answer to stdout so you can observe it."
             ),
-            action_type=ExecuteCodeAction,
-            observation_type=ExecuteCodeObservation,
-            executor=ExecuteCodeExecutor(sandbox, library),
+            action_type=RLExecuteCodeAction,
+            observation_type=RLExecuteCodeObservation,
+            executor=RLExecuteCodeExecutor(sandbox, library),
         )]
 
 
@@ -83,13 +87,13 @@ class ExecuteCodeTool(ToolDefinition[ExecuteCodeAction, ExecuteCodeObservation])
 # AddToLibrary
 # ──────────────────────────────────────────────────────────────────────────────
 
-class AddToLibraryAction(Action):
+class RLAddToLibraryAction(Action):
     name: str = Field(description="snake_case function name")
     description: str = Field(description="One-line description of what the function does")
     code: str = Field(description="Complete function definition. Must be standalone — no imports from `library`.")
 
 
-class AddToLibraryObservation(Observation):
+class RLAddToLibraryObservation(Observation):
     ok: bool = False
     message: str = ""
 
@@ -98,33 +102,33 @@ class AddToLibraryObservation(Observation):
         return [TextContent(text=self.message)]
 
 
-class AddToLibraryExecutor(ToolExecutor[AddToLibraryAction, AddToLibraryObservation]):
+class RLAddToLibraryExecutor(ToolExecutor[RLAddToLibraryAction, RLAddToLibraryObservation]):
     def __init__(self, sandbox, library: PkgLibrary):
         self._sandbox = sandbox
         self._library = library
 
-    def __call__(self, action: AddToLibraryAction, conversation=None) -> AddToLibraryObservation:
+    def __call__(self, action: RLAddToLibraryAction, conversation=None) -> RLAddToLibraryObservation:
         name = action.name.strip()
         code = action.code.strip()
         if not name or not code:
-            return AddToLibraryObservation(ok=False, message="name and code are required.")
+            return RLAddToLibraryObservation(ok=False, message="name and code are required.")
 
         # Validate: must compile and execute without error
         ok, _, err = self._sandbox.run_code(code)
         if not ok:
-            return AddToLibraryObservation(
+            return RLAddToLibraryObservation(
                 ok=False,
                 message=f"Function validation failed:\n{err[:300]}",
             )
 
         self._library.add(name, action.description.strip(), code)
-        return AddToLibraryObservation(
+        return RLAddToLibraryObservation(
             ok=True,
             message=f"Added '{name}' to library. ({len(self._library)} functions total)",
         )
 
 
-class AddToLibraryTool(ToolDefinition[AddToLibraryAction, AddToLibraryObservation]):
+class AddToLibraryTool(ToolDefinition[RLAddToLibraryAction, RLAddToLibraryObservation]):
     @classmethod
     def create(cls, sandbox, library: PkgLibrary) -> "list[AddToLibraryTool]":
         return [cls(
@@ -133,9 +137,9 @@ class AddToLibraryTool(ToolDefinition[AddToLibraryAction, AddToLibraryObservatio
                 "The function must be standalone (no imports from `library`). "
                 "Once added, it's immediately available via `from library import fn_name`."
             ),
-            action_type=AddToLibraryAction,
-            observation_type=AddToLibraryObservation,
-            executor=AddToLibraryExecutor(sandbox, library),
+            action_type=RLAddToLibraryAction,
+            observation_type=RLAddToLibraryObservation,
+            executor=RLAddToLibraryExecutor(sandbox, library),
         )]
 
 
@@ -143,11 +147,11 @@ class AddToLibraryTool(ToolDefinition[AddToLibraryAction, AddToLibraryObservatio
 # Finish
 # ──────────────────────────────────────────────────────────────────────────────
 
-class FinishAction(Action):
+class RLFinishAction(Action):
     answer: str = Field(description="The final answer to submit.")
 
 
-class FinishObservation(Observation):
+class RLFinishObservation(Observation):
     message: str = ""
 
     @property
@@ -155,26 +159,26 @@ class FinishObservation(Observation):
         return [TextContent(text=self.message)]
 
 
-class FinishExecutor(ToolExecutor[FinishAction, FinishObservation]):
+class RLFinishExecutor(ToolExecutor[RLFinishAction, RLFinishObservation]):
     def __init__(self, answer_path: str):
         self._answer_path = answer_path
 
-    def __call__(self, action: FinishAction, conversation=None) -> FinishObservation:
+    def __call__(self, action: RLFinishAction, conversation=None) -> RLFinishObservation:
         os.makedirs(os.path.dirname(self._answer_path), exist_ok=True)
         with open(self._answer_path, "w") as f:
             f.write(action.answer)
         # Signal the SDK to stop the agent loop
         if conversation is not None:
             conversation.stop()
-        return FinishObservation(message=f"Answer submitted: {action.answer[:100]}")
+        return RLFinishObservation(message=f"Answer submitted: {action.answer[:100]}")
 
 
-class FinishTool(ToolDefinition[FinishAction, FinishObservation]):
+class FinishTool(ToolDefinition[RLFinishAction, RLFinishObservation]):
     @classmethod
     def create(cls, answer_path: str) -> "list[FinishTool]":
         return [cls(
             description="Submit the final answer. Call this when you are confident in the result.",
-            action_type=FinishAction,
-            observation_type=FinishObservation,
-            executor=FinishExecutor(answer_path),
+            action_type=RLFinishAction,
+            observation_type=RLFinishObservation,
+            executor=RLFinishExecutor(answer_path),
         )]
