@@ -60,40 +60,31 @@ Note the hostname — pass it as `--base-url http://<gpu-node>:8000/v1`.
 
 ## Running the baselines
 
-All scripts read config from environment variables (with sensible defaults). Override what you need:
+Run scripts live in `scripts/` alongside the other baselines. Edit the config variables at the top of each script, then run from the project root.
 
 ### ReAct + Library
 
 ```bash
-MODEL=Qwen/Qwen3-Coder-30B-A3B-Instruct \
-BASE_URL=http://<gpu-node>:8000/v1 \
-DATASET=data/interleaved/pbebench_rg_string_pilot.jsonl \
-OUTPUT=outputs/oh_react_library.jsonl \
-REWARD=reasoning_gym \
-bash openhands_agents/scripts/run_react_library.sh
+# Edit GPU_NODE, MODEL, DATASET etc. at the top of the script
+bash scripts/run_react_library_openhands.sh
 ```
 
 ### TroVE
 
 ```bash
-MODEL=Qwen/Qwen3-Coder-30B-A3B-Instruct \
-BASE_URL=http://<gpu-node>:8000/v1 \
-DATASET=data/interleaved/pbebench_rg_string_pilot.jsonl \
-OUTPUT=outputs/oh_trove.jsonl \
-REWARD=reasoning_gym \
-bash openhands_agents/scripts/run_trove.sh
+bash scripts/run_trove_openhands.sh
 ```
 
 ### Best-of-K
 
 ```bash
-MODEL=Qwen/Qwen3-Coder-30B-A3B-Instruct \
-BASE_URL=http://<gpu-node>:8000/v1 \
-DATASET=data/interleaved/pbebench_rg_string_pilot.jsonl \
-OUTPUT=outputs/oh_best_of_k.jsonl \
-REWARD=reasoning_gym \
-K=8 \
-bash openhands_agents/scripts/run_best_of_k.sh
+bash scripts/run_best_of_k_openhands.sh
+```
+
+### Build sandbox SIF
+
+```bash
+bash scripts/build_sandbox_openhands.sh
 ```
 
 ### Direct CLI (for quick smoke tests)
@@ -158,11 +149,8 @@ openhands_agents/
   best_of_k/
     controller.py     async Stage 1 (generate) + Stage 2 (score+pick)
   run.py              CLI entry point
-  scripts/
+  scripts/            (internal helpers — run scripts are in top-level scripts/)
     build_sandbox.sh
-    run_react_library.sh
-    run_trove.sh
-    run_best_of_k.sh
 ```
 
 ### Library/toolbox as Python package files
