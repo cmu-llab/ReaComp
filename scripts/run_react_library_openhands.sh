@@ -13,7 +13,7 @@ PORT=$1
 
 GPU_NODE=localhost          # hostname of the node running vLLM
 BASE_URL=http://${GPU_NODE}:${PORT}/v1
-MODEL=Qwen/Qwen3-Coder-30B-A3B-Instruct
+MODEL=openai/Qwen/Qwen3-Coder-30B-A3B-Instruct  # openai/ prefix required by litellm for OpenAI-compat endpoints
 
 SIF_PATH=/scratch/$USER/sif_images/sandbox.sif
 PKG_DIR=/scratch/$USER/oh_packages
