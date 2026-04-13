@@ -10,5 +10,5 @@ nohup python -m vllm.entrypoints.openai.api_server \
   --gpu-memory-utilization 0.95 \
   --tensor-parallel-size ${2} \
   --enable-auto-tool-choice \
-  --tool-call-parser mistral \
+  --tool-call-parser qwen3_coder \
   > vllm_logs/vllm_${1}_${ts}.log 2>&1 & echo $! > vllm_logs/vllm_${1}_${ts}.pid
