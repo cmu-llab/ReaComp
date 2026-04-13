@@ -8,7 +8,7 @@ targets = [
     ("openhands.sdk.tool", "ToolExecutor"),
     ("openhands.sdk.agent.base", "AgentBase"),
     ("openhands.sdk", "Conversation"),
-    ("openhands.sdk.conversation.local_conversation", "LocalConversation"),
+    ("openhands.sdk.conversation.impl.local_conversation", "LocalConversation"),
 ]
 
 out_path = sys.argv[1] if len(sys.argv) > 1 else "oh_sdk_inspect.txt"

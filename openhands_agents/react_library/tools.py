@@ -168,29 +168,14 @@ class RLFinishExecutor(ToolExecutor[RLFinishAction, RLFinishObservation]):
         with open(self._answer_path, "w") as f:
             f.write(action.answer)
         # Signal the SDK to stop the agent loop.
-        # LocalConversation may not expose .stop() — try known attribute names
-        # before falling back silently so the success observation is always returned.
+        # The SDK stops via: state.execution_status = ConversationExecutionStatus.FINISHED
+        # We look up the FINISHED value at runtime from the enum type so we don't
+        # depend on a specific import path.
         if conversation is not None:
-            stopped = False
-            for _attr in ("stop", "finish", "terminate"):
-                _fn = getattr(conversation, _attr, None)
-                if callable(_fn):
-                    try:
-                        _fn()
-                        stopped = True
-                        break
-                    except Exception:
-                        pass
-            if not stopped:
-                # Flip any boolean "keep running" flag we can find
-                for _flag in ("is_running", "_running", "running"):
-                    if hasattr(conversation, _flag):
-                        try:
-                            setattr(conversation, _flag, False)
-                            stopped = True
-                            break
-                        except Exception:
-                            pass
+            state = conversation.state
+            cur = state.execution_status
+            finished = type(cur).FINISHED
+            state.execution_status = finished
         return RLFinishObservation(message=f"Answer submitted: {action.answer[:100]}")
 
 
