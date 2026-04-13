@@ -5,12 +5,14 @@
 set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DATASET=data/interleaved/pbebench_rg_string_pilot.jsonl
-OUTPUT=outputs/oh_react_library.jsonl
-REWARD=reasoning_gym
+USER="arnaik"
+DATASET=data/pbebench/lite_tasks_full.jsonl
+OUTPUT=outputs/oh_react_library_pbebench_lite_full.jsonl
+REWARD=pbebench
+PORT=$1
 
 GPU_NODE=localhost          # hostname of the node running vLLM
-BASE_URL=http://${GPU_NODE}:8000/v1
+BASE_URL=http://${GPU_NODE}:${PORT}/v1
 MODEL=Qwen/Qwen3-Coder-30B-A3B-Instruct
 
 SIF_PATH=/scratch/$USER/sif_images/sandbox.sif
