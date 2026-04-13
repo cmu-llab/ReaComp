@@ -24,7 +24,7 @@ from openhands.sdk import LLM, Agent, Conversation
 from openhands.tools.preset.default import get_default_agent
 
 from ..pkg_library import PkgLibrary
-from .prompts import build_system_prompt, build_task_prompt
+from .prompts import build_task_prompt
 from .tools import AddToLibraryTool, ExecuteCodeTool, FinishTool
 
 logger = logging.getLogger(__name__)
@@ -85,12 +85,15 @@ class ReActLibraryController:
             *AddToLibraryTool.create(self.sandbox, self.library),
             *FinishTool.create(answer_path),
         ]
+        # system_prompt_filename accepts an absolute path — use our custom template
+        # so the model knows about execute_code / add_to_library / finish.
+        # (Passing system_prompt= as a kwarg is silently ignored by the SDK.)
+        _prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
         agent = Agent(
             llm=self._llm,
-            system_prompt=build_system_prompt(),
             tools=[],
             include_default_tools=[],  # disable built-in FinishTool/ThinkTool (name conflict)
-            max_iterations=self.max_steps,
+            system_prompt_filename=os.path.join(_prompts_dir, "system_prompt.j2"),
         )
         # Inject ToolDefinition instances directly — Agent.tools only accepts name
         # references (Tool(name=...)) for server-registered tools, so we bypass
@@ -135,7 +138,8 @@ class ReActLibraryController:
 
             prompt = build_task_prompt(task_input, listing, reward_feedback)
             agent = self._make_agent(answer_path)
-            conversation = Conversation(agent=agent, workspace=task_dir)
+            conversation = Conversation(agent=agent, workspace=task_dir,
+                                        max_iteration_per_run=self.max_steps)
             conversation.send_message(prompt)
 
             try:

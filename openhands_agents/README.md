@@ -175,6 +175,27 @@ Runs on the **host**, not inside the container. The sandbox only executes genera
 
 ---
 
+## Tool invocation — function calling, not fine-tuning
+
+The three custom tools (`execute_code`, `add_to_library`, `finish`) are exposed to the model via the standard **OpenAI function-calling API** — their JSON schemas are sent with every LLM request. The model does not need to be fine-tuned or pre-trained on these specific tool names; it generalises from its instruction-tuning on function calling.
+
+`execute_code` is essentially a sandboxed terminal execution step. Switching to a raw bash tool would add complexity (shell escaping, stateful env, directory tracking) with no benefit — the current abstraction is cleaner.
+
+Watch for Qwen models placing tool calls inside `reasoning_content` instead of the structured response field. The SDK already injects a corrective nudge when this happens (see `Agent.step()` in `openhands_docs/`).
+
+## SDK compatibility notes (openhands-sdk 1.16.1)
+
+`Agent.tools` accepts only `Tool(name=str)` name references — these are resolved by the SDK at runtime via `resolve_kind()` for server-registered tools. Custom `ToolDefinition` subclasses must be injected directly into the agent's private runtime map after construction:
+
+```python
+agent = Agent(llm=..., tools=[], include_default_tools=[])
+# include_default_tools=[] avoids name conflict with the SDK's built-in FinishTool
+agent.__pydantic_private__["_tools"] = {t.name: t for t in tool_instances}
+agent.__pydantic_private__["_initialized"] = True
+```
+
+`ToolDefinition.create()` must return `list[Self]` (not a bare instance) to match the SDK's `Sequence[Self]` contract.
+
 ## Verifying the OpenHands SDK version
 
 The `react_library` tools use `Agent(system_prompt=..., max_iterations=...)` and `Conversation.stop()`. Check these against your installed SDK version before running:
