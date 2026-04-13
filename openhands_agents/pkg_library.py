@@ -163,6 +163,17 @@ class PkgLibrary:
     # Internal
     # ------------------------------------------------------------------
 
+    def clear(self) -> None:
+        """Remove all functions and reset metadata. Wipes the pkg_dir contents."""
+        for fname in os.listdir(self.pkg_dir):
+            if fname.endswith(".py") or fname == "_meta.json":
+                os.remove(os.path.join(self.pkg_dir, fname))
+        self._meta = {}
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
     def _update_init(self) -> None:
         names = sorted(
             f[:-3] for f in os.listdir(self.pkg_dir)

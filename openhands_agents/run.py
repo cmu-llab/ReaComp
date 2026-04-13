@@ -230,6 +230,8 @@ def main():
     # Run control
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--checkpoint-path", default="", help="Override checkpoint path (default: <output>.ckpt.json)")
+    parser.add_argument("--clear", action="store_true",
+                        help="Delete output file, checkpoint, and pkg_dir library before starting")
 
     args = parser.parse_args()
 
@@ -237,6 +239,19 @@ def main():
         parser.error("--sif-path required (or set SANDBOX_SIF env var)")
 
     ckpt_path = args.checkpoint_path or args.output_path.replace(".jsonl", ".ckpt.json")
+
+    if args.clear:
+        from .pkg_library import PkgLibrary
+        for path in (args.output_path, ckpt_path):
+            if os.path.exists(path):
+                os.remove(path)
+                logger.info("Cleared %s", path)
+        pkg_subdir = {"react_library": "library", "trove": "toolbox", "best_of_k": None}[args.framework]
+        if pkg_subdir:
+            pkg_dir = os.path.join(args.pkg_dir, pkg_subdir)
+            if os.path.isdir(pkg_dir):
+                PkgLibrary(pkg_dir).clear()
+                logger.info("Cleared library at %s", pkg_dir)
 
     records = _load_dataset(args.dataset_path)
     logger.info("Loaded %d records from %s", len(records), args.dataset_path)
