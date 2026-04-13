@@ -14,12 +14,22 @@ Sandboxed reimplementations of three baselines. Code execution runs inside an Ap
 
 ### 1. Build the sandbox SIF (once)
 
+No Docker required. The script tries two strategies in order:
+
+**Strategy A — `--fakeroot` build** (preferred; works if user namespaces are enabled on the cluster):
 ```bash
 bash openhands_agents/scripts/build_sandbox.sh /scratch/$USER/sif_images
 # produces: /scratch/$USER/sif_images/sandbox.sif
 ```
+This builds from `openhands_agents/sandbox.def` (`python:3.11-slim + numpy scipy sympy`) using `apptainer build --fakeroot`.
 
-Requires Docker on the build machine (to build the image) and Apptainer (to convert to SIF).
+**Strategy B — reuse `openhands.sif`** (automatic fallback if fakeroot fails):
+If you already have `openhands.sif` pulled (e.g. from a different project), the script will symlink it as `sandbox.sif` provided it has numpy/scipy/sympy. Pull it first if needed:
+```bash
+apptainer pull /scratch/$USER/sif_images/openhands.sif \
+    docker://ghcr.io/all-hands-ai/openhands:main
+bash openhands_agents/scripts/build_sandbox.sh /scratch/$USER/sif_images
+```
 
 ### 2. Install host dependencies (once per env)
 
