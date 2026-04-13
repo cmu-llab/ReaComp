@@ -6,6 +6,7 @@ targets = [
     ("openhands.sdk", "Tool"),
     ("openhands.sdk.tool", "ToolDefinition"),
     ("openhands.sdk.tool", "ToolExecutor"),
+    ("openhands.sdk.agent.base", "AgentBase"),
 ]
 
 out_path = sys.argv[1] if len(sys.argv) > 1 else "oh_sdk_inspect.txt"
