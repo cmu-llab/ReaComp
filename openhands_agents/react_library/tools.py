@@ -66,8 +66,8 @@ class ExecuteCodeExecutor(ToolExecutor[ExecuteCodeAction, ExecuteCodeObservation
 
 class ExecuteCodeTool(ToolDefinition[ExecuteCodeAction, ExecuteCodeObservation]):
     @classmethod
-    def create(cls, sandbox, library: PkgLibrary) -> "ExecuteCodeTool":
-        return cls(
+    def create(cls, sandbox, library: PkgLibrary) -> "list[ExecuteCodeTool]":
+        return [cls(
             description=(
                 "Execute Python code in a sandboxed environment. "
                 "Import shared library functions with `from library import fn_name`. "
@@ -76,7 +76,7 @@ class ExecuteCodeTool(ToolDefinition[ExecuteCodeAction, ExecuteCodeObservation])
             action_type=ExecuteCodeAction,
             observation_type=ExecuteCodeObservation,
             executor=ExecuteCodeExecutor(sandbox, library),
-        )
+        )]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -126,8 +126,8 @@ class AddToLibraryExecutor(ToolExecutor[AddToLibraryAction, AddToLibraryObservat
 
 class AddToLibraryTool(ToolDefinition[AddToLibraryAction, AddToLibraryObservation]):
     @classmethod
-    def create(cls, sandbox, library: PkgLibrary) -> "AddToLibraryTool":
-        return cls(
+    def create(cls, sandbox, library: PkgLibrary) -> "list[AddToLibraryTool]":
+        return [cls(
             description=(
                 "Add a reusable Python helper function to the shared library. "
                 "The function must be standalone (no imports from `library`). "
@@ -136,7 +136,7 @@ class AddToLibraryTool(ToolDefinition[AddToLibraryAction, AddToLibraryObservatio
             action_type=AddToLibraryAction,
             observation_type=AddToLibraryObservation,
             executor=AddToLibraryExecutor(sandbox, library),
-        )
+        )]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -171,10 +171,10 @@ class FinishExecutor(ToolExecutor[FinishAction, FinishObservation]):
 
 class FinishTool(ToolDefinition[FinishAction, FinishObservation]):
     @classmethod
-    def create(cls, answer_path: str) -> "FinishTool":
-        return cls(
+    def create(cls, answer_path: str) -> "list[FinishTool]":
+        return [cls(
             description="Submit the final answer. Call this when you are confident in the result.",
             action_type=FinishAction,
             observation_type=FinishObservation,
             executor=FinishExecutor(answer_path),
-        )
+        )]

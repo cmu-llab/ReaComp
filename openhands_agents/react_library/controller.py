@@ -80,16 +80,24 @@ class ReActLibraryController:
         )
 
     def _make_agent(self, answer_path: str) -> Agent:
-        return Agent(
+        tool_instances = [
+            *ExecuteCodeTool.create(self.sandbox, self.library),
+            *AddToLibraryTool.create(self.sandbox, self.library),
+            *FinishTool.create(answer_path),
+        ]
+        agent = Agent(
             llm=self._llm,
             system_prompt=build_system_prompt(),
-            tools=[
-                ExecuteCodeTool.create(self.sandbox, self.library),
-                AddToLibraryTool.create(self.sandbox, self.library),
-                FinishTool.create(answer_path),
-            ],
+            tools=[],
+            include_default_tools=[],  # disable built-in FinishTool/ThinkTool (name conflict)
             max_iterations=self.max_steps,
         )
+        # Inject ToolDefinition instances directly — Agent.tools only accepts name
+        # references (Tool(name=...)) for server-registered tools, so we bypass
+        # the resolution step and populate the private runtime map directly.
+        agent.__pydantic_private__["_tools"] = {t.name: t for t in tool_instances}
+        agent.__pydantic_private__["_initialized"] = True
+        return agent
 
     def solve(
         self,
