@@ -167,9 +167,30 @@ class RLFinishExecutor(ToolExecutor[RLFinishAction, RLFinishObservation]):
         os.makedirs(os.path.dirname(self._answer_path), exist_ok=True)
         with open(self._answer_path, "w") as f:
             f.write(action.answer)
-        # Signal the SDK to stop the agent loop
+        # Signal the SDK to stop the agent loop.
+        # LocalConversation may not expose .stop() — try known attribute names
+        # before falling back silently so the success observation is always returned.
         if conversation is not None:
-            conversation.stop()
+            stopped = False
+            for _attr in ("stop", "finish", "terminate"):
+                _fn = getattr(conversation, _attr, None)
+                if callable(_fn):
+                    try:
+                        _fn()
+                        stopped = True
+                        break
+                    except Exception:
+                        pass
+            if not stopped:
+                # Flip any boolean "keep running" flag we can find
+                for _flag in ("is_running", "_running", "running"):
+                    if hasattr(conversation, _flag):
+                        try:
+                            setattr(conversation, _flag, False)
+                            stopped = True
+                            break
+                        except Exception:
+                            pass
         return RLFinishObservation(message=f"Answer submitted: {action.answer[:100]}")
 
 
