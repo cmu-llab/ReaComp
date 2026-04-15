@@ -37,4 +37,5 @@ python -m openhands_agents.run \
     --max-steps "$MAX_STEPS" \
     --max-reward-iters "$MAX_REWARD_ITERS" \
     --library-k "$LIBRARY_K" \
-    --skip-existing
+    --skip-existing \
+    --clear
