@@ -264,6 +264,79 @@ def run_react_library(args, records, reward_fn, sandbox, ckpt_path):
                     logger.error("Task %s failed: %s", rec.get("task_id", i), exc)
 
 
+def run_static_library(args, records, reward_fn, sandbox, ckpt_path):
+    from .static_library.library_loader import StaticLibrary
+    from .static_library.controller import StaticLibraryController
+
+    if not args.library_path:
+        raise ValueError("--library-path is required for --framework static_library")
+
+    pkg_dir = os.path.join(args.pkg_dir, "static_library")
+    os.makedirs(pkg_dir, exist_ok=True)
+
+    static_lib = StaticLibrary(library_path=args.library_path, pkg_dir=pkg_dir)
+    controller = StaticLibraryController(
+        base_url=args.base_url,
+        model=args.model,
+        static_library=static_lib,
+        sandbox=sandbox,
+        api_key=args.api_key,
+        max_steps=args.max_steps,
+        max_tokens=args.max_tokens,
+    )
+
+    ckpt = _load_checkpoint(ckpt_path)
+    completed_ids: set = set(ckpt.get("completed_ids", []))
+    if not completed_ids and "last_completed_index" in ckpt:
+        completed_ids = set(range(ckpt["last_completed_index"] + 1))
+
+    writer = _OutputWriter(
+        args.output_path, ckpt_path,
+        controller_fn=controller.to_dict,
+    )
+    writer._completed_ids = completed_ids
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
+
+    pending = [
+        (i, rec) for i, rec in enumerate(records)
+        if not (args.skip_existing and rec.get("task_id", i) in completed_ids)
+    ]
+    total = len(records)
+
+    def _solve_one(i: int, rec: dict) -> None:
+        task_id = rec.get("task_id", i)
+        task_input = _task_input(rec)
+        result = controller.solve(task_input, reward_fn, rec)
+        result["task_id"] = task_id
+        result["dataset"] = rec.get("dataset", "")
+        writer.write(result)
+        if args.debug_dir:
+            _write_debug(args.debug_dir, task_id, {
+                "task_id": task_id,
+                "task_input": task_input,
+                "answer": result.get("answer"),
+                "best_reward": result.get("best_reward"),
+                "reward_history": result.get("reward_history"),
+                "token_usage": result.get("token_usage"),
+            })
+        logger.info("[%d/%d] task_id=%s reward=%.3f",
+                    i + 1, total, task_id, result["best_reward"])
+
+    workers = max(1, args.workers)
+    if workers == 1:
+        for i, rec in pending:
+            _solve_one(i, rec)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_solve_one, i, rec): (i, rec) for i, rec in pending}
+            for fut in as_completed(futures):
+                exc = fut.exception()
+                if exc:
+                    i, rec = futures[fut]
+                    logger.error("Task %s failed: %s", rec.get("task_id", i), exc)
+
+
 def run_best_of_k(args, records, reward_fn, sandbox, ckpt_path):
     from .best_of_k.controller import BestOfKController
 
@@ -315,7 +388,7 @@ def run_best_of_k(args, records, reward_fn, sandbox, ckpt_path):
 
 def main():
     parser = argparse.ArgumentParser(description="openhands_agents — sandboxed baselines")
-    parser.add_argument("--framework", required=True, choices=["react_library", "trove", "best_of_k"])
+    parser.add_argument("--framework", required=True, choices=["react_library", "trove", "best_of_k", "static_library"])
     parser.add_argument("--dataset-path", required=True)
     parser.add_argument("--output-path", required=True)
     parser.add_argument("--default-reward", required=True, help="Reward module name (e.g. reasoning_gym)")
@@ -335,6 +408,8 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.8)
 
     # Framework-specific
+    parser.add_argument("--library-path", default="",
+                        help="static_library: path to built_libraries/... directory containing LIBRARY.py and PROMPTING_GUIDE.md")
     parser.add_argument("--k", type=int, default=5, help="K per mode (trove) or K samples (best_of_k)")
     parser.add_argument("--max-steps", type=int, default=100, help="react_library: max agent steps per conversation")
     parser.add_argument("--max-reward-iters", type=int, default=3,
@@ -371,7 +446,7 @@ def main():
             if os.path.exists(path):
                 os.remove(path)
                 logger.info("Cleared %s", path)
-        pkg_subdir = {"react_library": "library", "trove": "toolbox", "best_of_k": None}[args.framework]
+        pkg_subdir = {"react_library": "library", "trove": "toolbox", "best_of_k": None, "static_library": None}[args.framework]
         if pkg_subdir:
             pkg_dir = os.path.join(args.pkg_dir, pkg_subdir)
             if os.path.isdir(pkg_dir):
@@ -393,6 +468,7 @@ def main():
         "trove": run_trove,
         "react_library": run_react_library,
         "best_of_k": run_best_of_k,
+        "static_library": run_static_library,
     }
     dispatch[args.framework](args, records, reward_fn, sandbox, ckpt_path)
     logger.info("Done. Results → %s", args.output_path)
