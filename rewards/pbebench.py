@@ -168,14 +168,28 @@ def reward(result: Any, execution_ok: bool, entry: Dict) -> Dict:
     # Apply programs in sequence to each input and compare with expected output.
     correct = 0
     mismatches: List[str] = []
+    first_fail_trace: Optional[str] = None  # step-by-step trace for first failure
+
     for inp, expected in zip(inputs, outputs):
         actual = inp
         for pred, transform in programs:
             actual = actual.replace(pred, transform)
         if actual == expected:
             correct += 1
-        elif len(mismatches) < 3:
-            mismatches.append(f"'{inp}' → '{actual}' (expected '{expected}')")
+        else:
+            if len(mismatches) < 3:
+                mismatches.append(f"'{inp}' → '{actual}' (expected '{expected}')")
+            # Build a step-by-step trace for the first failing input only
+            if first_fail_trace is None:
+                steps = [f"  start: '{inp}'"]
+                cur = inp
+                for pred, transform in programs:
+                    nxt = cur.replace(pred, transform)
+                    fired = " (no change)" if nxt == cur else ""
+                    steps.append(f"  → replace('{pred}','{transform}'): '{nxt}'{fired}")
+                    cur = nxt
+                steps.append(f"  expected: '{expected}'")
+                first_fail_trace = "\n".join(steps)
 
     score = correct / len(inputs)
     prog_strs = [f"replace('{p}', '{t}')" for p, t in programs]
@@ -183,12 +197,11 @@ def reward(result: Any, execution_ok: bool, entry: Dict) -> Dict:
     if score >= 1.0:
         return {"value": 1.0}
 
-    extra = "..." if len(mismatches) == 3 and correct < len(inputs) - 3 else ""
-    return {
-        "value": score,
-        "message": (
-            f"Score={score:.3f}: {correct}/{len(inputs)} inputs mapped correctly. "
-            f"Programs applied: {prog_strs}. "
-            f"Mismatches: {mismatches}{extra}"
-        ),
-    }
+    msg = (
+        f"Score={score:.3f}: {correct}/{len(inputs)} inputs mapped correctly. "
+        f"Programs applied: {prog_strs}. "
+        f"Mismatches: {mismatches}"
+    )
+    if first_fail_trace:
+        msg += f"\nStep-by-step trace for first failing input:\n{first_fail_trace}"
+    return {"value": score, "message": msg}
