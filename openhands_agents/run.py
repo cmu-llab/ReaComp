@@ -10,10 +10,20 @@ Usage:
         --pkg-dir /scratch/$USER/oh_packages \
         --base-url http://gpu-node:8000/v1 \
         --model Qwen/Qwen3-Coder-480B-A22B-Instruct \
-        --default-reward reasoning_gym
+        --default-reward reasoning_gym \
+        --workers 8
 
 Output: one JSONL line per task, compatible with scripts/eval.py.
-Checkpoint: <output-path>.ckpt.json, saved after every task.
+Checkpoint: <output-path>.ckpt.json, saved after every task (tracks completed IDs
+            so runs can be parallelised and resumed out-of-order).
+Debug: --debug-dir DIR writes one JSON file per task with prompt, answer, reward,
+       library retrieved, and (for react_library) conversation trajectory.
+
+Parallelism notes:
+  react_library / trove: tasks processed in parallel threads (--workers N).
+    Parallel tasks share the library — each will see the library state at the
+    moment it starts its conversation. Library writes are thread-safe.
+  best_of_k: already uses asyncio internally; --workers is ignored.
 """
 
 import argparse
@@ -22,13 +32,19 @@ import json
 import logging
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-# Allow running as `python openhands_agents/run.py` from the project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _load_dataset(path: str) -> list[dict]:
     records = []
@@ -58,14 +74,41 @@ def _load_checkpoint(path: str) -> dict:
     return {}
 
 
-def _save_checkpoint(path: str, data: dict) -> None:
+class _OutputWriter:
+    """Thread-safe JSONL writer + checkpoint manager."""
+
+    def __init__(self, output_path: str, ckpt_path: str, controller_fn: Callable):
+        self._output_path = output_path
+        self._ckpt_path = ckpt_path
+        self._controller_fn = controller_fn  # returns dict for checkpoint
+        self._lock = threading.Lock()
+        self._completed_ids: set = set()
+
+    def load_completed(self, ckpt: dict) -> set:
+        ids = set(ckpt.get("completed_ids", []))
+        self._completed_ids = ids
+        return ids
+
+    def write(self, result: dict) -> None:
+        with self._lock:
+            with open(self._output_path, "a") as f:
+                f.write(json.dumps(result, default=str) + "\n")
+            self._completed_ids.add(result["task_id"])
+            ckpt_data = {
+                "completed_ids": sorted(self._completed_ids),
+                "controller": self._controller_fn(),
+            }
+            with open(self._ckpt_path, "w") as f:
+                json.dump(ckpt_data, f, indent=2)
+
+
+def _write_debug(debug_dir: str, task_id: Any, data: dict) -> None:
+    if not debug_dir:
+        return
+    os.makedirs(debug_dir, exist_ok=True)
+    path = os.path.join(debug_dir, f"task_{task_id}.json")
     with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-def _write_result(path: str, result: dict) -> None:
-    with open(path, "a") as f:
-        f.write(json.dumps(result, default=str) + "\n")
+        json.dump(data, f, indent=2, default=str)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -75,6 +118,7 @@ def _write_result(path: str, result: dict) -> None:
 def run_trove(args, records, reward_fn, sandbox, ckpt_path):
     from .pkg_library import PkgLibrary
     from .trove.controller import TroVEController
+    from .trove.prompts import build_import_prompt, build_create_prompt
 
     pkg_dir = os.path.join(args.pkg_dir, "toolbox")
     toolbox = PkgLibrary(pkg_dir)
@@ -90,27 +134,60 @@ def run_trove(args, records, reward_fn, sandbox, ckpt_path):
     )
 
     ckpt = _load_checkpoint(ckpt_path)
-    last_completed = ckpt.get("last_completed_index", -1)
+    completed_ids: set = set(ckpt.get("completed_ids", []))
+    # Legacy compat: if old checkpoint used last_completed_index
+    if not completed_ids and "last_completed_index" in ckpt:
+        completed_ids = set(range(ckpt["last_completed_index"] + 1))
     if ckpt.get("controller"):
         controller.from_dict(ckpt["controller"])
         logger.info("Resumed TroVE checkpoint (n_processed=%d)", controller._n_processed)
 
+    writer = _OutputWriter(
+        args.output_path, ckpt_path,
+        controller_fn=controller.to_dict,
+    )
+    writer._completed_ids = completed_ids
+
     os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
-    for i, rec in enumerate(records):
-        if args.skip_existing and i <= last_completed:
-            continue
 
+    pending = [
+        (i, rec) for i, rec in enumerate(records)
+        if not (args.skip_existing and rec.get("task_id", i) in completed_ids)
+    ]
+    total = len(records)
+
+    def _solve_one(i: int, rec: dict) -> None:
+        task_id = rec.get("task_id", i)
         task_input = _task_input(rec)
+        listing = toolbox.as_listing_with_signatures()
         result = controller.solve(task_input, reward_fn, rec)
-        result["task_id"] = rec.get("task_id", i)
+        result["task_id"] = task_id
         result["dataset"] = rec.get("dataset", "")
-        _write_result(args.output_path, result)
+        writer.write(result)
+        if args.debug_dir:
+            _write_debug(args.debug_dir, task_id, {
+                "task_id": task_id,
+                "task_input": task_input,
+                "toolbox_listing": listing,
+                "answer": result.get("answer"),
+                "best_reward": result.get("best_reward"),
+                "mode": result.get("mode"),
+            })
+        logger.info("[%d/%d] task_id=%s reward=%.3f toolbox=%d",
+                    i + 1, total, task_id, result["best_reward"], result["toolbox_size"])
 
-        _save_checkpoint(ckpt_path, {
-            "last_completed_index": i,
-            "controller": controller.to_dict(),
-        })
-        logger.info("[%d/%d] reward=%.3f toolbox=%d", i + 1, len(records), result["best_reward"], result["toolbox_size"])
+    workers = max(1, args.workers)
+    if workers == 1:
+        for i, rec in pending:
+            _solve_one(i, rec)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_solve_one, i, rec): (i, rec) for i, rec in pending}
+            for fut in as_completed(futures):
+                exc = fut.exception()
+                if exc:
+                    i, rec = futures[fut]
+                    logger.error("Task %s failed: %s", rec.get("task_id", i), exc)
 
 
 def run_react_library(args, records, reward_fn, sandbox, ckpt_path):
@@ -132,27 +209,59 @@ def run_react_library(args, records, reward_fn, sandbox, ckpt_path):
     )
 
     ckpt = _load_checkpoint(ckpt_path)
-    last_completed = ckpt.get("last_completed_index", -1)
+    completed_ids: set = set(ckpt.get("completed_ids", []))
+    if not completed_ids and "last_completed_index" in ckpt:
+        completed_ids = set(range(ckpt["last_completed_index"] + 1))
     if ckpt.get("controller"):
         controller.from_dict(ckpt["controller"])
         logger.info("Resumed react_library checkpoint (library=%d fns)", len(library))
 
-    os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
-    for i, rec in enumerate(records):
-        if args.skip_existing and i <= last_completed:
-            continue
+    writer = _OutputWriter(
+        args.output_path, ckpt_path,
+        controller_fn=controller.to_dict,
+    )
+    writer._completed_ids = completed_ids
 
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
+
+    pending = [
+        (i, rec) for i, rec in enumerate(records)
+        if not (args.skip_existing and rec.get("task_id", i) in completed_ids)
+    ]
+    total = len(records)
+
+    def _solve_one(i: int, rec: dict) -> None:
+        task_id = rec.get("task_id", i)
         task_input = _task_input(rec)
         result = controller.solve(task_input, reward_fn, rec)
-        result["task_id"] = rec.get("task_id", i)
+        result["task_id"] = task_id
         result["dataset"] = rec.get("dataset", "")
-        _write_result(args.output_path, result)
+        writer.write(result)
+        if args.debug_dir:
+            _write_debug(args.debug_dir, task_id, {
+                "task_id": task_id,
+                "task_input": task_input,
+                "answer": result.get("answer"),
+                "best_reward": result.get("best_reward"),
+                "library_size": result.get("library_size"),
+                "library_additions_this_task": result.get("library_additions_this_task"),
+                "reward_history": result.get("reward_history"),
+            })
+        logger.info("[%d/%d] task_id=%s reward=%.3f library=%d",
+                    i + 1, total, task_id, result["best_reward"], result["library_size"])
 
-        _save_checkpoint(ckpt_path, {
-            "last_completed_index": i,
-            "controller": controller.to_dict(),
-        })
-        logger.info("[%d/%d] reward=%.3f library=%d", i + 1, len(records), result["best_reward"], result["library_size"])
+    workers = max(1, args.workers)
+    if workers == 1:
+        for i, rec in pending:
+            _solve_one(i, rec)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_solve_one, i, rec): (i, rec) for i, rec in pending}
+            for fut in as_completed(futures):
+                exc = fut.exception()
+                if exc:
+                    i, rec = futures[fut]
+                    logger.error("Task %s failed: %s", rec.get("task_id", i), exc)
 
 
 def run_best_of_k(args, records, reward_fn, sandbox, ckpt_path):
@@ -169,29 +278,35 @@ def run_best_of_k(args, records, reward_fn, sandbox, ckpt_path):
     )
 
     ckpt = _load_checkpoint(ckpt_path)
-    last_completed = ckpt.get("last_completed_index", -1)
+    completed_ids: set = set(ckpt.get("completed_ids", []))
+    if not completed_ids and "last_completed_index" in ckpt:
+        completed_ids = set(range(ckpt["last_completed_index"] + 1))
 
-    # Stage 1: generate all K samples for all tasks concurrently
-    pending = [r for i, r in enumerate(records) if not (args.skip_existing and i <= last_completed)]
-    pending_indices = [i for i, r in enumerate(records) if not (args.skip_existing and i <= last_completed)]
+    pending = [(i, r) for i, r in enumerate(records)
+               if not (args.skip_existing and r.get("task_id", i) in completed_ids)]
+    pending_indices = [i for i, _ in pending]
+    pending_recs = [r for _, r in pending]
 
-    if pending:
-        logger.info("best_of_k Stage 1: generating %d×%d samples async...", len(pending), args.k)
-        task_inputs = [_task_input(r) for r in pending]
+    writer = _OutputWriter(
+        args.output_path, ckpt_path,
+        controller_fn=lambda: {},
+    )
+    writer._completed_ids = completed_ids
+
+    if pending_recs:
+        logger.info("best_of_k: generating %d×%d samples async...", len(pending_recs), args.k)
+        task_inputs = [_task_input(r) for r in pending_recs]
         all_samples = asyncio.run(controller.generate_all(task_inputs))
     else:
         all_samples = []
 
-    # Stage 2: score and pick best per task
     os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
-    for local_i, (orig_i, rec, samples) in enumerate(zip(pending_indices, pending, all_samples)):
+    for local_i, (orig_i, rec, samples) in enumerate(zip(pending_indices, pending_recs, all_samples)):
         result = controller.score_and_pick(samples, reward_fn, rec, sandbox)
         result["task_id"] = rec.get("task_id", orig_i)
         result["dataset"] = rec.get("dataset", "")
-        _write_result(args.output_path, result)
-
-        _save_checkpoint(ckpt_path, {"last_completed_index": orig_i})
-        logger.info("[%d/%d] reward=%.3f", local_i + 1, len(pending), result["best_reward"])
+        writer.write(result)
+        logger.info("[%d/%d] reward=%.3f", local_i + 1, len(pending_recs), result["best_reward"])
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -221,15 +336,25 @@ def main():
 
     # Framework-specific
     parser.add_argument("--k", type=int, default=5, help="K per mode (trove) or K samples (best_of_k)")
-    parser.add_argument("--max-steps", type=int, default=8, help="react_library: max agent steps per conversation")
-    parser.add_argument("--max-reward-iters", type=int, default=3, help="react_library: reward iterations")
+    parser.add_argument("--max-steps", type=int, default=100, help="react_library: max agent steps per conversation")
+    parser.add_argument("--max-reward-iters", type=int, default=3,
+                        help="react_library: kept for API compat; agent iterates inline via check_reward")
     parser.add_argument("--library-k", type=int, default=5, help="react_library: BM25 retrieval top-k")
     parser.add_argument("--trim-every", type=int, default=200, help="trove: trim period (tasks)")
     parser.add_argument("--max-concurrent", type=int, default=64, help="best_of_k: async concurrency limit")
 
+    # Parallelism & debug
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Number of parallel worker threads (react_library/trove). "
+                             "Parallel tasks share the library; additions may not be visible "
+                             "to concurrently running tasks.")
+    parser.add_argument("--debug-dir", default="",
+                        help="Directory for per-task debug JSON files (prompt, answer, reward, trajectory)")
+
     # Run control
     parser.add_argument("--skip-existing", action="store_true")
-    parser.add_argument("--checkpoint-path", default="", help="Override checkpoint path (default: <output>.ckpt.json)")
+    parser.add_argument("--checkpoint-path", default="",
+                        help="Override checkpoint path (default: <output>.ckpt.json)")
     parser.add_argument("--clear", action="store_true",
                         help="Delete output file, checkpoint, and pkg_dir library before starting")
 
@@ -262,6 +387,7 @@ def main():
     sandbox = ApptainerSandbox(sif_path=args.sif_path, timeout=args.sandbox_timeout)
 
     os.makedirs(args.pkg_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
 
     dispatch = {
         "trove": run_trove,

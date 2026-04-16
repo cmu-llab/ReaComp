@@ -1,9 +1,10 @@
 """
 Custom OpenHands SDK tools for the ReAct+Library agent.
 
-Three tools:
+Four tools:
   ExecuteCodeTool   — run code in Apptainer sandbox; library available
   AddToLibraryTool  — validate + add function to PkgLibrary
+  CheckRewardTool   — call the reward function on a candidate answer inline
   FinishTool        — write answer.txt, signals agent completion
 
 Each tool follows the OpenHands Action / Observation / Executor pattern.
@@ -18,6 +19,7 @@ built-ins (e.g. openhands.sdk.tool.builtins.finish.FinishAction).
 
 import os
 from collections.abc import Sequence
+from typing import Any, Callable
 
 from pydantic import Field
 
@@ -65,6 +67,15 @@ class RLExecuteCodeExecutor(ToolExecutor[RLExecuteCodeAction, RLExecuteCodeObser
             action.code,
             lib_dir=self._library.pkg_dir if len(self._library) > 0 else None,
         )
+        if ok and len(self._library) > 0:
+            # Track which library functions were imported in this code call
+            import re
+            imported = re.findall(r"from\s+library\s+import\s+(\w+)", action.code)
+            imported += re.findall(r"from\s+library\s+import\s+\(([^)]+)\)", action.code)
+            names = [n.strip() for seg in imported for n in seg.split(",") if n.strip()]
+            used = [n for n in names if n in self._library]
+            if used:
+                self._library.increment_usage(used)
         return RLExecuteCodeObservation(ok=ok, stdout=stdout, stderr=stderr)
 
 
@@ -144,6 +155,51 @@ class AddToLibraryTool(ToolDefinition[RLAddToLibraryAction, RLAddToLibraryObserv
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# CheckReward
+# ──────────────────────────────────────────────────────────────────────────────
+
+class RLCheckRewardAction(Action):
+    answer: str = Field(description="Candidate answer string to evaluate against the task verifier.")
+
+
+class RLCheckRewardObservation(Observation):
+    reward: float = 0.0
+    message: str = ""
+
+    @property
+    def to_llm_content(self) -> Sequence[TextContent | ImageContent]:
+        return [TextContent(text=f"Reward: {self.reward:.3f}\n{self.message}")]
+
+
+class RLCheckRewardExecutor(ToolExecutor[RLCheckRewardAction, RLCheckRewardObservation]):
+    def __init__(self, reward_fn: Callable, entry: Any):
+        self._reward_fn = reward_fn
+        self._entry = entry
+
+    def __call__(self, action: RLCheckRewardAction, conversation=None) -> RLCheckRewardObservation:
+        result = self._reward_fn(action.answer, True, self._entry)
+        return RLCheckRewardObservation(
+            reward=float(result.get("value", 0.0)),
+            message=result.get("message", ""),
+        )
+
+
+class CheckRewardTool(ToolDefinition[RLCheckRewardAction, RLCheckRewardObservation]):
+    @classmethod
+    def create(cls, reward_fn: Callable, entry: Any) -> "list[CheckRewardTool]":
+        return [cls(
+            description=(
+                "Check your candidate answer against the task verifier. "
+                "Returns a reward in [0, 1] and feedback explaining what is wrong. "
+                "Use this to verify your answer before calling finish, and to guide fixes."
+            ),
+            action_type=RLCheckRewardAction,
+            observation_type=RLCheckRewardObservation,
+            executor=RLCheckRewardExecutor(reward_fn, entry),
+        )]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Finish
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -168,9 +224,6 @@ class RLFinishExecutor(ToolExecutor[RLFinishAction, RLFinishObservation]):
         with open(self._answer_path, "w") as f:
             f.write(action.answer)
         # Signal the SDK to stop the agent loop.
-        # The SDK stops via: state.execution_status = ConversationExecutionStatus.FINISHED
-        # We look up the FINISHED value at runtime from the enum type so we don't
-        # depend on a specific import path.
         if conversation is not None:
             state = conversation.state
             cur = state.execution_status
@@ -183,7 +236,7 @@ class FinishTool(ToolDefinition[RLFinishAction, RLFinishObservation]):
     @classmethod
     def create(cls, answer_path: str) -> "list[FinishTool]":
         return [cls(
-            description="Submit the final answer. Call this when you are confident in the result.",
+            description="Submit the final answer. Call this when check_reward returns 1.0 or you are satisfied with your best answer.",
             action_type=RLFinishAction,
             observation_type=RLFinishObservation,
             executor=RLFinishExecutor(answer_path),

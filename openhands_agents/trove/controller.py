@@ -85,10 +85,12 @@ async def _call_llm(
         async with session.post(url, json=payload, headers=headers) as resp:
             resp.raise_for_status()
             data = await resp.json()
-            return data["choices"][0]["message"]["content"] or ""
+            content = data["choices"][0]["message"]["content"] or ""
+            usage = data.get("usage", {})
+            return content, usage
     except Exception as exc:
         logger.warning("TroVE LLM call failed: %s", exc)
-        return ""
+        return "", {}
 
 
 class TroVEController:
@@ -140,7 +142,7 @@ class TroVEController:
         Generate 3K candidates concurrently (K per mode).
         Returns list of dicts: {mode, raw, obj, code, fn_def}.
         """
-        listing = self.toolbox.as_listing()
+        listing = self.toolbox.as_listing_with_signatures()
         has_toolbox = len(self.toolbox) > 0
 
         # Build prompts for each mode
@@ -151,14 +153,14 @@ class TroVEController:
         }
 
         async def one(mode: str, system: str, user: str) -> dict:
-            raw = await _call_llm(
+            raw, usage = await _call_llm(
                 session, system, user,
                 self.base_url, self.model, self.api_key, self.max_tokens,
             )
             obj = _extract_response(raw)
             code = obj.get("code", "")
             fn_def = obj.get("function")  # None for skip/import
-            return {"mode": mode, "raw": raw, "obj": obj, "code": code, "fn_def": fn_def}
+            return {"mode": mode, "raw": raw, "obj": obj, "code": code, "fn_def": fn_def, "usage": usage}
 
         coros = []
         for mode, prompt_pair in prompts.items():
@@ -233,6 +235,9 @@ class TroVEController:
 
         best = self._select_best(candidates, reward_fn, entry)
 
+        total_prompt_tokens = sum(c.get("usage", {}).get("prompt_tokens", 0) for c in candidates)
+        total_completion_tokens = sum(c.get("usage", {}).get("completion_tokens", 0) for c in candidates)
+
         if best is None:
             self._n_processed += 1
             return {
@@ -242,6 +247,7 @@ class TroVEController:
                 "mode": None,
                 "toolbox_size": len(self.toolbox),
                 "candidates": [],
+                "token_usage": {"prompt_tokens": total_prompt_tokens, "completion_tokens": total_completion_tokens},
             }
 
         # Update toolbox
@@ -274,8 +280,9 @@ class TroVEController:
             "mode": best["mode"],
             "toolbox_size": len(self.toolbox),
             "n_processed": self._n_processed,
+            "token_usage": {"prompt_tokens": total_prompt_tokens, "completion_tokens": total_completion_tokens},
             "candidates": [
-                {k: v for k, v in c.items() if k != "raw"}  # omit raw LLM output from summary
+                {k: v for k, v in c.items() if k not in ("raw", "usage")}
                 for c in candidates
             ],
         }

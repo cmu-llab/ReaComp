@@ -25,6 +25,7 @@ import json
 import math
 import os
 import re
+import threading
 from typing import Optional
 
 
@@ -43,6 +44,7 @@ class PkgLibrary:
         os.makedirs(self.pkg_dir, exist_ok=True)
         # name → {description, usage_count, code}
         self._meta: dict[str, dict] = {}
+        self._lock = threading.Lock()
         self._load_meta()
 
     # ------------------------------------------------------------------
@@ -51,32 +53,35 @@ class PkgLibrary:
 
     def add(self, name: str, description: str, code: str) -> None:
         """Write fn_name.py and update __init__.py. Overwrites if exists."""
-        path = os.path.join(self.pkg_dir, f"{name}.py")
-        with open(path, "w") as f:
-            f.write(code.strip() + "\n")
-        self._meta[name] = {
-            "description": description,
-            "usage_count": self._meta.get(name, {}).get("usage_count", 0),
-            "code": code,
-        }
-        self._update_init()
-        self._save_meta()
+        with self._lock:
+            path = os.path.join(self.pkg_dir, f"{name}.py")
+            with open(path, "w") as f:
+                f.write(code.strip() + "\n")
+            self._meta[name] = {
+                "description": description,
+                "usage_count": self._meta.get(name, {}).get("usage_count", 0),
+                "code": code,
+            }
+            self._update_init()
+            self._save_meta()
 
     def remove(self, name: str) -> None:
         """Delete fn_name.py and update __init__.py."""
-        path = os.path.join(self.pkg_dir, f"{name}.py")
-        if os.path.exists(path):
-            os.remove(path)
-        self._meta.pop(name, None)
-        self._update_init()
-        self._save_meta()
+        with self._lock:
+            path = os.path.join(self.pkg_dir, f"{name}.py")
+            if os.path.exists(path):
+                os.remove(path)
+            self._meta.pop(name, None)
+            self._update_init()
+            self._save_meta()
 
     def increment_usage(self, names: list[str]) -> None:
         """Increment usage count for each function name in the list."""
-        for name in names:
-            if name in self._meta:
-                self._meta[name]["usage_count"] += 1
-        self._save_meta()
+        with self._lock:
+            for name in names:
+                if name in self._meta:
+                    self._meta[name]["usage_count"] += 1
+            self._save_meta()
 
     def trim(self, n_processed: int, c: float = 0.5) -> list[str]:
         """
@@ -86,10 +91,11 @@ class PkgLibrary:
         if n_processed < 2:
             return []
         threshold = c * math.log10(n_processed)
-        to_remove = [
-            name for name, m in self._meta.items()
-            if m["usage_count"] < threshold
-        ]
+        with self._lock:
+            to_remove = [
+                name for name, m in self._meta.items()
+                if m["usage_count"] < threshold
+            ]
         for name in to_remove:
             self.remove(name)
         return to_remove
@@ -109,19 +115,41 @@ class PkgLibrary:
 
     def as_listing(self) -> str:
         """Full listing: name + description for all functions (for prompt)."""
-        if not self._meta:
+        with self._lock:
+            meta = dict(self._meta)
+        if not meta:
+            return "(empty)"
+        return "\n".join(f"  {name}: {m['description']}" for name, m in meta.items())
+
+    def as_listing_with_signatures(self) -> str:
+        """Full listing: def signature + description, for reuse decisions."""
+        with self._lock:
+            meta = dict(self._meta)
+        if not meta:
             return "(empty)"
         lines = []
-        for name, m in self._meta.items():
-            lines.append(f"  {name}: {m['description']}")
+        for name, m in meta.items():
+            sig = self._extract_signature(m.get("code", ""), name)
+            lines.append(f"  {sig}  # {m['description']}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _extract_signature(code: str, name: str) -> str:
+        for line in code.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("def "):
+                return stripped.rstrip(":")
+        return f"def {name}(...)"
 
     def retrieve(self, query: str, k: int) -> list[dict]:
         """
         BM25-style retrieval: return top-k functions by name+description
         token overlap with the query.
         """
-        if not self._meta:
+        with self._lock:
+            meta_snapshot = dict(self._meta)
+
+        if not meta_snapshot:
             return []
 
         def tokenize(text: str) -> list[str]:
@@ -129,7 +157,7 @@ class PkgLibrary:
 
         q_tokens = set(tokenize(query))
         scored = []
-        for name, m in self._meta.items():
+        for name, m in meta_snapshot.items():
             doc_tokens = set(tokenize(name + " " + m["description"]))
             if not doc_tokens:
                 continue
