@@ -27,7 +27,7 @@ from openhands.sdk import LLM, Agent, Conversation
 
 from ..pkg_library import PkgLibrary
 from .prompts import build_task_prompt
-from .tools import AddToLibraryTool, CheckRewardTool, ExecuteCodeTool, FinishTool
+from .tools import AddToLibraryTool, CheckRewardTool, ExecuteCodeTool, FinishTool, RLCheckRewardExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -79,11 +79,12 @@ class ReActLibraryController:
             max_tokens=max_tokens,
         )
 
-    def _make_agent(self, answer_path: str, reward_fn: Callable, entry: Any) -> Agent:
+    def _make_agent(self, answer_path: str, reward_fn: Callable, entry: Any) -> "tuple[Agent, RLCheckRewardExecutor]":
+        check_reward_tools, check_reward_executor = CheckRewardTool.create(reward_fn, entry)
         tool_instances = [
             *ExecuteCodeTool.create(self.sandbox, self.library),
             *AddToLibraryTool.create(self.sandbox, self.library),
-            *CheckRewardTool.create(reward_fn, entry),
+            *check_reward_tools,
             *FinishTool.create(answer_path),
         ]
         _prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
@@ -96,7 +97,7 @@ class ReActLibraryController:
         agent.__pydantic_private__["_tools"] = {t.name: t for t in tool_instances}
         agent.__pydantic_private__["_initialized"] = True
         logger.info("agent tools_map: %s", list(agent.tools_map.keys()))
-        return agent
+        return agent, check_reward_executor
 
     def solve(
         self,
@@ -122,7 +123,7 @@ class ReActLibraryController:
         answer_path = os.path.join(task_dir, "answer.txt")
 
         prompt = build_task_prompt(task_input, relevant)
-        agent = self._make_agent(answer_path, reward_fn, entry)
+        agent, check_reward_executor = self._make_agent(answer_path, reward_fn, entry)
         conversation = Conversation(
             agent=agent,
             workspace=task_dir,
@@ -142,9 +143,15 @@ class ReActLibraryController:
         if os.path.exists(answer_path):
             answer = open(answer_path).read().strip() or None
 
-        # Final score
-        reward_result = reward_fn(answer, answer is not None, entry)
-        best_reward = float(reward_result.get("value", 0.0))
+        # Build reward_history from all check_reward calls made during the conversation.
+        # Fall back to a single post-hoc score if the agent never called check_reward.
+        reward_history = check_reward_executor.call_log
+        if reward_history:
+            best_reward = max(e["reward"] for e in reward_history)
+        else:
+            reward_result = reward_fn(answer, answer is not None, entry)
+            best_reward = float(reward_result.get("value", 0.0))
+            reward_history = [{"reward": best_reward, "message": reward_result.get("message", "")}]
 
         # Token usage delta for this task
         usage_after = self._token_usage_snapshot()
@@ -155,15 +162,15 @@ class ReActLibraryController:
 
         library_additions = len(self.library) - library_size_before
         logger.info(
-            "react_library: reward=%.3f  library=%d (+%d)  tokens=%d+%d",
-            best_reward, len(self.library), library_additions,
+            "react_library: reward=%.3f  check_reward_calls=%d  library=%d (+%d)  tokens=%d+%d",
+            best_reward, len(reward_history), len(self.library), library_additions,
             token_usage["prompt_tokens"], token_usage["completion_tokens"],
         )
         return {
             "solved": best_reward >= 1.0,
             "answer": answer,
             "best_reward": best_reward,
-            "reward_history": [{"reward": best_reward, "message": reward_result.get("message", "")}],
+            "reward_history": reward_history,
             "library_size": len(self.library),
             "library_additions_this_task": library_additions,
             "token_usage": token_usage,

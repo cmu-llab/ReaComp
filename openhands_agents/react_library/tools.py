@@ -175,19 +175,22 @@ class RLCheckRewardExecutor(ToolExecutor[RLCheckRewardAction, RLCheckRewardObser
     def __init__(self, reward_fn: Callable, entry: Any):
         self._reward_fn = reward_fn
         self._entry = entry
+        self.call_log: list[dict] = []  # accumulates every check_reward invocation
 
     def __call__(self, action: RLCheckRewardAction, conversation=None) -> RLCheckRewardObservation:
         result = self._reward_fn(action.answer, True, self._entry)
-        return RLCheckRewardObservation(
-            reward=float(result.get("value", 0.0)),
-            message=result.get("message", ""),
-        )
+        reward = float(result.get("value", 0.0))
+        message = result.get("message", "")
+        self.call_log.append({"reward": reward, "message": message, "answer": action.answer})
+        return RLCheckRewardObservation(reward=reward, message=message)
 
 
 class CheckRewardTool(ToolDefinition[RLCheckRewardAction, RLCheckRewardObservation]):
     @classmethod
-    def create(cls, reward_fn: Callable, entry: Any) -> "list[CheckRewardTool]":
-        return [cls(
+    def create(cls, reward_fn: Callable, entry: Any) -> "tuple[list[CheckRewardTool], RLCheckRewardExecutor]":
+        """Returns (tools_list, executor) so caller can read executor.call_log after the run."""
+        executor = RLCheckRewardExecutor(reward_fn, entry)
+        tool = cls(
             description=(
                 "Check your candidate answer against the task verifier. "
                 "Returns a reward in [0, 1] and feedback explaining what is wrong. "
@@ -195,8 +198,9 @@ class CheckRewardTool(ToolDefinition[RLCheckRewardAction, RLCheckRewardObservati
             ),
             action_type=RLCheckRewardAction,
             observation_type=RLCheckRewardObservation,
-            executor=RLCheckRewardExecutor(reward_fn, entry),
-        )]
+            executor=executor,
+        )
+        return [tool], executor
 
 
 # ──────────────────────────────────────────────────────────────────────────────
