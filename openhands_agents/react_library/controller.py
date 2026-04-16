@@ -80,9 +80,13 @@ class ReActLibraryController:
         )
 
     def _make_agent(self, answer_path: str, reward_fn: Callable, entry: Any) -> "tuple[Agent, RLCheckRewardExecutor]":
-        check_reward_tools, check_reward_executor = CheckRewardTool.create(reward_fn, entry)
+        exec_tools = ExecuteCodeTool.create(self.sandbox, self.library)
+        exec_executor = exec_tools[0].executor  # grab executor to wire into check_reward
+        check_reward_tools, check_reward_executor = CheckRewardTool.create(
+            reward_fn, entry, exec_executor=exec_executor
+        )
         tool_instances = [
-            *ExecuteCodeTool.create(self.sandbox, self.library),
+            *exec_tools,
             *AddToLibraryTool.create(self.sandbox, self.library),
             *check_reward_tools,
             *FinishTool.create(answer_path),
@@ -131,8 +135,14 @@ class ReActLibraryController:
         )
         conversation.send_message(prompt)
 
+        trajectory = []
         try:
             conversation.run()
+            # Extract full event log for debug logging
+            try:
+                trajectory = [e.model_dump() for e in conversation.state.events]
+            except Exception:
+                pass
         except Exception as exc:
             import traceback
             logger.warning("react_library conversation error: %s\n%s",
@@ -174,6 +184,7 @@ class ReActLibraryController:
             "library_size": len(self.library),
             "library_additions_this_task": library_additions,
             "token_usage": token_usage,
+            "_trajectory": trajectory,  # full event log; stripped before JSONL write
         }
 
     def _token_usage_snapshot(self) -> dict:

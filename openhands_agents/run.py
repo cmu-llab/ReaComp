@@ -236,6 +236,7 @@ def run_react_library(args, records, reward_fn, sandbox, ckpt_path):
         result = controller.solve(task_input, reward_fn, rec)
         result["task_id"] = task_id
         result["dataset"] = rec.get("dataset", "")
+        trajectory = result.pop("_trajectory", [])  # strip before JSONL write
         writer.write(result)
         if args.debug_dir:
             _write_debug(args.debug_dir, task_id, {
@@ -246,6 +247,7 @@ def run_react_library(args, records, reward_fn, sandbox, ckpt_path):
                 "library_size": result.get("library_size"),
                 "library_additions_this_task": result.get("library_additions_this_task"),
                 "reward_history": result.get("reward_history"),
+                "trajectory": trajectory,
             })
         logger.info("[%d/%d] task_id=%s reward=%.3f library=%d",
                     i + 1, total, task_id, result["best_reward"], result["library_size"])

@@ -57,18 +57,32 @@ class RLExecuteCodeObservation(Observation):
         return [TextContent(text=f"Execution failed.\nstderr:\n{err}")]
 
 
+_EXECUTE_CODE_WARN = (
+    "\n\n⚠ WARNING: You have called execute_code multiple times without calling "
+    "check_reward. Stop manual testing — call check_reward NOW with your best "
+    "candidate answer. It scores all examples at once and tells you exactly what "
+    "is wrong. Do NOT call execute_code again until you have called check_reward."
+)
+
+_EXECUTE_CODE_HARD_STOP = (
+    "\n\n🛑 HARD STOP: You have called execute_code too many times in a row. "
+    "You MUST call check_reward next. Do NOT call execute_code again."
+)
+
+
 class RLExecuteCodeExecutor(ToolExecutor[RLExecuteCodeAction, RLExecuteCodeObservation]):
     def __init__(self, sandbox, library: PkgLibrary):
         self._sandbox = sandbox
         self._library = library
+        self._calls_since_check_reward = 0  # reset by RLCheckRewardExecutor
 
     def __call__(self, action: RLExecuteCodeAction, conversation=None) -> RLExecuteCodeObservation:
+        self._calls_since_check_reward += 1
         ok, stdout, stderr = self._sandbox.run_code(
             action.code,
             lib_dir=self._library.pkg_dir if len(self._library) > 0 else None,
         )
         if ok and len(self._library) > 0:
-            # Track which library functions were imported in this code call
             import re
             imported = re.findall(r"from\s+library\s+import\s+(\w+)", action.code)
             imported += re.findall(r"from\s+library\s+import\s+\(([^)]+)\)", action.code)
@@ -76,7 +90,14 @@ class RLExecuteCodeExecutor(ToolExecutor[RLExecuteCodeAction, RLExecuteCodeObser
             used = [n for n in names if n in self._library]
             if used:
                 self._library.increment_usage(used)
-        return RLExecuteCodeObservation(ok=ok, stdout=stdout, stderr=stderr)
+        # Inject escalating warnings to force check_reward after 2+ consecutive execute_code calls
+        suffix = ""
+        if self._calls_since_check_reward == 2:
+            suffix = _EXECUTE_CODE_WARN
+        elif self._calls_since_check_reward >= 3:
+            suffix = _EXECUTE_CODE_HARD_STOP
+        obs = RLExecuteCodeObservation(ok=ok, stdout=stdout + suffix, stderr=stderr)
+        return obs
 
 
 class ExecuteCodeTool(ToolDefinition[RLExecuteCodeAction, RLExecuteCodeObservation]):
@@ -172,12 +193,16 @@ class RLCheckRewardObservation(Observation):
 
 
 class RLCheckRewardExecutor(ToolExecutor[RLCheckRewardAction, RLCheckRewardObservation]):
-    def __init__(self, reward_fn: Callable, entry: Any):
+    def __init__(self, reward_fn: Callable, entry: Any, exec_executor: "RLExecuteCodeExecutor | None" = None):
         self._reward_fn = reward_fn
         self._entry = entry
+        self._exec_executor = exec_executor
         self.call_log: list[dict] = []  # accumulates every check_reward invocation
 
     def __call__(self, action: RLCheckRewardAction, conversation=None) -> RLCheckRewardObservation:
+        # Reset the execute_code consecutive-call counter
+        if self._exec_executor is not None:
+            self._exec_executor._calls_since_check_reward = 0
         result = self._reward_fn(action.answer, True, self._entry)
         reward = float(result.get("value", 0.0))
         message = result.get("message", "")
@@ -187,9 +212,14 @@ class RLCheckRewardExecutor(ToolExecutor[RLCheckRewardAction, RLCheckRewardObser
 
 class CheckRewardTool(ToolDefinition[RLCheckRewardAction, RLCheckRewardObservation]):
     @classmethod
-    def create(cls, reward_fn: Callable, entry: Any) -> "tuple[list[CheckRewardTool], RLCheckRewardExecutor]":
+    def create(
+        cls,
+        reward_fn: Callable,
+        entry: Any,
+        exec_executor: "RLExecuteCodeExecutor | None" = None,
+    ) -> "tuple[list[CheckRewardTool], RLCheckRewardExecutor]":
         """Returns (tools_list, executor) so caller can read executor.call_log after the run."""
-        executor = RLCheckRewardExecutor(reward_fn, entry)
+        executor = RLCheckRewardExecutor(reward_fn, entry, exec_executor=exec_executor)
         tool = cls(
             description=(
                 "Check your candidate answer against the task verifier. "
