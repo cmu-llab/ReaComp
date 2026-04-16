@@ -36,5 +36,6 @@ python -m openhands_agents.run \
     --max-tokens "$MAX_TOKENS" \
     --max-steps "$MAX_STEPS" \
     --library-k "$LIBRARY_K" \
+    --debug-dir "debug_oh_react_library" \
     --skip-existing \
     --clear
