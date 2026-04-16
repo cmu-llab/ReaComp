@@ -111,6 +111,9 @@ class ReActLibraryController:
         """
         library_size_before = len(self.library)
 
+        # Snapshot accumulated token usage before this task
+        usage_before = self._token_usage_snapshot()
+
         # Retrieve relevant library functions (with full code for reuse decisions)
         task_text = _task_text(task_input)
         relevant = self.library.retrieve(task_text, k=self.library_k)
@@ -143,10 +146,18 @@ class ReActLibraryController:
         reward_result = reward_fn(answer, answer is not None, entry)
         best_reward = float(reward_result.get("value", 0.0))
 
+        # Token usage delta for this task
+        usage_after = self._token_usage_snapshot()
+        token_usage = {
+            "prompt_tokens": usage_after["prompt_tokens"] - usage_before["prompt_tokens"],
+            "completion_tokens": usage_after["completion_tokens"] - usage_before["completion_tokens"],
+        }
+
         library_additions = len(self.library) - library_size_before
         logger.info(
-            "react_library: reward=%.3f  library=%d (+%d)",
+            "react_library: reward=%.3f  library=%d (+%d)  tokens=%d+%d",
             best_reward, len(self.library), library_additions,
+            token_usage["prompt_tokens"], token_usage["completion_tokens"],
         )
         return {
             "solved": best_reward >= 1.0,
@@ -155,6 +166,17 @@ class ReActLibraryController:
             "reward_history": [{"reward": best_reward, "message": reward_result.get("message", "")}],
             "library_size": len(self.library),
             "library_additions_this_task": library_additions,
+            "token_usage": token_usage,
+        }
+
+    def _token_usage_snapshot(self) -> dict:
+        """Return current accumulated prompt/completion token counts from the LLM metrics."""
+        usage = self._llm.metrics.accumulated_token_usage
+        if usage is None:
+            return {"prompt_tokens": 0, "completion_tokens": 0}
+        return {
+            "prompt_tokens": usage.prompt_tokens or 0,
+            "completion_tokens": usage.completion_tokens or 0,
         }
 
     # ------------------------------------------------------------------
