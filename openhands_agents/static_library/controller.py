@@ -93,17 +93,14 @@ class StaticLibraryController:
             f.write(text)
         return path
 
-    def _make_agent(self, answer_path: str, reward_fn: Callable, entry: Any) -> Agent:
-        # StaticLibrary._setup_pkg places library/__init__.py inside pkg_dir/library/.
-        # sandbox.run_code binds lib_dir → /exec/<basename(lib_dir)>, so passing
-        # pkg_dir/library makes it importable as `from library import fn`.
+    def _make_agent(self, answer_path: str, reward_fn: Callable, entry: Any) -> "tuple[Agent, CheckRewardTool.__class__]":
         lib_pkg_dir = os.path.join(self.static_library.pkg_dir, "library")
 
-        tool_instances = [
-            *ExecuteCodeTool.create(self.sandbox, lib_pkg_dir, self.static_library.function_names, self.static_library.function_sources),
-            *CheckRewardTool.create(reward_fn, entry),
-            *FinishTool.create(answer_path),
-        ]
+        exec_tools = ExecuteCodeTool.create(self.sandbox, lib_pkg_dir, self.static_library.function_names, self.static_library.function_sources)
+        check_reward_tools, check_reward_executor = CheckRewardTool.create(reward_fn, entry)
+        finish_tools = FinishTool.create(answer_path)
+
+        tool_instances = [*exec_tools, *check_reward_tools, *finish_tools]
         agent = Agent(
             llm=self._llm,
             tools=[],
@@ -113,7 +110,7 @@ class StaticLibraryController:
         agent.__pydantic_private__["_tools"] = {t.name: t for t in tool_instances}
         agent.__pydantic_private__["_initialized"] = True
         logger.debug("agent tools: %s", list(agent.tools_map.keys()))
-        return agent
+        return agent, check_reward_executor
 
     def solve(
         self,
@@ -128,7 +125,7 @@ class StaticLibraryController:
         answer_path = os.path.join(task_dir, "answer.txt")
 
         prompt = build_task_prompt(task_input)
-        agent = self._make_agent(answer_path, reward_fn, entry)
+        agent, check_reward_executor = self._make_agent(answer_path, reward_fn, entry)
         conversation = Conversation(
             agent=agent,
             workspace=task_dir,
@@ -143,12 +140,25 @@ class StaticLibraryController:
             logger.warning("static_library conversation error: %s\n%s",
                            exc, traceback.format_exc())
 
+        trajectory = []
+        try:
+            trajectory = [e.model_dump() for e in conversation.state.events]
+        except Exception:
+            pass
+
         answer = None
         if os.path.exists(answer_path):
             answer = open(answer_path).read().strip() or None
 
-        reward_result = reward_fn(answer, answer is not None, entry)
-        best_reward = float(reward_result.get("value", 0.0))
+        # Build reward_history from inline check_reward calls during conversation
+        reward_history = check_reward_executor.call_log
+        if reward_history:
+            best_reward = max(e["reward"] for e in reward_history)
+        else:
+            # Agent never called check_reward — score the final answer post-hoc
+            reward_result = reward_fn(answer, answer is not None, entry)
+            best_reward = float(reward_result.get("value", 0.0))
+            reward_history = [{"reward": best_reward, "message": reward_result.get("message", "")}]
 
         usage_after = self._token_usage_snapshot()
         token_usage = {
@@ -157,8 +167,9 @@ class StaticLibraryController:
         }
 
         logger.info(
-            "static_library: reward=%.3f  tokens=%d+%d",
+            "static_library: reward=%.3f  check_reward_calls=%d  tokens=%d+%d",
             best_reward,
+            len(check_reward_executor.call_log),
             token_usage["prompt_tokens"],
             token_usage["completion_tokens"],
         )
@@ -166,8 +177,9 @@ class StaticLibraryController:
             "solved": best_reward >= 1.0,
             "answer": answer,
             "best_reward": best_reward,
-            "reward_history": [{"reward": best_reward, "message": reward_result.get("message", "")}],
+            "reward_history": reward_history,
             "token_usage": token_usage,
+            "_trajectory": trajectory,
         }
 
     def _token_usage_snapshot(self) -> dict:

@@ -312,6 +312,7 @@ def run_static_library(args, records, reward_fn, sandbox, ckpt_path):
         result = controller.solve(task_input, reward_fn, rec)
         result["task_id"] = task_id
         result["dataset"] = rec.get("dataset", "")
+        trajectory = result.pop("_trajectory", [])
         writer.write(result)
         if args.debug_dir:
             _write_debug(args.debug_dir, task_id, {
@@ -321,9 +322,11 @@ def run_static_library(args, records, reward_fn, sandbox, ckpt_path):
                 "best_reward": result.get("best_reward"),
                 "reward_history": result.get("reward_history"),
                 "token_usage": result.get("token_usage"),
+                "trajectory": trajectory,
             })
-        logger.info("[%d/%d] task_id=%s reward=%.3f",
-                    i + 1, total, task_id, result["best_reward"])
+        logger.info("[%d/%d] task_id=%s reward=%.3f check_reward_calls=%d",
+                    i + 1, total, task_id, result["best_reward"],
+                    len(result.get("reward_history", [])))
 
     workers = max(1, args.workers)
     if workers == 1:

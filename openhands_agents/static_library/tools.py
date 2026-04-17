@@ -120,18 +120,20 @@ class SLCheckRewardExecutor(ToolExecutor[SLCheckRewardAction, SLCheckRewardObser
     def __init__(self, reward_fn: Callable, entry: Any):
         self._reward_fn = reward_fn
         self._entry = entry
+        self.call_log: list[dict] = []
 
     def __call__(self, action: SLCheckRewardAction, conversation=None) -> SLCheckRewardObservation:
         result = self._reward_fn(action.answer, True, self._entry)
-        return SLCheckRewardObservation(
-            reward=float(result.get("value", 0.0)),
-            message=result.get("message", ""),
-        )
+        reward = float(result.get("value", 0.0))
+        message = result.get("message", "")
+        self.call_log.append({"reward": reward, "message": message, "answer": action.answer})
+        return SLCheckRewardObservation(reward=reward, message=message)
 
 
 class CheckRewardTool(ToolDefinition[SLCheckRewardAction, SLCheckRewardObservation]):
     @classmethod
-    def create(cls, reward_fn: Callable, entry: Any) -> "list[CheckRewardTool]":
+    def create(cls, reward_fn: Callable, entry: Any) -> "tuple[list[CheckRewardTool], SLCheckRewardExecutor]":
+        executor = SLCheckRewardExecutor(reward_fn, entry)
         return [cls(
             description=(
                 "Check your candidate answer against the task verifier. "
@@ -140,8 +142,8 @@ class CheckRewardTool(ToolDefinition[SLCheckRewardAction, SLCheckRewardObservati
             ),
             action_type=SLCheckRewardAction,
             observation_type=SLCheckRewardObservation,
-            executor=SLCheckRewardExecutor(reward_fn, entry),
-        )]
+            executor=executor,
+        )], executor
 
 
 # ──────────────────────────────────────────────────────────────────────────────
