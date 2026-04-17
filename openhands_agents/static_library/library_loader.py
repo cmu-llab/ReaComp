@@ -15,6 +15,7 @@ The PROMPTING_GUIDE.md is read and embedded in the agent's system prompt so the
 weaker model follows the stronger model's prescribed workflow.
 """
 
+import ast
 import os
 import shutil
 
@@ -42,7 +43,7 @@ class StaticLibrary:
 
         self._setup_pkg(lib_file)
         self._guide = self._load_guide()
-        self._function_names = self._parse_function_names(lib_file)
+        self._function_names, self._function_sources = self._parse_functions(lib_file)
 
     # ------------------------------------------------------------------
     # Public API
@@ -57,6 +58,11 @@ class StaticLibrary:
     def function_names(self) -> list[str]:
         """Top-level function names defined in LIBRARY.py."""
         return list(self._function_names)
+
+    @property
+    def function_sources(self) -> dict[str, str]:
+        """Mapping of function name → full source text (def … end of body)."""
+        return dict(self._function_sources)
 
     def as_listing(self) -> str:
         """One-line listing of available functions for the task prompt."""
@@ -84,13 +90,17 @@ class StaticLibrary:
         return ""
 
     @staticmethod
-    def _parse_function_names(lib_file: str) -> list[str]:
-        """Extract top-level def names from LIBRARY.py (no AST dependency needed)."""
-        names = []
-        with open(lib_file) as f:
-            for line in f:
-                if line.startswith("def "):
-                    name = line[4:].split("(")[0].strip()
-                    if not name.startswith("_"):
-                        names.append(name)
-        return names
+    def _parse_functions(lib_file: str) -> "tuple[list[str], dict[str, str]]":
+        """Parse LIBRARY.py with ast; return (names, {name: source}) for public top-level functions."""
+        source = open(lib_file).read()
+        lines = source.splitlines()
+        tree = ast.parse(source)
+        names: list[str] = []
+        sources: dict[str, str] = {}
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
+                names.append(node.name)
+                # end_lineno is available in Python 3.8+
+                fn_lines = lines[node.lineno - 1: node.end_lineno]
+                sources[node.name] = "\n".join(fn_lines)
+        return names, sources

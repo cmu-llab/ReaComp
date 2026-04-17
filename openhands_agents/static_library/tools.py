@@ -57,25 +57,36 @@ class SLExecuteCodeObservation(Observation):
 
 
 class SLExecuteCodeExecutor(ToolExecutor[SLExecuteCodeAction, SLExecuteCodeObservation]):
-    def __init__(self, sandbox, lib_pkg_dir: str, function_names: list[str]):
+    def __init__(self, sandbox, lib_pkg_dir: str, function_names: list[str], fn_sources: "dict[str, str]"):
         self._sandbox = sandbox
         self._lib_pkg_dir = lib_pkg_dir
-        # Pre-built import preamble — injected before every code block so the
-        # agent never needs to write import statements for library functions.
+        self._fn_sources = fn_sources
         if function_names:
             self._preamble = f"from library import {', '.join(function_names)}\n"
         else:
             self._preamble = ""
 
     def __call__(self, action: SLExecuteCodeAction, conversation=None) -> SLExecuteCodeObservation:
+        import re
         code = self._preamble + action.code
         ok, stdout, stderr = self._sandbox.run_code(code, lib_dir=self._lib_pkg_dir)
+        if not ok and self._fn_sources:
+            # Find library functions called in the failing code and append their
+            # full source so the agent can see the exact return schema.
+            called = [n for n in self._fn_sources if re.search(r'\b' + n + r'\s*\(', action.code)]
+            if called:
+                snippets = "\n\n".join(f"# {n}:\n{self._fn_sources[n]}" for n in called)
+                stderr = (
+                    stderr
+                    + "\n\n--- Source of library functions used in this call ---\n"
+                    + snippets
+                )
         return SLExecuteCodeObservation(ok=ok, stdout=stdout, stderr=stderr)
 
 
 class ExecuteCodeTool(ToolDefinition[SLExecuteCodeAction, SLExecuteCodeObservation]):
     @classmethod
-    def create(cls, sandbox, lib_pkg_dir: str, function_names: list[str]) -> "list[ExecuteCodeTool]":
+    def create(cls, sandbox, lib_pkg_dir: str, function_names: list[str], fn_sources: "dict[str, str]") -> "list[ExecuteCodeTool]":
         return [cls(
             description=(
                 "Execute Python code in a sandboxed environment. "
@@ -84,7 +95,7 @@ class ExecuteCodeTool(ToolDefinition[SLExecuteCodeAction, SLExecuteCodeObservati
             ),
             action_type=SLExecuteCodeAction,
             observation_type=SLExecuteCodeObservation,
-            executor=SLExecuteCodeExecutor(sandbox, lib_pkg_dir, function_names),
+            executor=SLExecuteCodeExecutor(sandbox, lib_pkg_dir, function_names, fn_sources),
         )]
 
 
