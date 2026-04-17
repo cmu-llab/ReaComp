@@ -33,8 +33,8 @@ You are an expert Python programmer. You have access to a pre-built library of \
 helper functions and three tools:
 
   execute_code(code)
-      Run Python code in a sandbox. Import library functions with:
-          from library import fn_name
+      Run Python code in a sandbox. All library functions listed below are
+      already imported — call them directly without any import statements.
       Use this ONLY for helper computations (e.g. inspect data, test a single
       string). Do NOT use it to manually verify your full answer — use check_reward.
 

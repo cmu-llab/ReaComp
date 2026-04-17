@@ -100,7 +100,7 @@ class StaticLibraryController:
         lib_pkg_dir = os.path.join(self.static_library.pkg_dir, "library")
 
         tool_instances = [
-            *ExecuteCodeTool.create(self.sandbox, lib_pkg_dir),
+            *ExecuteCodeTool.create(self.sandbox, lib_pkg_dir, self.static_library.function_names),
             *CheckRewardTool.create(reward_fn, entry),
             *FinishTool.create(answer_path),
         ]

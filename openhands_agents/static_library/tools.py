@@ -34,8 +34,10 @@ class SLExecuteCodeAction(Action):
     code: str = Field(
         description=(
             "Complete Python program to execute. "
-            "Import library functions with `from library import fn_name`. "
-            "Print the answer to stdout."
+            "All library functions are already imported — call them directly "
+            "(e.g. find_changed_pairs(...), score_rules(...), apply_rules(...)). "
+            "Do NOT write import statements for library functions. "
+            "Print results to stdout to observe them."
         )
     )
 
@@ -55,30 +57,34 @@ class SLExecuteCodeObservation(Observation):
 
 
 class SLExecuteCodeExecutor(ToolExecutor[SLExecuteCodeAction, SLExecuteCodeObservation]):
-    def __init__(self, sandbox, lib_pkg_dir: str):
+    def __init__(self, sandbox, lib_pkg_dir: str, function_names: list[str]):
         self._sandbox = sandbox
-        # lib_pkg_dir = pkg_dir/library/  (basename = "library")
-        # sandbox.run_code binds lib_dir → /exec/<basename(lib_dir)>
-        # so passing lib_pkg_dir directly makes it importable as `from library import fn`
         self._lib_pkg_dir = lib_pkg_dir
+        # Pre-built import preamble — injected before every code block so the
+        # agent never needs to write import statements for library functions.
+        if function_names:
+            self._preamble = f"from library import {', '.join(function_names)}\n"
+        else:
+            self._preamble = ""
 
     def __call__(self, action: SLExecuteCodeAction, conversation=None) -> SLExecuteCodeObservation:
-        ok, stdout, stderr = self._sandbox.run_code(action.code, lib_dir=self._lib_pkg_dir)
+        code = self._preamble + action.code
+        ok, stdout, stderr = self._sandbox.run_code(code, lib_dir=self._lib_pkg_dir)
         return SLExecuteCodeObservation(ok=ok, stdout=stdout, stderr=stderr)
 
 
 class ExecuteCodeTool(ToolDefinition[SLExecuteCodeAction, SLExecuteCodeObservation]):
     @classmethod
-    def create(cls, sandbox, lib_pkg_dir: str) -> "list[ExecuteCodeTool]":
+    def create(cls, sandbox, lib_pkg_dir: str, function_names: list[str]) -> "list[ExecuteCodeTool]":
         return [cls(
             description=(
                 "Execute Python code in a sandboxed environment. "
-                "The pre-built library is available: `from library import fn_name`. "
+                "All library functions are pre-imported — call them directly without import statements. "
                 "Print results to stdout to observe them."
             ),
             action_type=SLExecuteCodeAction,
             observation_type=SLExecuteCodeObservation,
-            executor=SLExecuteCodeExecutor(sandbox, lib_pkg_dir),
+            executor=SLExecuteCodeExecutor(sandbox, lib_pkg_dir, function_names),
         )]
 
 
