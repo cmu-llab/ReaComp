@@ -149,23 +149,6 @@ def run_static_library(args, records, reward_fn, ckpt_path):
         shutil.copy(os.path.join(args.library_path, "LIBRARY.py"), os.path.join(pkg, "__init__.py"))
         lib_dir = pkg
 
-    llm = LLMClient(
-        backend="openai" if args.base_url else "anthropic",
-        base_url=args.base_url or None,
-        api_key=args.api_key,
-        debug_dir=args.debug_dir or None,
-    )
-
-    agent = StaticLibraryJsonAgent(
-        llm=llm,
-        model=args.model,
-        library_path=args.library_path,
-        execute_fn=execute_fn,
-        lib_dir=lib_dir,
-        max_iters=args.max_iters,
-        max_tokens=args.max_tokens,
-    )
-
     ckpt = _load_checkpoint(ckpt_path)
     writer = _OutputWriter(args.output_path, ckpt_path)
     completed_ids = writer.load_completed(ckpt)
@@ -179,7 +162,7 @@ def run_static_library(args, records, reward_fn, ckpt_path):
     # Each worker needs its own LLM + agent instance (LLMClient is not thread-safe)
     def _make_agent():
         _llm = LLMClient(
-            backend="openai" if args.base_url else "anthropic",
+            backend=args.backend,
             base_url=args.base_url or None,
             api_key=args.api_key,
             debug_dir=args.debug_dir or None,
@@ -254,7 +237,7 @@ def run_react(args, records, reward_fn, ckpt_path):
 
     def _make_agent():
         _llm = LLMClient(
-            backend="openai" if args.base_url else "anthropic",
+            backend=args.backend,
             base_url=args.base_url or None,
             api_key=args.api_key,
             debug_dir=args.debug_dir or None,
@@ -320,6 +303,8 @@ def main():
     parser.add_argument("--base-url", default="", help="OpenAI-compatible base URL (e.g. http://localhost:8000/v1)")
     parser.add_argument("--model", default="openai/gpt-oss-120b")
     parser.add_argument("--api-key", default=os.environ.get("VLLM_API_KEY", "EMPTY"))
+    parser.add_argument("--backend", default="gpt_oss", choices=["openai", "gpt_oss", "anthropic"],
+                        help="LLM backend (gpt_oss for Harmony-format models, openai for standard)")
     parser.add_argument("--max-tokens", type=int, default=4096)
 
     # Sandbox

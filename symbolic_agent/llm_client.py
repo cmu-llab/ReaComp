@@ -74,13 +74,13 @@ class LLMClient:
         if backend == "anthropic":
             import anthropic
             self._client = anthropic.Anthropic(api_key=api_key)
-        elif backend == "openai":
+        elif backend in ("openai", "gpt_oss"):
             import openai
             if not base_url:
-                raise ValueError("base_url is required for the 'openai' backend")
+                raise ValueError("base_url is required for the 'openai'/'gpt_oss' backend")
             self._client = openai.OpenAI(base_url=base_url, api_key=api_key or "EMPTY")
         else:
-            raise ValueError(f"Unknown backend: {backend!r}. Use 'anthropic' or 'openai'.")
+            raise ValueError(f"Unknown backend: {backend!r}. Use 'anthropic', 'openai', or 'gpt_oss'.")
 
     # ------------------------------------------------------------------
     # Task-level message log
@@ -127,6 +127,8 @@ class LLMClient:
         system_with_json = system + _JSON_INSTRUCTION
         if self.backend == "anthropic":
             return self._create_anthropic(model, max_tokens, system_with_json, messages, tag)
+        elif self.backend == "gpt_oss":
+            return self._create_gpt_oss(model, max_tokens, system_with_json, messages, tag)
         else:
             return self._create_openai(model, max_tokens, system_with_json, messages, tag)
 
@@ -231,6 +233,75 @@ class LLMClient:
                     wait = 5 * (2 ** attempt)
                     logger.warning(
                         "OpenAI call failed (attempt %d/3, tag=%s): %s. Retrying in %ds.",
+                        attempt + 1, tag, exc, wait,
+                    )
+                    time.sleep(wait)
+        raise last_exc
+
+    def _create_gpt_oss(self, model, max_tokens, system, messages, tag):
+        # gpt-oss / Harmony format requirements:
+        # 1. No response_format — Harmony outputs 2 messages (analysis + final);
+        #    json_object applies to the full completion and conflicts.
+        # 2. Use "developer" role for the system prompt (Harmony-native).
+        # 3. Strip thinking/reasoning_content from replayed assistant turns —
+        #    including them in history causes template mis-parsing.
+        def _clean_messages(msgs):
+            cleaned = []
+            for m in msgs:
+                if m.get("role") == "assistant":
+                    cleaned.append({"role": "assistant", "content": m.get("content", "")})
+                else:
+                    cleaned.append(m)
+            return cleaned
+
+        oai_messages = [{"role": "developer", "content": system}] + _clean_messages(messages)
+        last_exc = None
+        for attempt in range(3):
+            try:
+                response = self._client.chat.completions.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    messages=oai_messages,
+                )
+                msg = response.choices[0].message
+                content = msg.content or ""
+                reasoning = getattr(msg, "reasoning_content", "") or ""
+                u = getattr(response, "usage", None)
+                input_toks = getattr(u, "prompt_tokens", 0) or 0
+                output_toks = getattr(u, "completion_tokens", 0) or 0
+                reasoning_toks = 0
+                if u:
+                    details = getattr(u, "completion_tokens_details", None)
+                    if details:
+                        reasoning_toks = getattr(details, "reasoning_tokens", 0) or 0
+                usage = {
+                    "input_tokens": input_toks,
+                    "output_tokens": output_toks,
+                    "reasoning_tokens": reasoning_toks,
+                }
+                result = self._parse_json(content, tag)
+                self._write_debug_log(
+                    tag=tag,
+                    model=model,
+                    request={"system": system, "messages": messages, "max_tokens": max_tokens},
+                    response={
+                        "finish_reason": response.choices[0].finish_reason,
+                        "content": content,
+                        "reasoning_content": reasoning,
+                        "usage": usage,
+                    },
+                    parsed=result,
+                    usage=usage,
+                )
+                return result
+            except Exception as exc:
+                last_exc = exc
+                if getattr(exc, "status_code", None) == 400:
+                    raise
+                if attempt < 2:
+                    wait = 5 * (2 ** attempt)
+                    logger.warning(
+                        "gpt_oss call failed (attempt %d/3, tag=%s): %s. Retrying in %ds.",
                         attempt + 1, tag, exc, wait,
                     )
                     time.sleep(wait)

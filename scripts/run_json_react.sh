@@ -29,6 +29,7 @@ python -m json_agents.run \
     --default-reward "$REWARD" \
     --base-url "$BASE_URL" \
     --model "$MODEL" \
+    --backend gpt_oss \
     --sif-path "$SIF_PATH" \
     --max-tokens "$MAX_TOKENS" \
     --max-iters "$MAX_ITERS" \
