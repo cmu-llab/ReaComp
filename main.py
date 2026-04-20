@@ -16,8 +16,10 @@ import json
 import logging
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional, Set
 
 from dotenv import load_dotenv
 
@@ -27,6 +29,7 @@ from symbolic_agent import Controller
 from symbolic_agent.models import Function
 from symbolic_agent.baselines.trove import TroVEController
 from symbolic_agent.baselines.regal import ReGALController
+from symbolic_agent.baselines.direct_feedback import DirectFeedbackController
 
 # --------------------------------------------------------------------------
 # Logging
@@ -353,6 +356,143 @@ def _load_best_of_k_checkpoint(controller, checkpoint_file: str) -> int:
         return 0
 
 
+class _ParallelCheckpoint:
+    """
+    Thread-safe checkpoint + output writer for stateless parallel frameworks
+    (direct_feedback, best_of_k).
+
+    Uses completed_ids (a set of task indices) so workers can complete out of
+    order and resume correctly after a crash.  All file I/O is serialised by
+    a single lock so concurrent workers never corrupt outputs.
+    """
+
+    def __init__(self, output_file: Optional[str], checkpoint_file: Optional[str]):
+        self._lock = threading.Lock()
+        self.output_file = output_file
+        self.checkpoint_file = checkpoint_file
+        self.completed_ids: Set[int] = set()
+        self._session_tokens: Dict[str, int] = {"input": 0, "output": 0, "reasoning": 0}
+
+    @classmethod
+    def load(cls, output_file: Optional[str], checkpoint_file: Optional[str]) -> "Optional[_ParallelCheckpoint]":
+        """Load existing checkpoint if present; return None if nothing to resume."""
+        obj = cls(output_file, checkpoint_file)
+        if not checkpoint_file or not Path(checkpoint_file).exists():
+            return obj
+        try:
+            ckpt = json.loads(Path(checkpoint_file).read_text(encoding="utf-8"))
+            ids = set(ckpt.get("completed_ids", []))
+            # Back-compat: convert old last_completed_index format
+            if not ids and "last_completed_index" in ckpt:
+                ids = set(range(int(ckpt["last_completed_index"]) + 1))
+            obj.completed_ids = ids
+            if ckpt.get("session_tokens"):
+                for k in ("input", "output", "reasoning"):
+                    obj._session_tokens[k] = int(ckpt["session_tokens"].get(k, 0))
+            logger.info(
+                "Parallel checkpoint loaded: %d tasks already done → skipping them.",
+                len(obj.completed_ids),
+            )
+        except Exception as exc:
+            logger.warning("Could not load parallel checkpoint %s: %s — starting fresh.", checkpoint_file, exc)
+        return obj
+
+    def record(self, result: Dict, task_index: int) -> None:
+        """Record one completed task result: append to output + update checkpoint. Thread-safe."""
+        with self._lock:
+            # Accumulate session tokens from per-task usage
+            tu = result.get("token_usage", {})
+            for k in ("input", "output", "reasoning"):
+                self._session_tokens[k] += int(tu.get(k, 0))
+
+            self.completed_ids.add(task_index)
+
+            if self.output_file:
+                _append_task_output(result, task_index, self.output_file)
+
+            if self.checkpoint_file:
+                ckpt = {
+                    "completed_ids": sorted(self.completed_ids),
+                    "session_tokens": dict(self._session_tokens),
+                }
+                try:
+                    Path(self.checkpoint_file).write_text(
+                        json.dumps(ckpt, indent=2, default=str), encoding="utf-8"
+                    )
+                except Exception as exc:
+                    logger.warning("Could not write parallel checkpoint: %s", exc)
+
+    def get_session_token_usage(self) -> Dict[str, int]:
+        with self._lock:
+            return dict(self._session_tokens)
+
+
+def _run_parallel_stateless(
+    controller,
+    tasks: List[Dict],
+    args,
+    reward_name_default: Optional[str],
+    ckpt: "_ParallelCheckpoint",
+    workers: int,
+) -> None:
+    """
+    Run a stateless framework (direct_feedback / best_of_k) with N worker threads.
+    Each task is independent; results are written to the checkpoint as they complete.
+    """
+    pending = [
+        (i, task) for i, task in enumerate(tasks)
+        if i not in ckpt.completed_ids
+    ]
+    logger.info(
+        "Parallel run: %d tasks pending (%d already done), %d workers",
+        len(pending), len(ckpt.completed_ids), workers,
+    )
+
+    def _solve_one(i: int, task: Dict) -> Dict:
+        task_input = task.get("input", task)
+        task_type = task.get("type", "symbolic")
+        reward_name = task.get("reward") or reward_name_default
+        logger.info("--- Task %d (worker) ---", i + 1)
+        if reward_name:
+            reward_fn = load_reward(reward_name)
+            return controller.solve_with_reward(
+                task_input=task_input,
+                task_type=task_type,
+                budget=args.budget,
+                reward_fn=reward_fn,
+                entry=task.get("entry", {}),
+                max_reward_iters=args.max_reward_iters,
+            )
+        return controller.solve(task_input, task_type, budget=args.budget)
+
+    if workers == 1:
+        for i, task in pending:
+            result = _solve_one(i, task)
+            _print_result(result, i)
+            ckpt.record(result, i)
+    else:
+        futs = {}
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for i, task in pending:
+                futs[pool.submit(_solve_one, i, task)] = i
+            for fut in as_completed(futs):
+                i = futs[fut]
+                try:
+                    result = fut.result()
+                except Exception as exc:
+                    logger.error("Task %d failed with exception: %s", i, exc)
+                    result = {
+                        "solved": False, "task_type": "unknown", "original_prompt": "",
+                        "answer": None, "best_reward": 0.0, "final_reward": {},
+                        "reward_history": [], "trace": [],
+                        "final_output": {"error": str(exc)},
+                        "agent_messages": [], "token_usage": {},
+                        "cost_summary": {}, "library_snapshot": [],
+                    }
+                _print_result(result, i)
+                ckpt.record(result, i)
+
+
 def _save_regal_checkpoint(controller, last_completed_index: int, checkpoint_file: str) -> None:
     """Save ReGAL session token counts to checkpoint (codebank doesn't change during test)."""
     ckpt = {
@@ -459,13 +599,14 @@ def main() -> None:
     parser.add_argument(
         "--framework",
         default="ssl_bcr",
-        choices=["ssl_bcr", "trove", "regal", "react_mem", "react_library", "best_of_k"],
+        choices=["ssl_bcr", "trove", "regal", "react_mem", "react_library", "best_of_k", "direct_feedback"],
         help="Solution framework to use. 'ssl_bcr': symbolic library agent (default). "
              "'trove': TroVE online function induction baseline. "
              "'regal': ReGAL offline refactoring baseline. "
              "'react_mem': ReAct agent with episodic memory. "
              "'react_library': ReAct agent with a shared growing Python function library. "
              "'best_of_k': K independent sampling attempts, best-of-K by reward. "
+             "'direct_feedback': sequential single-turn calls with verifier feedback history. "
              "(default: ssl_bcr)",
     )
     parser.add_argument("--model", default="claude-sonnet-4-5", help=(
@@ -629,6 +770,25 @@ def main() -> None:
         default=5,
         metavar="K",
         help="[best_of_k] Number of independent sampling attempts per task. (default: 5)",
+    )
+    # ---- Direct-feedback-specific flags ----
+    parser.add_argument(
+        "--df-k",
+        type=int,
+        default=3,
+        metavar="K",
+        help="[direct_feedback] Maximum sequential attempts per task. "
+             "Attempt 1 is the raw task; attempt 2+ include verifier feedback history. "
+             "(default: 3)",
+    )
+    # ---- Parallelism (stateless frameworks only) ----
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of parallel worker threads. Only supported for stateless frameworks "
+             "(direct_feedback, best_of_k). Sequential frameworks ignore this flag. (default: 1)",
     )
     # TroVE-specific flags
     parser.add_argument(
@@ -824,6 +984,16 @@ def main() -> None:
             max_tokens=args.max_tokens or 4096,
         )
         logger.info("Framework: Best-of-K (k=%d)", args.bok_k)
+    elif args.framework == "direct_feedback":
+        controller = DirectFeedbackController(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            debug_dir=args.debug_dir,
+            k=args.df_k,
+            max_tokens=args.max_tokens or 4096,
+        )
+        logger.info("Framework: direct_feedback (k=%d)", args.df_k)
     elif args.framework == "trove":
         controller = TroVEController(
             api_key=api_key,
@@ -903,100 +1073,114 @@ def main() -> None:
             if args.output_file else None
         )
 
-        # Auto-resume: all frameworks support checkpointing.
-        # ssl_bcr/trove/react_mem/react_library: full state (library/toolbox/memory) + session tokens.
-        # best_of_k/regal: session tokens + last_completed_index only (no cross-task library).
-        start_index = 0
-        if args.framework in ("ssl_bcr", "trove", "react_mem", "react_library", "best_of_k", "regal"):
-            if (
-                ckpt_file
-                and Path(ckpt_file).exists()
-                and args.output_file
-                and Path(args.output_file).exists()
-            ):
-                if args.framework == "trove":
-                    start_index = _load_trove_checkpoint(controller, ckpt_file)
-                elif args.framework == "react_mem":
-                    start_index = _load_react_mem_checkpoint(controller, ckpt_file)
-                elif args.framework == "react_library":
-                    start_index = _load_react_library_checkpoint(controller, ckpt_file)
-                elif args.framework == "best_of_k":
-                    start_index = _load_best_of_k_checkpoint(controller, ckpt_file)
-                elif args.framework == "regal":
-                    start_index = _load_regal_checkpoint(controller, ckpt_file)
-                else:
-                    start_index = _load_checkpoint(controller, ckpt_file)
-            elif ckpt_file and Path(ckpt_file).exists():
-                logger.warning(
-                    "Checkpoint found but output file %s is missing — ignoring checkpoint and starting fresh.",
-                    args.output_file,
-                )
-
-        for i, task in enumerate(tasks):
-            if i < start_index:
-                continue
-            task_input = task.get("input", task)
-            task_type = task.get("type", "symbolic")
-            reward_name = task.get("reward") or args.default_reward
-            logger.info("--- Task %d/%d ---", i + 1, len(tasks))
-
-            if reward_name:
-                reward_fn = load_reward(reward_name)
-                result = controller.solve_with_reward(
-                    task_input=task_input,
-                    task_type=task_type,
-                    budget=args.budget,
-                    reward_fn=reward_fn,
-                    entry=task.get("entry", {}),
-                    max_reward_iters=args.max_reward_iters,
-                )
-            else:
-                result = controller.solve(task_input, task_type, budget=args.budget)
-            _print_result(result, i)
-            if args.output_file:
-                _append_task_output(result, i, args.output_file)
-            if ckpt_file:
-                if args.framework == "ssl_bcr":
-                    _save_checkpoint(controller, i, ckpt_file)
-                elif args.framework == "trove":
-                    _save_trove_checkpoint(controller, i, ckpt_file)
-                elif args.framework == "react_mem":
-                    _save_react_mem_checkpoint(controller, i, ckpt_file)
-                elif args.framework == "react_library":
-                    _save_react_library_checkpoint(controller, i, ckpt_file)
-                elif args.framework == "best_of_k":
-                    _save_best_of_k_checkpoint(controller, i, ckpt_file)
-                elif args.framework == "regal":
-                    _save_regal_checkpoint(controller, i, ckpt_file)
-            # Library/memory size logging
-            if args.framework == "trove":
-                lib_size = len(controller.toolbox)
-            elif args.framework == "regal":
-                lib_size = len(controller.codebank)
-            elif args.framework == "react_mem":
-                lib_size = len(controller.memory)
-            elif args.framework == "best_of_k":
-                lib_size = 0  # no library
-            else:
-                lib_size = len(controller.library)
-            logger.info("Library size after task %d: %d functions", i + 1, lib_size)
-        if args.stats:
-            _print_library_stats(controller)
-        # Log session-wide token usage
-        _su_src = None
-        if hasattr(controller, "get_session_token_usage"):
-            _su_src = controller
-        else:
-            _inner = getattr(controller, "client", None) or getattr(controller, "llm", None)
-            if _inner and hasattr(_inner, "get_session_token_usage"):
-                _su_src = _inner
-        if _su_src:
-            su = _su_src.get_session_token_usage()
+        # ---- Stateless parallel path (direct_feedback, best_of_k) ----
+        # Uses completed_ids checkpointing so workers can finish out of order.
+        _STATELESS_FRAMEWORKS = ("direct_feedback", "best_of_k")
+        if args.framework in _STATELESS_FRAMEWORKS:
+            par_ckpt = _ParallelCheckpoint.load(args.output_file, ckpt_file)
+            workers = max(1, args.workers)
+            _run_parallel_stateless(
+                controller=controller,
+                tasks=tasks,
+                args=args,
+                reward_name_default=args.default_reward,
+                ckpt=par_ckpt,
+                workers=workers,
+            )
+            su = par_ckpt.get_session_token_usage()
             logger.info(
                 "Session token usage: input=%d  output=%d  reasoning=%d  total=%d",
                 su["input"], su["output"], su["reasoning"],
                 su["input"] + su["output"] + su["reasoning"],
             )
+        else:
+            # ---- Sequential path for stateful frameworks ----
+            # Auto-resume via last_completed_index.
+            start_index = 0
+            if args.framework in ("ssl_bcr", "trove", "react_mem", "react_library", "regal"):
+                if (
+                    ckpt_file
+                    and Path(ckpt_file).exists()
+                    and args.output_file
+                    and Path(args.output_file).exists()
+                ):
+                    if args.framework == "trove":
+                        start_index = _load_trove_checkpoint(controller, ckpt_file)
+                    elif args.framework == "react_mem":
+                        start_index = _load_react_mem_checkpoint(controller, ckpt_file)
+                    elif args.framework == "react_library":
+                        start_index = _load_react_library_checkpoint(controller, ckpt_file)
+                    elif args.framework == "regal":
+                        start_index = _load_regal_checkpoint(controller, ckpt_file)
+                    else:
+                        start_index = _load_checkpoint(controller, ckpt_file)
+                elif ckpt_file and Path(ckpt_file).exists():
+                    logger.warning(
+                        "Checkpoint found but output file %s is missing — ignoring checkpoint and starting fresh.",
+                        args.output_file,
+                    )
+
+            for i, task in enumerate(tasks):
+                if i < start_index:
+                    continue
+                task_input = task.get("input", task)
+                task_type = task.get("type", "symbolic")
+                reward_name = task.get("reward") or args.default_reward
+                logger.info("--- Task %d/%d ---", i + 1, len(tasks))
+
+                if reward_name:
+                    reward_fn = load_reward(reward_name)
+                    result = controller.solve_with_reward(
+                        task_input=task_input,
+                        task_type=task_type,
+                        budget=args.budget,
+                        reward_fn=reward_fn,
+                        entry=task.get("entry", {}),
+                        max_reward_iters=args.max_reward_iters,
+                    )
+                else:
+                    result = controller.solve(task_input, task_type, budget=args.budget)
+                _print_result(result, i)
+                if args.output_file:
+                    _append_task_output(result, i, args.output_file)
+                if ckpt_file:
+                    if args.framework == "ssl_bcr":
+                        _save_checkpoint(controller, i, ckpt_file)
+                    elif args.framework == "trove":
+                        _save_trove_checkpoint(controller, i, ckpt_file)
+                    elif args.framework == "react_mem":
+                        _save_react_mem_checkpoint(controller, i, ckpt_file)
+                    elif args.framework == "react_library":
+                        _save_react_library_checkpoint(controller, i, ckpt_file)
+                    elif args.framework == "regal":
+                        _save_regal_checkpoint(controller, i, ckpt_file)
+                # Library/memory size logging
+                if args.framework == "trove":
+                    lib_size = len(controller.toolbox)
+                elif args.framework == "regal":
+                    lib_size = len(controller.codebank)
+                elif args.framework == "react_mem":
+                    lib_size = len(controller.memory)
+                else:
+                    lib_size = len(controller.library)
+                logger.info("Library size after task %d: %d functions", i + 1, lib_size)
+            if args.stats:
+                _print_library_stats(controller)
+            # Session token usage for sequential path
+            _su_src = None
+            if hasattr(controller, "get_session_token_usage"):
+                _su_src = controller
+            else:
+                _inner = getattr(controller, "client", None) or getattr(controller, "llm", None)
+                if _inner and hasattr(_inner, "get_session_token_usage"):
+                    _su_src = _inner
+            if _su_src:
+                su = _su_src.get_session_token_usage()
+                logger.info(
+                    "Session token usage: input=%d  output=%d  reasoning=%d  total=%d",
+                    su["input"], su["output"], su["reasoning"],
+                    su["input"] + su["output"] + su["reasoning"],
+                )
     elif args.task is not None:
         if args.task >= len(TASKS):
             print(f"Task index {args.task} out of range (0–{len(TASKS)-1}).", file=sys.stderr)
