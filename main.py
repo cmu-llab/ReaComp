@@ -784,20 +784,13 @@ def main() -> None:
              "(default: 3)",
     )
     parser.add_argument(
-        "--dfs-k-correct",
+        "--dfs-k",
         type=int,
-        default=3,
+        default=32,
         metavar="K",
-        help="[direct_feedback_simplify] Correctness-phase budget: max attempts before "
-             "switching to simplification mode. (default: 3)",
-    )
-    parser.add_argument(
-        "--dfs-k-simplify",
-        type=int,
-        default=3,
-        metavar="K",
-        help="[direct_feedback_simplify] Simplification-phase budget: max attempts after "
-             "a correct solution is found. (default: 3)",
+        help="[direct_feedback_simplify] Total attempt budget shared across both phases. "
+             "All attempts go to correctness first; once correct, the remainder go to "
+             "simplification. (default: 32)",
     )
     # ---- Parallelism (stateless frameworks only) ----
     parser.add_argument(
@@ -1018,14 +1011,10 @@ def main() -> None:
             model=model,
             base_url=base_url,
             debug_dir=args.debug_dir,
-            k_correct=args.dfs_k_correct,
-            k_simplify=args.dfs_k_simplify,
+            k=args.dfs_k,
             max_tokens=args.max_tokens or 4096,
         )
-        logger.info(
-            "Framework: direct_feedback_simplify (k_correct=%d, k_simplify=%d)",
-            args.dfs_k_correct, args.dfs_k_simplify,
-        )
+        logger.info("Framework: direct_feedback_simplify (k=%d)", args.dfs_k)
     elif args.framework == "trove":
         controller = TroVEController(
             api_key=api_key,

@@ -288,7 +288,7 @@ class DirectFeedbackController:
         max_reward_iters: int = 3,
     ) -> Dict:
         """
-        Up to min(k, max_reward_iters) sequential single-turn attempts.
+        Up to k sequential single-turn attempts (max_reward_iters is ignored).
 
         Attempt 1: raw task prompt.
         Attempt 2+: history of prior answers + verifier feedback injected into prompt.
@@ -296,7 +296,7 @@ class DirectFeedbackController:
         """
         self.reset_task_log()
         task_text = self._task_text(task_input)
-        max_attempts = min(self.k, max_reward_iters)
+        max_attempts = self.k
 
         best_reward = 0.0
         best_answer = None
@@ -395,12 +395,11 @@ class DirectFeedbackController:
         }
 
     def projected_budget(self, max_reward_iters: int = 3) -> Dict:
-        max_attempts = min(self.k, max_reward_iters)
-        total = max_attempts * self.max_tokens
+        total = self.k * self.max_tokens
         return {
-            "k": max_attempts,
+            "k": self.k,
             "max_tokens_per_attempt": self.max_tokens,
             "projected_max_tokens": total,
-            "formula": f"{max_attempts} attempts × {self.max_tokens} tokens = {total}",
+            "formula": f"{self.k} attempts × {self.max_tokens} tokens = {total}",
         }
 

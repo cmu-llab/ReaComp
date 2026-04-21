@@ -1,24 +1,34 @@
 """
 Direct-feedback + simplification baseline.
 
-Two-phase variant of the direct_feedback baseline:
+Two-phase variant of the direct_feedback baseline with a single shared attempt
+budget:
 
-  Phase 1 — Correctness: identical to DirectFeedbackController; runs until
-    reward == 1.0 or the correctness budget (k_correct attempts) is exhausted.
+  Phase 1 — Correctness: identical to DirectFeedbackController.  Consumes
+    attempts one by one until reward == 1.0 or the full budget is exhausted.
+    Stops as soon as a correct solution is found — all remaining attempts are
+    preserved for Phase 2.
 
-  Phase 2 — Simplification: once a perfect solution is found, uses the
-    remaining budget (up to k_simplify more attempts) to search for a correct
-    solution with lower cascade complexity.  Each attempt receives the current
-    best correct answer plus a simplification-focused prompt injection.  If a
-    simpler correct answer is found it becomes the new best.  At the end the
-    lowest-complexity correct answer is returned regardless of when it was found.
+  Phase 2 — Simplification: only entered if Phase 1 found a correct solution.
+    Uses all remaining attempts (budget − attempts_used_in_phase_1) to search
+    for a correct solution with lower cascade complexity.  Each attempt receives
+    the current best correct answer plus a simplification-focused prompt.  If a
+    simpler correct answer is found it becomes the new best; otherwise the
+    current best is retained.  At the end the lowest-complexity correct answer
+    found across both phases is returned.
 
-  If Phase 1 never finds a correct solution the result is identical to plain
-  DirectFeedbackController (best partial answer, best_reward < 1.0).
+  If Phase 1 exhausts the budget without finding a correct solution, Phase 2 is
+  skipped and the best partial answer is returned (same as direct_feedback).
 
-Flags:
-  --dfs-k-correct K   correctness-phase budget (default 3)
-  --dfs-k-simplify K  simplification-phase budget (default 3)
+Budget semantics
+----------------
+The total budget is controlled by a single parameter: `max_reward_iters` as
+passed by the harness (--max-reward-iters flag, default 3).  There are no
+separate per-phase caps — correctness gets the full budget first, and
+simplification gets whatever is left.
+
+Flags (via main.py):
+  --max-reward-iters N   total attempt budget (default 3; use 32 for serious runs)
 """
 
 import json
@@ -86,12 +96,6 @@ def _inject_history(task_text: str, history: List[Dict]) -> str:
 
 
 def _build_simplify_block(best_answer: str, best_complexity: Optional[int], simplify_history: List[Dict]) -> str:
-    """
-    Build the simplification-mode context block.
-
-    Each simplify_history entry: {"attempt": int, "answer_text": str,
-                                   "complexity": int, "feedback": str}
-    """
     lines = [
         "### Simplification mode",
         "",
@@ -130,38 +134,19 @@ def _inject_simplify(task_text: str, best_answer: str, best_complexity: Optional
 
 class DirectFeedbackSimplifyController(DirectFeedbackController):
     """
-    Two-phase direct-feedback controller.
+    Two-phase direct-feedback controller with a single shared attempt budget.
+
+    All attempts go to Phase 1 (correctness) first.  The moment a correct
+    solution is found, any remaining attempts are used for Phase 2
+    (simplification).  If the budget is exhausted during Phase 1 without
+    finding a correct solution, Phase 2 is skipped.
+
+    The total budget is `max_reward_iters` passed by the harness — there are
+    no separate per-phase caps.  Pass a large --max-reward-iters (e.g. 32) to
+    give the model a meaningful simplification budget.
 
     Inherits all LLM machinery from DirectFeedbackController.
-
-    Parameters
-    ----------
-    k_correct : int
-        Max attempts in Phase 1 (correctness).  (default: 3)
-    k_simplify : int
-        Max attempts in Phase 2 (simplification).  (default: 3)
     """
-
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        model: str = "claude-sonnet-4-6",
-        base_url: Optional[str] = None,
-        debug_dir: Optional[str] = None,
-        k_correct: int = 3,
-        k_simplify: int = 3,
-        max_tokens: int = 4096,
-    ):
-        super().__init__(
-            api_key=api_key,
-            model=model,
-            base_url=base_url,
-            debug_dir=debug_dir,
-            k=k_correct + k_simplify,
-            max_tokens=max_tokens,
-        )
-        self.k_correct = k_correct
-        self.k_simplify = k_simplify
 
     def solve_with_reward(
         self,
@@ -170,10 +155,11 @@ class DirectFeedbackSimplifyController(DirectFeedbackController):
         budget: float,
         reward_fn: Callable,
         entry: Dict,
-        max_reward_iters: int = 6,
+        max_reward_iters: int = 3,
     ) -> Dict:
         self.reset_task_log()
         task_text = self._task_text(task_input)
+        total_budget = self.k
 
         best_reward = 0.0
         best_answer: Optional[str] = None
@@ -183,9 +169,9 @@ class DirectFeedbackSimplifyController(DirectFeedbackController):
         iter_idx = 0
 
         # ── Phase 1: Correctness ──────────────────────────────────────────
-        correct_attempts = min(self.k_correct, max_reward_iters)
-        for i in range(correct_attempts):
-            logger.info("dfs correctness attempt %d/%d", i + 1, correct_attempts)
+        # Use the full budget; exit early the moment reward == 1.0.
+        for i in range(total_budget):
+            logger.info("dfs correctness attempt %d/%d", i + 1, total_budget)
             prompt = task_text if i == 0 else _inject_history(task_text, history)
             raw = self._call_llm(prompt, tag=f"dfs_correct{i}")
             exec_ok = bool(raw)
@@ -219,19 +205,21 @@ class DirectFeedbackSimplifyController(DirectFeedbackController):
             logger.info("dfs correctness %d: reward=%.3f", i + 1, reward_value)
 
             if reward_value >= 1.0:
-                logger.info("dfs: perfect reward on correctness attempt %d", i + 1)
+                logger.info(
+                    "dfs: correct solution found on attempt %d, %d attempts remaining for simplification",
+                    i + 1, total_budget - iter_idx,
+                )
                 break
 
-        # ── Phase 2: Simplification (only if a correct solution exists) ───
+        # ── Phase 2: Simplification (only if Phase 1 found a correct solution) ──
         if best_reward >= 1.0:
-            remaining = max_reward_iters - iter_idx
-            simplify_attempts = min(self.k_simplify, remaining)
             simplify_history: List[Dict] = []
+            simplify_budget = total_budget - iter_idx
 
-            for j in range(simplify_attempts):
+            for j in range(simplify_budget):
                 logger.info(
-                    "dfs simplify attempt %d/%d  (current best complexity=%s)",
-                    j + 1, simplify_attempts, best_complexity,
+                    "dfs simplify attempt %d/%d  (best complexity=%s)",
+                    j + 1, simplify_budget, best_complexity,
                 )
                 prompt = _inject_simplify(task_text, best_answer, best_complexity, simplify_history)
                 raw = self._call_llm(prompt, tag=f"dfs_simplify{j}")
@@ -304,8 +292,7 @@ class DirectFeedbackSimplifyController(DirectFeedbackController):
             "final_output": {
                 "answer": str(best_answer) if best_answer is not None else "",
                 "explanation": (
-                    f"DirectFeedbackSimplify (k_correct={self.k_correct}, "
-                    f"k_simplify={self.k_simplify}, max_tokens={self.max_tokens})"
+                    f"DirectFeedbackSimplify (budget={total_budget}, max_tokens={self.max_tokens})"
                 ),
                 "confidence": "high" if solved else "low",
                 "execution_result": best_answer,
@@ -313,22 +300,18 @@ class DirectFeedbackSimplifyController(DirectFeedbackController):
             "agent_messages": self.get_task_log(),
             "token_usage": self.get_task_token_usage(),
             "cost_summary": {
-                "k_correct": self.k_correct,
-                "k_simplify": self.k_simplify,
+                "total_budget": total_budget,
                 "actual_attempts": len(reward_history),
                 "max_tokens_per_attempt": self.max_tokens,
             },
             "library_snapshot": [],
         }
 
-    def projected_budget(self, max_reward_iters: int = 6) -> Dict:
-        correct = min(self.k_correct, max_reward_iters)
-        simplify = min(self.k_simplify, max(0, max_reward_iters - correct))
-        total = (correct + simplify) * self.max_tokens
+    def projected_budget(self, max_reward_iters: int = 3) -> Dict:
         return {
-            "k_correct": correct,
-            "k_simplify": simplify,
+            "total_budget": self.k,
             "max_tokens_per_attempt": self.max_tokens,
-            "projected_max_tokens": total,
-            "formula": f"({correct}+{simplify}) attempts × {self.max_tokens} tokens = {total}",
+            "projected_max_tokens": self.k * self.max_tokens,
+            "formula": f"{self.k} attempts × {self.max_tokens} tokens = {self.k * self.max_tokens}",
+            "note": "All attempts go to correctness first; remaining go to simplification.",
         }
