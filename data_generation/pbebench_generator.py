@@ -74,7 +74,7 @@ def load_pbebench_lite(path: str="changelinglab/PBEBench-Lite", first_k: int=-1)
     sel_data = []
     for rec in ds:
         rec = dict(rec)
-        rec['prompt'] = _build_prompt(rec)
+        # rec['prompt'] = _build_prompt(rec)
         rec['reward'] = "pbebench"
         sel_data.append(rec)
 
@@ -86,5 +86,5 @@ def load_pbebench_lite(path: str="changelinglab/PBEBench-Lite", first_k: int=-1)
 if __name__ == "__main__":
     # data = load_pbebench_lite(first_k=50)
     data = load_pbebench_lite(first_k=-1)
-    write_path = "data/pbebench/lite_tasks_full.jsonl"
+    write_path = "data/pbebench/lite_tasks_full_og.jsonl"
     write_jsonl(data, write_path)

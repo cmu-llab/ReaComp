@@ -29,7 +29,7 @@ export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 export WORKERS="${WORKERS:-16}"
 mkdir -p outputs
 
-TASKS_FILE="${1:-data/pbebench/lite_tasks_full.jsonl}"
+TASKS_FILE="${1:-data/pbebench/lite_tasks_full_og.jsonl}"
 STEM="$(basename "${TASKS_FILE%.jsonl}")"
 OUT_FILE="outputs/${STEM}_direct_feedback.jsonl"
 
