@@ -135,6 +135,30 @@ def summarise(records: list[dict], label: str) -> None:
             print(f"    Reasoning : {total_reas:>12,}  (avg {total_reas/n_with_tokens:>8,.1f}/task)")
         print(f"    Total     : {total_toks:>12,}  (avg {total_toks/n_with_tokens:>8,.1f}/task)")
 
+    # PBEBench complexity (present only in pbebench reward dicts)
+    complexities = []
+    for rec in records:
+        rh = rec.get("reward_history") or []
+        for h in reversed(rh):
+            c = h.get("complexity")
+            if c is not None:
+                complexities.append(int(c))
+                break
+    if complexities:
+        nc = len(complexities)
+        mean_c = sum(complexities) / nc
+        buckets = [(0, 4), (5, 8), (9, 12), (13, 20), (21, None)]
+        print(f"\n  PBEBench cascade complexity  ({nc}/{n} tasks)")
+        print(f"    Mean complexity : {mean_c:.1f}")
+        print(f"    Distribution")
+        for lo, hi in buckets:
+            cnt = sum(1 for c in complexities if lo <= c <= (hi if hi is not None else 10**9))
+            if not cnt:
+                continue
+            label_c = f"{lo}+" if hi is None else f"{lo}-{hi}"
+            bar = "#" * min(cnt, 40)
+            print(f"      {label_c:>6} : {cnt:3d}  {bar}")
+
     # unsolved
     unsolved = [(r.get("task_index"), best_reward(r), len(r.get("reward_history") or []))
                 for r in records if best_reward(r) < 1.0]

@@ -114,6 +114,17 @@ def _validate_programs(programs: List[Tuple[str, str]]) -> List[str]:
     return violations
 
 
+# ── complexity ────────────────────────────────────────────────────────────────
+
+def cascade_complexity(programs: List[Tuple[str, str]]) -> int:
+    """
+    Sum of all predicate and transform string lengths in the cascade.
+    E.g. [("ab","ac"),("e","fg"),("h","")] → 2+2+1+2+1+0 = 8.
+    Not normalised — longer cascades with trivial programs are penalised naturally.
+    """
+    return sum(len(pred) + len(transform) for pred, transform in programs)
+
+
 # ── main reward function ───────────────────────────────────────────────────────
 
 def reward(result: Any, execution_ok: bool, entry: Dict) -> Dict:
@@ -145,10 +156,13 @@ def reward(result: Any, execution_ok: bool, entry: Dict) -> Dict:
             ),
         }
 
+    complexity = cascade_complexity(programs)
+
     violations = _validate_programs(programs)
     if violations:
         return {
             "value": 0.0,
+            "complexity": complexity,
             "message": (
                 "Program sequence violates task constraints — "
                 + "; ".join(violations)
@@ -195,7 +209,7 @@ def reward(result: Any, execution_ok: bool, entry: Dict) -> Dict:
     prog_strs = [f"replace('{p}', '{t}')" for p, t in programs]
 
     if score >= 1.0:
-        return {"value": 1.0}
+        return {"value": 1.0, "complexity": complexity}
 
     msg = (
         f"Score={score:.3f}: {correct}/{len(inputs)} inputs mapped correctly. "
@@ -204,4 +218,4 @@ def reward(result: Any, execution_ok: bool, entry: Dict) -> Dict:
     )
     if first_fail_trace:
         msg += f"\nStep-by-step trace for first failing input:\n{first_fail_trace}"
-    return {"value": score, "message": msg}
+    return {"value": score, "complexity": complexity, "message": msg}
