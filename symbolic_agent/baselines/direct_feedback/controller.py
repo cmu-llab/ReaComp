@@ -63,23 +63,27 @@ def _run_code(code: str) -> tuple:
         sys.stdout = old_stdout
 
 
+def _strip_backticks(text: str) -> str:
+    text = re.sub(r"```[a-zA-Z]*\n?", "", text)
+    text = re.sub(r"```", "", text)
+    return text.strip()
+
+
 def _build_history_block(history: List[Dict]) -> str:
     """
-    Format prior attempts into a readable history block.
+    Format prior attempts as markdown.
 
-    Each entry in history is:
-      {"attempt": int, "solution": str, "feedback": str, "reward": float}
+    Each entry: {"attempt": int, "reasoning": str, "answer_text": str, "feedback": str, "reward": float}
     """
-    lines = ["--- Previous attempts ---"]
+    lines = ["## Previous attempts"]
     for h in history:
-        lines.append(f"\nAttempt {h['attempt']}:")
-        lines.append(f"  Solution: {h['solution']}")
-        lines.append(f"  Verifier feedback: {h['feedback']}")
-        lines.append(f"  Reward: {h['reward']:.3f}")
-    lines.append("--- End of history ---")
-    lines.append(
-        "\nUsing the feedback above, produce a corrected solution."
-    )
+        lines.append(f"\n### Attempt {h['attempt']} (reward: {h['reward']:.3f})")
+        if h.get("reasoning"):
+            lines.append(f"**Reasoning:** {_strip_backticks(h['reasoning'])}")
+        if h.get("answer_text"):
+            lines.append(f"**Answer:** {_strip_backticks(h['answer_text'])}")
+        lines.append(f"**Verifier feedback:** {_strip_backticks(h['feedback'])}")
+    lines.append("\nUsing the feedback above, produce a corrected solution.")
     return "\n".join(lines)
 
 
@@ -317,13 +321,10 @@ class DirectFeedbackController:
         return str(task_input)
 
     def _build_first_prompt(self, task_text: str) -> str:
-        return f"Solve this task:\n\n{task_text}"
+        return task_text
 
     def _build_retry_prompt(self, task_text: str, history: List[Dict]) -> str:
-        return (
-            f"Solve this task:\n\n{task_text}\n\n"
-            + _build_history_block(history)  # module-level helper
-        )
+        return f"{task_text}\n\n" + _build_history_block(history)
 
     # ------------------------------------------------------------------
     # Core solve logic
@@ -334,21 +335,23 @@ class DirectFeedbackController:
         result = self._call_llm(prompt, tag=f"df_attempt{attempt_idx}")
         code = result.get("code", "") or ""
         direct_answer = result.get("answer") or None
+        reasoning = result.get("reasoning", "") or ""
 
         if code:
             ok, exec_result, err = _run_code(code)
             if ok and exec_result is not None:
-                return {"answer": exec_result, "code": code, "exec_ok": True, "error": ""}
+                return {"answer": exec_result, "code": code, "exec_ok": True, "error": "", "reasoning": reasoning}
             elif ok and direct_answer is not None:
-                return {"answer": direct_answer, "code": code, "exec_ok": True, "error": ""}
+                return {"answer": direct_answer, "code": code, "exec_ok": True, "error": "", "reasoning": reasoning}
             else:
-                return {"answer": direct_answer, "code": code, "exec_ok": False, "error": err}
+                return {"answer": direct_answer, "code": code, "exec_ok": False, "error": err, "reasoning": reasoning}
 
         return {
             "answer": direct_answer,
             "code": "",
             "exec_ok": direct_answer is not None,
             "error": "",
+            "reasoning": reasoning,
         }
 
     def solve_with_reward(
@@ -398,12 +401,12 @@ class DirectFeedbackController:
 
             solution_summary = str(att["answer"])[:300] if att["answer"] is not None else ""
             if att["error"]:
-                # Include execution error in feedback so retry prompt is informative
                 feedback_msg = (att["error"][:300] + "\n" + feedback_msg).strip()
 
             history.append({
                 "attempt": i + 1,
-                "solution": solution_summary,
+                "reasoning": (att.get("reasoning") or "")[:300],
+                "answer_text": solution_summary,
                 "feedback": feedback_msg or "No feedback available.",
                 "reward": reward_value,
             })
