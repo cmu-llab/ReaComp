@@ -29,7 +29,7 @@ from symbolic_agent import Controller
 from symbolic_agent.models import Function
 from symbolic_agent.baselines.trove import TroVEController
 from symbolic_agent.baselines.regal import ReGALController
-from symbolic_agent.baselines.direct_feedback import DirectFeedbackController
+from symbolic_agent.baselines.direct_feedback import DirectFeedbackController, DirectFeedbackSimplifyController
 
 # --------------------------------------------------------------------------
 # Logging
@@ -599,7 +599,7 @@ def main() -> None:
     parser.add_argument(
         "--framework",
         default="ssl_bcr",
-        choices=["ssl_bcr", "trove", "regal", "react_mem", "react_library", "best_of_k", "direct_feedback"],
+        choices=["ssl_bcr", "trove", "regal", "react_mem", "react_library", "best_of_k", "direct_feedback", "direct_feedback_simplify"],
         help="Solution framework to use. 'ssl_bcr': symbolic library agent (default). "
              "'trove': TroVE online function induction baseline. "
              "'regal': ReGAL offline refactoring baseline. "
@@ -607,6 +607,7 @@ def main() -> None:
              "'react_library': ReAct agent with a shared growing Python function library. "
              "'best_of_k': K independent sampling attempts, best-of-K by reward. "
              "'direct_feedback': sequential single-turn calls with verifier feedback history. "
+             "'direct_feedback_simplify': direct_feedback + simplification phase to minimise cascade complexity. "
              "(default: ssl_bcr)",
     )
     parser.add_argument("--model", default="claude-sonnet-4-5", help=(
@@ -780,6 +781,22 @@ def main() -> None:
         help="[direct_feedback] Maximum sequential attempts per task. "
              "Attempt 1 is the raw task; attempt 2+ include verifier feedback history. "
              "(default: 3)",
+    )
+    parser.add_argument(
+        "--dfs-k-correct",
+        type=int,
+        default=3,
+        metavar="K",
+        help="[direct_feedback_simplify] Correctness-phase budget: max attempts before "
+             "switching to simplification mode. (default: 3)",
+    )
+    parser.add_argument(
+        "--dfs-k-simplify",
+        type=int,
+        default=3,
+        metavar="K",
+        help="[direct_feedback_simplify] Simplification-phase budget: max attempts after "
+             "a correct solution is found. (default: 3)",
     )
     # ---- Parallelism (stateless frameworks only) ----
     parser.add_argument(
@@ -994,6 +1011,20 @@ def main() -> None:
             max_tokens=args.max_tokens or 4096,
         )
         logger.info("Framework: direct_feedback (k=%d)", args.df_k)
+    elif args.framework == "direct_feedback_simplify":
+        controller = DirectFeedbackSimplifyController(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            debug_dir=args.debug_dir,
+            k_correct=args.dfs_k_correct,
+            k_simplify=args.dfs_k_simplify,
+            max_tokens=args.max_tokens or 4096,
+        )
+        logger.info(
+            "Framework: direct_feedback_simplify (k_correct=%d, k_simplify=%d)",
+            args.dfs_k_correct, args.dfs_k_simplify,
+        )
     elif args.framework == "trove":
         controller = TroVEController(
             api_key=api_key,
@@ -1075,7 +1106,7 @@ def main() -> None:
 
         # ---- Stateless parallel path (direct_feedback, best_of_k) ----
         # Uses completed_ids checkpointing so workers can finish out of order.
-        _STATELESS_FRAMEWORKS = ("direct_feedback", "best_of_k")
+        _STATELESS_FRAMEWORKS = ("direct_feedback", "direct_feedback_simplify", "best_of_k")
         if args.framework in _STATELESS_FRAMEWORKS:
             par_ckpt = _ParallelCheckpoint.load(args.output_file, ckpt_file)
             workers = max(1, args.workers)
