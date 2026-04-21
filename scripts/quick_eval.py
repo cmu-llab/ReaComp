@@ -8,9 +8,45 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
+
+_REPLACE_RE = re.compile(
+    r"""replace\(\s*["']([^"']*)["']\s*,\s*["']([^"']*)["']\s*\)""",
+    re.IGNORECASE,
+)
+
+
+def _parse_complexity(answer) -> int | None:
+    """
+    Parse the agent's answer into replace() programs and return cascade complexity
+    (sum of all predicate + transform string lengths), or None if no programs found.
+    """
+    if answer is None:
+        return None
+    if isinstance(answer, list):
+        if len(answer) == 1 and isinstance(answer[0], list):
+            answer = answer[0]
+        raw = "\n".join(str(x) for x in answer)
+    elif isinstance(answer, str):
+        raw = answer.strip()
+        raw = re.sub(r"```[a-zA-Z]*\n?", "", raw).strip("` \n")
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                raw = "\n".join(str(x) for x in parsed)
+            else:
+                raw = str(parsed)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    else:
+        return None
+    programs = _REPLACE_RE.findall(raw)
+    if not programs:
+        return None
+    return sum(len(pred) + len(transform) for pred, transform in programs)
 
 
 def load(path: str) -> list[dict]:
@@ -135,15 +171,12 @@ def summarise(records: list[dict], label: str) -> None:
             print(f"    Reasoning : {total_reas:>12,}  (avg {total_reas/n_with_tokens:>8,.1f}/task)")
         print(f"    Total     : {total_toks:>12,}  (avg {total_toks/n_with_tokens:>8,.1f}/task)")
 
-    # PBEBench complexity (present only in pbebench reward dicts)
+    # PBEBench complexity — computed from the best answer (replace() cascade)
     complexities = []
     for rec in records:
-        rh = rec.get("reward_history") or []
-        for h in reversed(rh):
-            c = h.get("complexity")
-            if c is not None:
-                complexities.append(int(c))
-                break
+        c = _parse_complexity(rec.get("answer"))
+        if c is not None:
+            complexities.append(c)
     if complexities:
         nc = len(complexities)
         mean_c = sum(complexities) / nc

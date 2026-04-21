@@ -156,13 +156,10 @@ def reward(result: Any, execution_ok: bool, entry: Dict) -> Dict:
             ),
         }
 
-    complexity = cascade_complexity(programs)
-
     violations = _validate_programs(programs)
     if violations:
         return {
             "value": 0.0,
-            "complexity": complexity,
             "message": (
                 "Program sequence violates task constraints — "
                 + "; ".join(violations)
@@ -209,7 +206,7 @@ def reward(result: Any, execution_ok: bool, entry: Dict) -> Dict:
     prog_strs = [f"replace('{p}', '{t}')" for p, t in programs]
 
     if score >= 1.0:
-        return {"value": 1.0, "complexity": complexity}
+        return {"value": 1.0}
 
     msg = (
         f"Score={score:.3f}: {correct}/{len(inputs)} inputs mapped correctly. "
@@ -218,4 +215,4 @@ def reward(result: Any, execution_ok: bool, entry: Dict) -> Dict:
     )
     if first_fail_trace:
         msg += f"\nStep-by-step trace for first failing input:\n{first_fail_trace}"
-    return {"value": score, "complexity": complexity, "message": msg}
+    return {"value": score, "message": msg}

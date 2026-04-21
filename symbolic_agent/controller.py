@@ -340,16 +340,13 @@ class Controller:
                 state["best_reward"] = reward_value
                 best_raw_result = raw_result
 
-            entry_dict: dict = {
+            state["reward_history"].append({
                 "iteration": reward_iter,
                 "reward": reward_value,
                 "message": reward_result.get("message", ""),
                 "blame": self._determine_blame(state, execution_ok, reward_value),
                 "solution_summary": (solution.get("reasoning", "")[:200] if solution else ""),
-            }
-            if "complexity" in reward_result:
-                entry_dict["complexity"] = reward_result["complexity"]
-            state["reward_history"].append(entry_dict)
+            })
             final_reward = reward_result
 
             logger.info("Reward iteration %d: value=%.3f  %s", reward_iter + 1, reward_value, reward_result.get("message", ""))
@@ -381,16 +378,13 @@ class Controller:
                 old_best = state.get("best_reward", 0.0)
                 improved = patch_reward_value > old_best
 
-                patch_entry: dict = {
+                state["reward_history"].append({
                     "iteration": max_reward_iters,  # sentinel beyond last symbolic iter
                     "reward": patch_reward_value,
                     "message": patch_reward_result.get("message", ""),
                     "blame": "patch" if improved else "patch_failed",
                     "solution_summary": patch_result["reasoning"][:200],
-                }
-                if "complexity" in patch_reward_result:
-                    patch_entry["complexity"] = patch_reward_result["complexity"]
-                state["reward_history"].append(patch_entry)
+                })
                 final_reward = patch_reward_result
 
                 if improved:

@@ -325,16 +325,13 @@ class DirectFeedbackController:
                 "feedback": feedback_msg or "No feedback available.",
                 "reward": reward_value,
             })
-            rh_entry: dict = {
+            reward_history.append({
                 "iteration": i,
                 "reward": reward_value,
                 "message": feedback_msg,
                 "blame": "partial" if reward_value < 1.0 else "none",
                 "solution_summary": answer_summary,
-            }
-            if "complexity" in reward_result:
-                rh_entry["complexity"] = reward_result["complexity"]
-            reward_history.append(rh_entry)
+            })
 
             logger.info(
                 "direct_feedback attempt %d: reward=%.3f  %s",
