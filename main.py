@@ -29,7 +29,8 @@ from symbolic_agent import Controller
 from symbolic_agent.models import Function
 from symbolic_agent.baselines.trove import TroVEController
 from symbolic_agent.baselines.regal import ReGALController
-from symbolic_agent.baselines.direct_feedback import DirectFeedbackController, DirectFeedbackSimplifyController
+from symbolic_agent.baselines.direct_feedback import DirectFeedbackController
+from symbolic_agent.baselines.direct_feedback_simplify import DirectFeedbackSimplifyController
 
 # --------------------------------------------------------------------------
 # Logging
