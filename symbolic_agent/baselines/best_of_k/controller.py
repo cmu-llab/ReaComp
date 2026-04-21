@@ -253,13 +253,16 @@ class BestOfKController:
                 best_reward = reward_value
                 best_answer = raw
 
-            reward_history.append({
+            rh_entry: dict = {
                 "iteration": i,
                 "reward": reward_value,
                 "message": reward_result.get("message", ""),
                 "blame": "partial" if reward_value < 1.0 else "none",
                 "solution_summary": raw[:200] if raw else "",
-            })
+            }
+            if "complexity" in reward_result:
+                rh_entry["complexity"] = reward_result["complexity"]
+            reward_history.append(rh_entry)
             logger.info("best_of_k attempt %d: reward=%.3f", i + 1, reward_value)
 
             if reward_value >= 1.0:

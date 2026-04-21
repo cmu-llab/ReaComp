@@ -458,13 +458,16 @@ class ReActLibraryController:
                 best_answer = answer
                 best_code = code
 
-            reward_history.append({
+            rh_entry: dict = {
                 "iteration": iteration,
                 "reward": reward_value,
                 "message": reward_message,
                 "blame": "react_library",
                 "solution_summary": str(answer)[:200] if answer is not None else "",
-            })
+            }
+            if "complexity" in reward_result:
+                rh_entry["complexity"] = reward_result["complexity"]
+            reward_history.append(rh_entry)
             logger.info(
                 "react_library iter %d: reward=%.3f  %s",
                 iteration + 1, reward_value, reward_message[:80],

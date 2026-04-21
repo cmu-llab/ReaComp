@@ -196,14 +196,15 @@ class TroVEController:
                 logger.warning("Reward function error: %s", exc)
                 reward, message = 0.0, str(exc)
 
-        reward_history = [
-            {
-                "iteration": 0,
-                "reward": reward,
-                "blame": "trove",
-                "message": str(message)[:120],
-            }
-        ]
+        trove_entry: dict = {
+            "iteration": 0,
+            "reward": reward,
+            "blame": "trove",
+            "message": str(message)[:120],
+        }
+        if "complexity" in reward_dict:
+            trove_entry["complexity"] = reward_dict["complexity"]
+        reward_history = [trove_entry]
         result["reward_history"] = reward_history
         result["best_reward"] = reward
         result["final_reward"] = reward
