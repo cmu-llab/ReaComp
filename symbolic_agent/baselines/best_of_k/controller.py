@@ -1,68 +1,24 @@
 """
-Best-of-K sampling baseline.
+Best-of-K sampling baseline — direct-feedback style.
 
-Makes K independent solve attempts per task with no shared library state.
-Each attempt is a single-shot code-generation call.
-The best result by reward is returned.
+Makes K independent single-shot attempts per task.  Each attempt sends the
+raw task prompt verbatim with no system message and no JSON wrapping,
+identical to the direct_feedback baseline.  The reward function receives the
+raw model output and parses it (fenced block, plain list, etc.) itself.
 
-This models the "sampling budget" baseline: given a fixed token budget,
-use it for K independent attempts rather than K iterations of a single
-agent.  K × max_tokens = total token budget.
+The moment any attempt achieves reward == 1.0 the remaining attempts for that
+task are skipped — the pool is exhausted early.
 
 Use --bok-k to control K; --max-tokens controls the per-attempt token budget.
 """
 
-import io
 import json
 import logging
 import os
-import re
-import sys
 import time
-import traceback
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
-
-_JSON_INSTRUCTION = (
-    "\n\nRespond with a single valid JSON object and nothing else. "
-    "No markdown fences, no prose before or after the JSON."
-)
-
-_SYSTEM = """\
-You are a Python programming assistant. Solve the given task by writing a Python function.
-
-Respond with a JSON object:
-{
-  "reasoning": "Brief explanation of your approach",
-  "code": "def solve(...):\\n    ...\\n\\nresult = solve(...)\\nprint(result)",
-  "answer": "The direct answer if it can be computed without code (optional)"
-}
-
-Rules:
-- Write a Python function that solves the task.
-- Call it at the end and print the result.
-- If the task is a question requiring no code (e.g. a math puzzle you can answer directly),
-  set "answer" to the exact answer and "code" to "".
-- The answer must be the exact value requested, not a sentence.
-"""
-
-
-def _run_code(code: str) -> tuple:
-    """Execute code, return (ok, result, error)."""
-    namespace: dict = {}
-    old_stdout = sys.stdout
-    sys.stdout = buf = io.StringIO()
-    try:
-        exec(compile(code, "<best_of_k>", "exec"), namespace)
-        printed = buf.getvalue().strip()
-        result = printed if printed else None
-        return True, result, ""
-    except Exception:
-        tb = traceback.format_exc()
-        return False, None, tb
-    finally:
-        sys.stdout = old_stdout
 
 
 class BestOfKController:
@@ -79,16 +35,15 @@ class BestOfKController:
     k : int
         Number of independent attempts per task.
     max_tokens : int
-        Max tokens per attempt (controls CoT length).
+        Max tokens per attempt.
     temperature : float
-        Sampling temperature. Use > 0 to get diversity across K samples.
-        Default: 0.8 — high enough for diverse solutions, low enough to stay coherent.
+        Sampling temperature (>0 for diversity across K samples).
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-sonnet-4-5",
+        model: str = "claude-sonnet-4-6",
         base_url: Optional[str] = None,
         debug_dir: Optional[str] = None,
         k: int = 5,
@@ -114,7 +69,7 @@ class BestOfKController:
 
         if base_url:
             import openai
-            self._backend = "openai"
+            self._backend = "gpt_oss" if "gpt-oss" in model else "openai"
             self._client = openai.OpenAI(base_url=base_url, api_key=api_key or "EMPTY")
         else:
             import anthropic
@@ -122,101 +77,113 @@ class BestOfKController:
             self._client = anthropic.Anthropic(api_key=api_key)
 
     # ------------------------------------------------------------------
-    # LLM call
+    # LLM call — single-turn, no system prompt, returns raw text
     # ------------------------------------------------------------------
 
-    def _call_llm(self, user_message: str, tag: str = "") -> Dict:
-        system = _SYSTEM + _JSON_INSTRUCTION
-        messages = [{"role": "user", "content": user_message}]
+    def _call_llm(self, user_message: str, tag: str = "") -> str:
+        """
+        Single-turn call.  No system prompt — task prompt sent as-is.
+        For gpt-oss-120b: only a user message (no developer message) to avoid
+        Harmony segment splitting ("Expected 2 output messages, got N").
+        Returns raw response text (empty string on failure).
+        """
+        kwargs: Dict = {"max_tokens": self.max_tokens}
+        # Only pass temperature for non-gpt-oss backends (gpt-oss rejects it)
+        if self._backend != "gpt_oss":
+            kwargs["temperature"] = self.temperature
 
         for attempt in range(3):
             try:
                 if self._backend == "anthropic":
                     resp = self._client.messages.create(
                         model=self.model,
-                        max_tokens=self.max_tokens,
-                        system=system,
-                        messages=messages,
+                        messages=[{"role": "user", "content": user_message}],
+                        **kwargs,
                     )
                     raw = next(
                         (b.text for b in resp.content if getattr(b, "type", None) == "text"), ""
                     )
+                    cot = ""
                     usage = {
                         "input_tokens": resp.usage.input_tokens,
                         "output_tokens": resp.usage.output_tokens,
                         "reasoning_tokens": 0,
                     }
                 else:
-                    oai_msgs = [{"role": "system", "content": system}] + messages
                     resp = self._client.chat.completions.create(
                         model=self.model,
-                        max_tokens=self.max_tokens,
-                        messages=oai_msgs,
-                        response_format={"type": "json_object"},
+                        messages=[{"role": "user", "content": user_message}],
+                        **kwargs,
                     )
-                    raw = resp.choices[0].message.content or ""
+                    msg = resp.choices[0].message
+                    raw = msg.content or ""
+                    cot = getattr(msg, "reasoning_content", "") or ""
                     u = getattr(resp, "usage", None)
                     details = getattr(u, "completion_tokens_details", None)
                     usage = {
                         "input_tokens": getattr(u, "prompt_tokens", 0) or 0,
                         "output_tokens": getattr(u, "completion_tokens", 0) or 0,
-                        "reasoning_tokens": getattr(details, "reasoning_tokens", 0) or 0 if details else 0,
+                        "reasoning_tokens": (
+                            getattr(details, "reasoning_tokens", 0) or 0
+                            if details else 0
+                        ),
                     }
 
-                for key, sess_key in [("input_tokens", "input"), ("output_tokens", "output"), ("reasoning_tokens", "reasoning")]:
+                for key, sess_key in [
+                    ("input_tokens", "input"),
+                    ("output_tokens", "output"),
+                    ("reasoning_tokens", "reasoning"),
+                ]:
                     v = usage.get(key, 0) or 0
                     self._task_tokens[sess_key] += v
                     self._session_tokens[sess_key] += v
 
-                text = raw.strip()
-                if text.startswith("```"):
-                    text = re.sub(r"^```(?:json)?\s*", "", text)
-                    text = re.sub(r"\s*```$", "", text)
-                    text = text.strip()
-                try:
-                    result = json.loads(text)
-                    if not isinstance(result, dict):
-                        result = {}
-                except json.JSONDecodeError:
-                    logger.warning("best_of_k: JSON parse error (tag=%s): %s", tag, raw[:200])
-                    result = {}
-
-                self._task_log.append({
+                log_entry = {
                     "tag": tag,
                     "model": self.model,
-                    "request": {"messages": messages, "max_tokens": self.max_tokens},
-                    "response": {"content": raw, "usage": usage},
-                    "parsed_result": result,
+                    "request": {"user_message": user_message, "max_tokens": self.max_tokens},
+                    "response": {"content": raw, "reasoning_content": cot, "usage": usage},
                     "token_usage": usage,
-                })
+                }
+                self._task_log.append(log_entry)
                 if self._debug_dir:
-                    self._write_debug(tag, messages, raw, usage, result)
-                return result
+                    self._write_debug(tag, user_message, raw, cot, usage)
+                return raw
 
             except Exception as exc:
-                if getattr(exc, "status_code", None) == 400:
-                    raise
                 if attempt < 2:
                     wait = 5 * (2 ** attempt)
-                    logger.warning("best_of_k LLM call failed (attempt %d/3): %s. Retry in %ds.", attempt + 1, exc, wait)
+                    logger.warning(
+                        "best_of_k LLM call failed (attempt %d/3, tag=%s): %s. Retry in %ds.",
+                        attempt + 1, tag, exc, wait,
+                    )
                     time.sleep(wait)
                 else:
-                    logger.error("best_of_k LLM call failed: %s", exc)
-                    return {}
+                    logger.error("best_of_k LLM call failed (tag=%s): %s", tag, exc)
+                    return ""
 
-    def _write_debug(self, tag, messages, raw, usage, parsed):
+    def _write_debug(self, tag, user_message, raw, cot, usage):
         self._call_counter += 1
         from datetime import datetime, timezone
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%f")
         path = os.path.join(self._debug_dir, f"{self._call_counter:04d}_{tag}_{ts}.json")
         try:
             with open(path, "w", encoding="utf-8") as f:
-                json.dump({"tag": tag, "messages": messages, "raw": raw, "usage": usage, "parsed": parsed}, f, indent=2, default=str)
+                json.dump(
+                    {
+                        "tag": tag,
+                        "user_message": user_message,
+                        "raw": raw,
+                        "reasoning_content": cot,
+                        "usage": usage,
+                    },
+                    f, indent=2, default=str,
+                )
         except Exception as exc:
             logger.warning("Could not write debug log %s: %s", path, exc)
 
     # ------------------------------------------------------------------
-    # Task log helpers
+    # Task log helpers (standard interface)
     # ------------------------------------------------------------------
 
     def reset_task_log(self) -> None:
@@ -237,37 +204,22 @@ class BestOfKController:
             self._session_tokens[k] = int(d.get(k, 0))
 
     # ------------------------------------------------------------------
-    # Core solve
+    # Task text extraction
     # ------------------------------------------------------------------
 
-    def _build_prompt(self, task_input: Any) -> str:
+    def _task_text(self, task_input: Any) -> str:
         if isinstance(task_input, dict):
-            task_text = (
-                task_input.get("question") or task_input.get("prompt") or task_input.get("task") or str(task_input)
+            return (
+                task_input.get("prompt")
+                or task_input.get("question")
+                or task_input.get("task")
+                or str(task_input)
             )
-        else:
-            task_text = str(task_input)
-        return f"Solve this task:\n\n{task_text}"
+        return str(task_input)
 
-    def _attempt(self, prompt: str, attempt_idx: int) -> Dict:
-        """Make one independent solve attempt."""
-        result = self._call_llm(prompt, tag=f"bok_attempt{attempt_idx}")
-        code = result.get("code", "")
-        direct_answer = result.get("answer")
-
-        if direct_answer is not None and not code:
-            return {"answer": direct_answer, "code": "", "exec_ok": True, "error": ""}
-
-        if code:
-            ok, exec_result, err = _run_code(code)
-            if ok and exec_result is not None:
-                return {"answer": exec_result, "code": code, "exec_ok": True, "error": ""}
-            elif ok and direct_answer is not None:
-                return {"answer": direct_answer, "code": code, "exec_ok": True, "error": ""}
-            else:
-                return {"answer": direct_answer, "code": code, "exec_ok": False, "error": err}
-
-        return {"answer": direct_answer, "code": "", "exec_ok": direct_answer is not None, "error": ""}
+    # ------------------------------------------------------------------
+    # Core solve
+    # ------------------------------------------------------------------
 
     def solve_with_reward(
         self,
@@ -279,58 +231,54 @@ class BestOfKController:
         max_reward_iters: int = 3,  # ignored — Best-of-K uses K attempts instead
     ) -> Dict:
         """
-        Make K independent attempts and return the best by reward.
-
-        The total token budget is K × max_tokens, matching max_reward_iters × max_tokens
-        for a sequential agent when K == max_reward_iters.
+        Make up to K independent attempts, returning the best by reward.
+        Stops immediately when any attempt scores reward >= 1.0.
         """
         self.reset_task_log()
-        prompt = self._build_prompt(task_input)
+        task_text = self._task_text(task_input)
 
         best_reward = 0.0
         best_answer = None
-        best_code = None
-        reward_history = []
-        attempts = []
+        reward_history: List[Dict] = []
 
         for i in range(self.k):
             logger.info("best_of_k: attempt %d/%d", i + 1, self.k)
-            att = self._attempt(prompt, i)
-            attempts.append(att)
+            raw = self._call_llm(task_text, tag=f"bok_attempt{i}")
+            exec_ok = bool(raw)
 
-            reward_result = reward_fn(att["answer"], att["exec_ok"], entry)
+            reward_result = reward_fn(raw if raw else None, exec_ok, entry)
             reward_value = float(reward_result.get("value", 0.0))
 
             if reward_value > best_reward:
                 best_reward = reward_value
-                best_answer = att["answer"]
-                best_code = att["code"]
+                best_answer = raw
 
             reward_history.append({
                 "iteration": i,
                 "reward": reward_value,
                 "message": reward_result.get("message", ""),
-                "blame": "logic" if not att["exec_ok"] else ("partial" if reward_value < 1.0 else "none"),
-                "solution_summary": str(att["answer"])[:200] if att["answer"] is not None else "",
+                "blame": "partial" if reward_value < 1.0 else "none",
+                "solution_summary": raw[:200] if raw else "",
             })
             logger.info("best_of_k attempt %d: reward=%.3f", i + 1, reward_value)
 
-            # Early exit if perfect reward
             if reward_value >= 1.0:
                 logger.info("best_of_k: perfect reward on attempt %d, stopping.", i + 1)
                 break
 
         solved = best_reward >= 1.0
-        task_description = prompt.replace("Solve this task:\n\n", "")[:200]
         return {
             "solved": solved,
             "task_type": task_type,
-            "original_prompt": task_description,
+            "original_prompt": task_text[:200],
             "answer": best_answer,
             "best_reward": best_reward,
             "final_reward": reward_history[-1] if reward_history else {},
             "reward_history": reward_history,
-            "trace": [{"agent": "best_of_k", "attempt": i, "answer": a["answer"]} for i, a in enumerate(attempts)],
+            "trace": [
+                {"agent": "best_of_k", "attempt": h["iteration"], "answer": h["solution_summary"]}
+                for h in reward_history
+            ],
             "final_output": {
                 "answer": str(best_answer) if best_answer is not None else "",
                 "explanation": f"Best-of-{self.k} sampling (K={self.k}, max_tokens={self.max_tokens})",
@@ -339,46 +287,40 @@ class BestOfKController:
             },
             "agent_messages": self.get_task_log(),
             "token_usage": self.get_task_token_usage(),
-            "cost_summary": {"k": self.k, "max_tokens_per_attempt": self.max_tokens},
+            "cost_summary": {
+                "k": self.k,
+                "actual_attempts": len(reward_history),
+                "max_tokens_per_attempt": self.max_tokens,
+            },
             "library_snapshot": [],
         }
 
     def solve(self, task_input: Any, task_type: str = "symbolic", budget: float = 15.0) -> Dict:
-        """K independent attempts, pick first successful one (no reward fn)."""
+        """K independent attempts with no reward signal, return first non-empty response."""
         self.reset_task_log()
-        prompt = self._build_prompt(task_input)
+        task_text = self._task_text(task_input)
+        best_raw = None
         for i in range(self.k):
-            att = self._attempt(prompt, i)
-            if att["exec_ok"] and att["answer"] is not None:
-                return {
-                    "solved": True,
-                    "task_type": task_type,
-                    "original_prompt": str(task_input)[:200],
-                    "answer": att["answer"],
-                    "best_reward": 1.0,
-                    "final_output": {"answer": str(att["answer"]), "confidence": "medium"},
-                    "agent_messages": self.get_task_log(),
-                    "token_usage": self.get_task_token_usage(),
-                    "cost_summary": {"k": i + 1},
-                    "library_snapshot": [],
-                    "reward_history": [],
-                }
+            raw = self._call_llm(task_text, tag=f"bok_attempt{i}")
+            if raw and best_raw is None:
+                best_raw = raw
+                break
+        solved = bool(best_raw)
         return {
-            "solved": False,
+            "solved": solved,
             "task_type": task_type,
-            "original_prompt": str(task_input)[:200],
-            "answer": None,
-            "best_reward": 0.0,
-            "final_output": {"error": f"All {self.k} attempts failed."},
+            "original_prompt": task_text[:200],
+            "answer": best_raw,
+            "best_reward": 1.0 if solved else 0.0,
+            "final_output": {"answer": best_raw or "", "confidence": "medium" if solved else "low"},
             "agent_messages": self.get_task_log(),
             "token_usage": self.get_task_token_usage(),
-            "cost_summary": {"k": self.k},
+            "cost_summary": {"k": self.k, "max_tokens_per_attempt": self.max_tokens},
             "library_snapshot": [],
             "reward_history": [],
         }
 
     def projected_budget(self, max_reward_iters: int = 3) -> Dict:
-        """Token budget = K × max_tokens (all K attempts run to completion)."""
         total = self.k * self.max_tokens
         return {
             "k": self.k,
