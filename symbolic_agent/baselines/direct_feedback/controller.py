@@ -2,89 +2,65 @@
 Direct-feedback baseline.
 
 Each task attempt is a single LLM call (no multi-turn conversation).
-On the first attempt the prompt is just the raw task.
-On subsequent attempts the prompt is the original task + a history block showing
-each prior attempt's solution and the verifier feedback for it.
+On the first attempt the prompt is the raw task exactly as-is.
+On subsequent attempts the history of prior solutions + verifier feedback is
+injected into the prompt, and the model completes it fresh.
 
-This sidesteps all Harmony / multi-turn issues because every call is stateless:
-system + one user message in, one assistant message out.
+No JSON wrapping. No code execution. The reward function receives the raw model
+output and parses it (fenced block, plain list, etc.) itself.
 
 Flags:
   --df-k N   maximum number of attempts (default 3)
 """
 
-import io
 import json
 import logging
 import os
 import re
-import sys
 import time
-import traceback
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_JSON_INSTRUCTION = (
-    "\n\nRespond with a single valid JSON object and nothing else. "
-    "No markdown fences, no prose before or after the JSON."
-)
-
-_SYSTEM = """\
-You are a Python programming assistant. Solve the given task.
-
-Respond with a JSON object:
-{
-  "reasoning": "brief explanation of your approach",
-  "code": "def solve(...):\\n    ...\\n\\nresult = solve(...)\\nprint(result)",
-  "answer": "direct answer if no code needed (leave empty string if code is provided)"
-}
-
-Rules:
-- For algorithmic / transformation tasks write a Python function, call it, print the result.
-- For pure Q&A tasks that need no code set "answer" to the exact value and "code" to "".
-- Print the result so it can be captured; do not only return it.
-- The "answer" field (if set) must be the exact answer, not a sentence.
-"""
-
-
-def _run_code(code: str) -> tuple:
-    """Execute code in an isolated namespace. Returns (ok, result_str, error_str)."""
-    namespace: dict = {}
-    old_stdout = sys.stdout
-    sys.stdout = buf = io.StringIO()
-    try:
-        exec(compile(code, "<direct_feedback>", "exec"), namespace)
-        printed = buf.getvalue().strip()
-        return True, printed if printed else None, ""
-    except Exception:
-        return False, None, traceback.format_exc()
-    finally:
-        sys.stdout = old_stdout
-
-
-def _strip_backticks(text: str) -> str:
-    text = re.sub(r"```[a-zA-Z]*\n?", "", text)
-    text = re.sub(r"```", "", text)
-    return text.strip()
+# Marker used by PBEBench prompts — we insert feedback history just before it
+# on retry attempts so the model sees: task → feedback → open completion slot.
+_PROGRAM_SEQUENCE_MARKER = "### Program Sequence"
 
 
 def _build_history_block(history: List[Dict]) -> str:
     """
-    Format prior attempts as markdown.
+    Format prior attempts into a text block.
 
-    Each entry: {"attempt": int, "reasoning": str, "answer_text": str, "feedback": str, "reward": float}
+    Each entry: {"attempt": int, "answer_text": str, "feedback": str, "reward": float}
     """
-    lines = ["## Previous attempts"]
+    lines = ["### Previous attempts"]
     for h in history:
-        lines.append(f"\n### Attempt {h['attempt']} (reward: {h['reward']:.3f})")
-        if h.get("reasoning"):
-            lines.append(f"**Reasoning:** {_strip_backticks(h['reasoning'])}")
+        lines.append(f"\nAttempt {h['attempt']} (reward: {h['reward']:.3f})")
         if h.get("answer_text"):
-            lines.append(f"**Answer:** {_strip_backticks(h['answer_text'])}")
-        lines.append(f"**Verifier feedback:** {_strip_backticks(h['feedback'])}")
+            lines.append(f"Your answer: {h['answer_text']}")
+        lines.append(f"Verifier feedback: {h['feedback']}")
     lines.append("\nUsing the feedback above, produce a corrected solution.")
     return "\n".join(lines)
+
+
+def _inject_history(task_text: str, history: List[Dict]) -> str:
+    """
+    Build a retry prompt.
+
+    If the task ends with a PBEBench-style open completion slot
+    (### Program Sequence), insert the history block just before it so the
+    model sees: [task] → [feedback] → [open slot to complete].
+
+    Otherwise append the history at the end.
+    """
+    history_block = _build_history_block(history)
+    # Find the last occurrence of the PBEBench completion marker
+    idx = task_text.rfind(_PROGRAM_SEQUENCE_MARKER)
+    if idx != -1:
+        before = task_text[:idx].rstrip()
+        after = task_text[idx:]
+        return f"{before}\n\n{history_block}\n\n{after}"
+    return f"{task_text}\n\n{history_block}"
 
 
 class DirectFeedbackController:
@@ -139,41 +115,42 @@ class DirectFeedbackController:
             self._client = anthropic.Anthropic(api_key=api_key)
 
     # ------------------------------------------------------------------
-    # LLM call — always single-turn
+    # LLM call — always single-turn, returns raw text
     # ------------------------------------------------------------------
 
-    def _call_llm(self, user_message: str, tag: str = "") -> Dict:
-        """One single-turn call. Returns parsed JSON dict (or {} on failure)."""
-        system = _SYSTEM + _JSON_INSTRUCTION
+    def _call_llm(self, user_message: str, tag: str = "") -> str:
+        """
+        Single-turn call. Returns raw response text (empty string on failure).
 
+        No system prompt is injected — the task prompt is passed as-is.
+        For gpt-oss-120b: only a user message is sent (no developer message)
+        to avoid any Harmony template parsing issues from injected content.
+        """
         for attempt in range(3):
             try:
                 if self._backend == "anthropic":
                     resp = self._client.messages.create(
                         model=self.model,
                         max_tokens=self.max_tokens,
-                        system=system,
                         messages=[{"role": "user", "content": user_message}],
                     )
                     raw = next(
                         (b.text for b in resp.content if getattr(b, "type", None) == "text"), ""
                     )
+                    cot = ""
                     usage = {
                         "input_tokens": resp.usage.input_tokens,
                         "output_tokens": resp.usage.output_tokens,
                         "reasoning_tokens": 0,
                     }
-                    cot = ""
                 elif self._backend == "gpt_oss":
-                    # gpt-oss-120b: use developer role, no response_format, no temperature.
-                    # Each call is a fresh single-turn — history is encoded in the user message.
+                    # No developer/system message — task prompt is the full input.
+                    # This avoids any injected content triggering Harmony segment
+                    # splitting ("Expected 2 output messages, got N").
                     resp = self._client.chat.completions.create(
                         model=self.model,
                         max_tokens=self.max_tokens,
-                        messages=[
-                            {"role": "developer", "content": system},
-                            {"role": "user", "content": user_message},
-                        ],
+                        messages=[{"role": "user", "content": user_message}],
                     )
                     msg = resp.choices[0].message
                     raw = msg.content or ""
@@ -189,15 +166,11 @@ class DirectFeedbackController:
                         ),
                     }
                 else:
-                    # Generic OpenAI-compatible (not gpt-oss), use json_object mode
+                    # Generic OpenAI-compatible endpoint
                     resp = self._client.chat.completions.create(
                         model=self.model,
                         max_tokens=self.max_tokens,
-                        messages=[
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": user_message},
-                        ],
-                        response_format={"type": "json_object"},
+                        messages=[{"role": "user", "content": user_message}],
                     )
                     msg = resp.choices[0].message
                     raw = msg.content or ""
@@ -222,49 +195,31 @@ class DirectFeedbackController:
                     self._task_tokens[sess_key] += v
                     self._session_tokens[sess_key] += v
 
-                # Strip markdown fences if the model wrapped its JSON anyway
-                text = raw.strip()
-                if text.startswith("```"):
-                    text = re.sub(r"^```(?:json)?\s*", "", text)
-                    text = re.sub(r"\s*```$", "", text)
-                    text = text.strip()
-
-                try:
-                    result = json.loads(text)
-                    if not isinstance(result, dict):
-                        result = {}
-                except json.JSONDecodeError:
-                    logger.warning("direct_feedback: JSON parse error (tag=%s): %s", tag, raw[:200])
-                    result = {}
-
                 log_entry = {
                     "tag": tag,
                     "model": self.model,
                     "request": {"user_message": user_message, "max_tokens": self.max_tokens},
                     "response": {"content": raw, "reasoning_content": cot, "usage": usage},
-                    "parsed_result": result,
                     "token_usage": usage,
                 }
                 self._task_log.append(log_entry)
                 if self._debug_dir:
-                    self._write_debug(tag, user_message, raw, cot, usage, result)
-                return result
+                    self._write_debug(tag, user_message, raw, cot, usage)
+                return raw
 
             except Exception as exc:
-                if getattr(exc, "status_code", None) == 400:
-                    raise
                 if attempt < 2:
                     wait = 5 * (2 ** attempt)
                     logger.warning(
-                        "direct_feedback LLM call failed (attempt %d/3): %s. Retry in %ds.",
-                        attempt + 1, exc, wait,
+                        "direct_feedback LLM call failed (attempt %d/3, tag=%s): %s. Retry in %ds.",
+                        attempt + 1, tag, exc, wait,
                     )
                     time.sleep(wait)
                 else:
-                    logger.error("direct_feedback LLM call failed: %s", exc)
-                    return {}
+                    logger.error("direct_feedback LLM call failed (tag=%s): %s", tag, exc)
+                    return ""
 
-    def _write_debug(self, tag, user_message, raw, cot, usage, parsed):
+    def _write_debug(self, tag, user_message, raw, cot, usage):
         self._call_counter += 1
         from datetime import datetime, timezone
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%f")
@@ -278,7 +233,6 @@ class DirectFeedbackController:
                         "raw": raw,
                         "reasoning_content": cot,
                         "usage": usage,
-                        "parsed": parsed,
                     },
                     f, indent=2, default=str,
                 )
@@ -307,52 +261,22 @@ class DirectFeedbackController:
             self._session_tokens[k] = int(d.get(k, 0))
 
     # ------------------------------------------------------------------
-    # Prompt building
+    # Task text extraction
     # ------------------------------------------------------------------
 
     def _task_text(self, task_input: Any) -> str:
         if isinstance(task_input, dict):
             return (
-                task_input.get("question")
-                or task_input.get("prompt")
+                task_input.get("prompt")
+                or task_input.get("question")
                 or task_input.get("task")
                 or str(task_input)
             )
         return str(task_input)
 
-    def _build_first_prompt(self, task_text: str) -> str:
-        return task_text
-
-    def _build_retry_prompt(self, task_text: str, history: List[Dict]) -> str:
-        return f"{task_text}\n\n" + _build_history_block(history)
-
     # ------------------------------------------------------------------
     # Core solve logic
     # ------------------------------------------------------------------
-
-    def _run_attempt(self, prompt: str, attempt_idx: int) -> Dict:
-        """Run one LLM call and execute any returned code."""
-        result = self._call_llm(prompt, tag=f"df_attempt{attempt_idx}")
-        code = result.get("code", "") or ""
-        direct_answer = result.get("answer") or None
-        reasoning = result.get("reasoning", "") or ""
-
-        if code:
-            ok, exec_result, err = _run_code(code)
-            if ok and exec_result is not None:
-                return {"answer": exec_result, "code": code, "exec_ok": True, "error": "", "reasoning": reasoning}
-            elif ok and direct_answer is not None:
-                return {"answer": direct_answer, "code": code, "exec_ok": True, "error": "", "reasoning": reasoning}
-            else:
-                return {"answer": direct_answer, "code": code, "exec_ok": False, "error": err, "reasoning": reasoning}
-
-        return {
-            "answer": direct_answer,
-            "code": "",
-            "exec_ok": direct_answer is not None,
-            "error": "",
-            "reasoning": reasoning,
-        }
 
     def solve_with_reward(
         self,
@@ -364,11 +288,11 @@ class DirectFeedbackController:
         max_reward_iters: int = 3,
     ) -> Dict:
         """
-        Up to k=min(self.k, max_reward_iters) sequential attempts.
+        Up to min(k, max_reward_iters) sequential single-turn attempts.
 
-        Attempt 1: raw task prompt only.
-        Attempt 2+: task prompt + history of prior attempts and their verifier feedback.
-        Stop early if reward == 1.0.
+        Attempt 1: raw task prompt.
+        Attempt 2+: history of prior answers + verifier feedback injected into prompt.
+        Stops early on reward == 1.0.
         """
         self.reset_task_log()
         task_text = self._task_text(task_input)
@@ -376,37 +300,28 @@ class DirectFeedbackController:
 
         best_reward = 0.0
         best_answer = None
-        best_code = None
         reward_history: List[Dict] = []
-        history: List[Dict] = []  # grows across attempts, fed into retry prompts
+        history: List[Dict] = []
 
         for i in range(max_attempts):
             logger.info("direct_feedback: attempt %d/%d", i + 1, max_attempts)
 
-            if i == 0:
-                prompt = self._build_first_prompt(task_text)
-            else:
-                prompt = self._build_retry_prompt(task_text, history)
+            prompt = task_text if i == 0 else _inject_history(task_text, history)
+            raw = self._call_llm(prompt, tag=f"df_attempt{i}")
+            exec_ok = bool(raw)
 
-            att = self._run_attempt(prompt, i)
-
-            reward_result = reward_fn(att["answer"], att["exec_ok"], entry)
+            reward_result = reward_fn(raw if raw else None, exec_ok, entry)
             reward_value = float(reward_result.get("value", 0.0))
             feedback_msg = reward_result.get("message", "")
 
             if reward_value > best_reward:
                 best_reward = reward_value
-                best_answer = att["answer"]
-                best_code = att["code"]
+                best_answer = raw
 
-            solution_summary = str(att["answer"])[:300] if att["answer"] is not None else ""
-            if att["error"]:
-                feedback_msg = (att["error"][:300] + "\n" + feedback_msg).strip()
-
+            answer_summary = raw[:300] if raw else ""
             history.append({
                 "attempt": i + 1,
-                "reasoning": (att.get("reasoning") or "")[:300],
-                "answer_text": solution_summary,
+                "answer_text": answer_summary,
                 "feedback": feedback_msg or "No feedback available.",
                 "reward": reward_value,
             })
@@ -414,14 +329,14 @@ class DirectFeedbackController:
                 "iteration": i,
                 "reward": reward_value,
                 "message": feedback_msg,
-                "blame": (
-                    "execution" if not att["exec_ok"]
-                    else ("partial" if reward_value < 1.0 else "none")
-                ),
-                "solution_summary": solution_summary,
+                "blame": "partial" if reward_value < 1.0 else "none",
+                "solution_summary": answer_summary,
             })
 
-            logger.info("direct_feedback attempt %d: reward=%.3f  %s", i + 1, reward_value, feedback_msg[:80])
+            logger.info(
+                "direct_feedback attempt %d: reward=%.3f  %s",
+                i + 1, reward_value, feedback_msg[:80],
+            )
 
             if reward_value >= 1.0:
                 logger.info("direct_feedback: perfect reward on attempt %d, stopping.", i + 1)
@@ -460,16 +375,16 @@ class DirectFeedbackController:
         """Single attempt, no reward signal."""
         self.reset_task_log()
         task_text = self._task_text(task_input)
-        att = self._run_attempt(self._build_first_prompt(task_text), 0)
-        solved = att["exec_ok"] and att["answer"] is not None
+        raw = self._call_llm(task_text, tag="df_attempt0")
+        solved = bool(raw)
         return {
             "solved": solved,
             "task_type": task_type,
             "original_prompt": task_text[:200],
-            "answer": att["answer"],
+            "answer": raw if raw else None,
             "best_reward": 1.0 if solved else 0.0,
             "final_output": {
-                "answer": str(att["answer"]) if att["answer"] is not None else "",
+                "answer": raw or "",
                 "confidence": "medium" if solved else "low",
             },
             "agent_messages": self.get_task_log(),
