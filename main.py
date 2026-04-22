@@ -2,13 +2,10 @@
 Entry point for the Symbolic Library Agent.
 
 Usage:
-    python main.py                               # run all built-in example tasks in batch
-    python main.py --task 0                      # run a single built-in task by index
-    python main.py --list                        # list built-in example tasks
-    python main.py --stats                       # print library stats after a batch run
     python main.py --tasks-file tasks.jsonl      # run tasks from a JSON/JSONL file
     python main.py --output-file results.jsonl   # append each task result live to a JSONL file
     python main.py --tasks-file tasks.jsonl --output-file results.jsonl  # auto-resumes if crashed
+    python main.py --stats                       # print library stats after a run
 """
 
 import argparse
@@ -23,7 +20,6 @@ from typing import List, Dict, Optional, Set
 
 from dotenv import load_dotenv
 
-from examples.tasks import TASKS
 from rewards import load_reward
 from symbolic_agent import Controller
 from symbolic_agent.models import Function
@@ -146,41 +142,17 @@ def _load_tasks_file(path: str) -> List[Dict]:
 
 
 def _append_task_output(result: dict, task_index: int, output_file: str) -> None:
-    """
-    Append one JSON line to {output_file} immediately after a task completes.
-
-    Each line is a self-contained record combining:
-      - response fields  (answer, explanation, confidence, execution_result)
-      - trajectory fields (task_spec, trace, solution, library_snapshot, cost_summary)
-      - agent_messages   (every LLM call's request + response, suitable for agentic training)
-    """
+    """Append one JSON line to {output_file} immediately after a task completes."""
     final = result.get("final_output", {})
     record = {
         "task_index": task_index,
-        "task_type": result.get("task_type", ""),
-        "original_prompt": result.get("original_prompt", ""),
-        # trajectory
-        "task_spec": result.get("task_spec"),
         "solved": result.get("solved", False),
-        "steps_taken": result.get("steps", 0),
-        "trace": result.get("trace", []),
-        "solution": result.get("solution"),
-        "library_snapshot": result.get("library_snapshot", []),
-        "cost_summary": result.get("cost_summary", {}),
-        # response
         "answer": final.get("answer"),
-        "explanation": final.get("explanation"),
-        "confidence": final.get("confidence"),
-        "execution_result": final.get("execution_result"),
-        "error": final.get("error"),
-        # all component-agent LLM calls (request + response) for training data
-        "agent_messages": result.get("agent_messages", []),
-        # reward-loop fields (populated only when solve_with_reward is used)
-        "reward_history": result.get("reward_history", []),
         "best_reward": result.get("best_reward"),
-        "final_reward": result.get("final_reward"),
-        # token usage for this task (input/output/reasoning tokens)
+        "reward_history": result.get("reward_history", []),
+        "cost_summary": result.get("cost_summary", {}),
         "token_usage": result.get("token_usage", {}),
+        "agent_messages": result.get("agent_messages", []),
     }
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as f:
@@ -594,8 +566,6 @@ def main() -> None:
     load_dotenv()
 
     parser = argparse.ArgumentParser(description="Symbolic Library Agent")
-    parser.add_argument("--task", type=int, default=None, help="Run a single built-in task by index")
-    parser.add_argument("--list", action="store_true", help="List built-in example tasks")
     parser.add_argument("--stats", action="store_true", help="Print library stats after run")
     parser.add_argument(
         "--framework",
@@ -902,13 +872,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.list:
-        print("Available built-in example tasks:")
-        for i, t in enumerate(TASKS):
-            desc = t["input"].get("description", str(t["input"])[:60])
-            print(f"  [{i}]  type={t['type']:20s}  {desc}")
-        return
-
     # ---- Model alias resolution ----
     _MODEL_ALIASES = {
         "sonnet":     "claude-sonnet-4-6",
@@ -1211,27 +1174,9 @@ def main() -> None:
                     su["input"], su["output"], su["reasoning"],
                     su["input"] + su["output"] + su["reasoning"],
                 )
-    elif args.task is not None:
-        if args.task >= len(TASKS):
-            print(f"Task index {args.task} out of range (0–{len(TASKS)-1}).", file=sys.stderr)
-            sys.exit(1)
-        task = TASKS[args.task]
-        result = controller.solve(task["input"], task_type=task["type"], budget=args.budget)
-        _print_result(result, args.task)
-        if args.output_file:
-            _append_task_output(result, args.task, args.output_file)
-        if args.stats:
-            _print_library_stats(controller)
     else:
-        # Batch run: all built-in tasks share the same library
-        logger.info("Running %d built-in tasks in batch mode", len(TASKS))
-        for i, task in enumerate(TASKS):
-            result = controller.solve(task["input"], task_type=task["type"], budget=args.budget)
-            _print_result(result, i)
-            if args.output_file:
-                _append_task_output(result, i, args.output_file)
-        if args.stats:
-            _print_library_stats(controller)
+        print("ERROR: --tasks-file is required.", file=sys.stderr)
+        sys.exit(1)
 
     print("\nDone.")
 
