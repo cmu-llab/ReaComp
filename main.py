@@ -792,6 +792,14 @@ def main() -> None:
              "All attempts go to correctness first; once correct, the remainder go to "
              "simplification. (default: 32)",
     )
+    parser.add_argument(
+        "--simplify-patience",
+        type=int,
+        default=3,
+        metavar="N",
+        help="[direct_feedback_simplify] Stop Phase 2 early if the model produces the same "
+             "replace() program sequence N times in a row. (default: 3)",
+    )
     # ---- Parallelism (stateless frameworks only) ----
     parser.add_argument(
         "--workers",
@@ -1013,8 +1021,9 @@ def main() -> None:
             debug_dir=args.debug_dir,
             k=args.dfs_k,
             max_tokens=args.max_tokens or 4096,
+            simplify_patience=args.simplify_patience,
         )
-        logger.info("Framework: direct_feedback_simplify (k=%d)", args.dfs_k)
+        logger.info("Framework: direct_feedback_simplify (k=%d, patience=%d)", args.dfs_k, args.simplify_patience)
     elif args.framework == "trove":
         controller = TroVEController(
             api_key=api_key,

@@ -132,6 +132,28 @@ def _inject_simplify(task_text: str, best_answer: str, best_complexity: Optional
 
 # ── controller ────────────────────────────────────────────────────────────────
 
+def _canonical_programs(answer: Any) -> Optional[tuple]:
+    """Extract replace() pairs as a canonical hashable tuple, or None if unparseable."""
+    if answer is None:
+        return None
+    if isinstance(answer, list):
+        if len(answer) == 1 and isinstance(answer[0], list):
+            answer = answer[0]
+        raw = "\n".join(str(x) for x in answer)
+    elif isinstance(answer, str):
+        raw = answer.strip()
+        raw = re.sub(r"```[a-zA-Z]*\n?", "", raw).strip("` \n")
+        try:
+            parsed = json.loads(raw)
+            raw = "\n".join(str(x) for x in parsed) if isinstance(parsed, list) else str(parsed)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    else:
+        return None
+    programs = _REPLACE_RE.findall(raw)
+    return tuple(programs) if programs else None
+
+
 class DirectFeedbackSimplifyController(DirectFeedbackController):
     """
     Two-phase direct-feedback controller with a single shared attempt budget.
@@ -147,6 +169,10 @@ class DirectFeedbackSimplifyController(DirectFeedbackController):
 
     Inherits all LLM machinery from DirectFeedbackController.
     """
+
+    def __init__(self, simplify_patience: int = 3, **kwargs):
+        super().__init__(**kwargs)
+        self.simplify_patience = simplify_patience
 
     def solve_with_reward(
         self,
@@ -215,6 +241,9 @@ class DirectFeedbackSimplifyController(DirectFeedbackController):
         if best_reward >= 1.0:
             simplify_history: List[Dict] = []
             simplify_budget = total_budget - iter_idx
+            # patience tracking: consecutive attempts with identical program sequence
+            _patience_seq: Optional[tuple] = None
+            _patience_count: int = 0
 
             for j in range(simplify_budget):
                 logger.info(
@@ -270,6 +299,21 @@ class DirectFeedbackSimplifyController(DirectFeedbackController):
                     "dfs simplify %d: reward=%.3f  complexity=%s",
                     j + 1, reward_value, complexity,
                 )
+
+                # patience: terminate if program sequence hasn't changed for N consecutive attempts
+                seq = _canonical_programs(raw)
+                if seq is not None and seq == _patience_seq:
+                    _patience_count += 1
+                    if _patience_count >= self.simplify_patience:
+                        logger.info(
+                            "dfs simplify: patience threshold (%d) reached — same program sequence "
+                            "%d times in a row, stopping early",
+                            self.simplify_patience, _patience_count,
+                        )
+                        break
+                else:
+                    _patience_seq = seq
+                    _patience_count = 1
 
         solved = best_reward >= 1.0
         return {
