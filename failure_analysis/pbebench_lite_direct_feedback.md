@@ -1,7 +1,7 @@
-# Failure Analysis: PBEBench-Lite — DirectFeedbackSimplify Phase 1
+# Failure Analysis: PBEBench-Lite — DirectFeedback
 
 **File:** `outputs/lite_tasks_full_og_direct_feedback.jsonl`  
-**Framework:** `direct_feedback_simplify` (Phase 1 / correctness only — Phase 2 never entered)  
+**Framework:** `direct_feedback` (correctness only)  
 **Tasks:** 77 tasks that exhausted the k=32 attempt budget without hitting reward=1.0  
 **Model:** gpt-oss-120b  
 
