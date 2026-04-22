@@ -19,4 +19,5 @@ if __name__ == "__main__":
     for rec in outputs:
         if rec['task_index'] in unsolved_indices:
             unsolved_cases.append(rec)
+    print(len(unsolved_cases))
     write_jsonl(unsolved_cases, "failure_analysis/pbebench_lite_direct_feedback.jsonl")
