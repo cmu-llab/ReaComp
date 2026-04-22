@@ -4,13 +4,14 @@ Quick evaluation of output JSONL files.
 Usage:
     python scripts/quick_eval.py outputs/file.jsonl
     python scripts/quick_eval.py outputs/a.jsonl outputs/b.jsonl
+    python scripts/quick_eval.py outputs/file.jsonl --tasks-file data/pbebench/lite_tasks_full_og.jsonl
 """
 
 import argparse
 import json
 import re
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 _REPLACE_RE = re.compile(
@@ -65,6 +66,78 @@ def load(path: str) -> list[dict]:
     return list(tasks.values())
 
 
+def load_task_metadata(path: str) -> dict[int, dict]:
+    """Load task data file and return {task_index: {cascade_length, bfcc_dag_len}} dict."""
+    meta: dict[int, dict] = {}
+    with open(path) as f:
+        for i, line in enumerate(f):
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            bfcc_dag = rec.get("bfcc_dag")
+            dag_len = None
+            if bfcc_dag is not None:
+                try:
+                    dag = json.loads(bfcc_dag) if isinstance(bfcc_dag, str) else bfcc_dag
+                    dag_len = len(dag)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            meta[i] = {
+                "cascade_length": rec.get("cascade_length"),
+                "bfcc_dag_len": dag_len,
+            }
+    return meta
+
+
+def _make_buckets(values: list[int]) -> list[tuple[int, int | None]]:
+    """Return bucket boundaries. If <=5 distinct values, one bucket per value; else ~5 equal-width buckets."""
+    distinct = sorted(set(values))
+    if len(distinct) <= 5:
+        return [(v, v) for v in distinct]
+    lo, hi = distinct[0], distinct[-1]
+    width = max(1, (hi - lo + 1) // 5)
+    buckets, start = [], lo
+    while start <= hi:
+        end = start + width - 1
+        buckets.append((start, end if end < hi else None))
+        start += width
+    return buckets
+
+
+def _bucket_label(lo: int, hi: int | None) -> str:
+    return f"{lo}" if lo == hi else (f"{lo}+" if hi is None else f"{lo}-{hi}")
+
+
+def _print_breakdown(label: str, key_fn, records: list[dict], n_total: int) -> None:
+    """Print pass rate and mean attempts broken down by a per-record integer key."""
+    by_key: dict[int, list[dict]] = defaultdict(list)
+    for rec in records:
+        k = key_fn(rec)
+        if k is not None:
+            by_key[k].append(rec)
+
+    if not by_key:
+        return
+
+    all_vals = list(by_key.keys())
+    buckets = _make_buckets(all_vals)
+
+    print(f"\n  By {label}")
+    header = f"    {'value':>8}  {'n':>5}  {'pass%':>6}  {'mean_reward':>11}  {'avg_attempts':>12}"
+    print(header)
+    for lo, hi in buckets:
+        recs = [r for k, rs in by_key.items() for r in rs if lo <= k <= (hi if hi is not None else 10**9)]
+        if not recs:
+            continue
+        n = len(recs)
+        solved = sum(1 for r in recs if best_reward(r) >= 1.0)
+        mean_r = sum(best_reward(r) for r in recs) / n
+        mean_att = sum(len(r.get("reward_history") or []) for r in recs) / n
+        lbl = _bucket_label(lo, hi)
+        print(f"    {lbl:>8}  {n:>5}  {100*solved/n:>5.1f}%  {mean_r:>11.4f}  {mean_att:>12.2f}")
+
+
 def best_reward(rec: dict) -> float:
     v = rec.get("best_reward")
     if v is not None:
@@ -76,7 +149,7 @@ def reward_seq(rec: dict) -> list[float]:
     return [h.get("reward", 0.0) for h in (rec.get("reward_history") or [])]
 
 
-def summarise(records: list[dict], label: str) -> None:
+def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None = None) -> None:
     n = len(records)
     rewards = [best_reward(r) for r in records]
     solved = sum(1 for v in rewards if v >= 1.0)
@@ -192,6 +265,17 @@ def summarise(records: list[dict], label: str) -> None:
             bar = "#" * min(cnt, 40)
             print(f"      {label_c:>6} : {cnt:3d}  {bar}")
 
+    # cascade length / BFCC breakdowns (requires --tasks-file join)
+    if task_meta:
+        def _cascade_len(rec):
+            return (task_meta.get(rec.get("task_index")) or {}).get("cascade_length")
+
+        def _bfcc_dag_len(rec):
+            return (task_meta.get(rec.get("task_index")) or {}).get("bfcc_dag_len")
+
+        _print_breakdown("cascade length", _cascade_len, records, n)
+        _print_breakdown("BFCC relation count", _bfcc_dag_len, records, n)
+
     # unsolved
     unsolved = [(r.get("task_index"), best_reward(r), len(r.get("reward_history") or []))
                 for r in records if best_reward(r) < 1.0]
@@ -206,16 +290,24 @@ def summarise(records: list[dict], label: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("files", nargs="+", metavar="FILE")
+    parser.add_argument(
+        "--tasks-file",
+        metavar="FILE",
+        help="Task data JSONL (same order as used during eval). "
+             "Enables per-cascade-length and per-BFCC-relation-count breakdowns.",
+    )
     args = parser.parse_args()
+
+    task_meta = load_task_metadata(args.tasks_file) if args.tasks_file else None
 
     all_records = []
     for path in args.files:
         records = load(path)
-        summarise(records, Path(path).stem)
+        summarise(records, Path(path).stem, task_meta=task_meta)
         all_records.extend(records)
 
     if len(args.files) > 1:
-        summarise(all_records, "COMBINED")
+        summarise(all_records, "COMBINED", task_meta=task_meta)
 
 
 if __name__ == "__main__":
