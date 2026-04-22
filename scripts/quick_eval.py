@@ -67,7 +67,7 @@ def load(path: str) -> list[dict]:
 
 
 def load_task_metadata(path: str) -> dict[int, dict]:
-    """Load task data file and return {task_index: {cascade_length, bfcc_dag_len}} dict."""
+    """Load task data file and return {task_index: {cascade_length, bfcc_dag_len, gt_complexity}} dict."""
     meta: dict[int, dict] = {}
     with open(path) as f:
         for i, line in enumerate(f):
@@ -83,9 +83,11 @@ def load_task_metadata(path: str) -> dict[int, dict]:
                     dag_len = len(dag)
                 except (json.JSONDecodeError, TypeError):
                     pass
+            gt_complexity = _parse_complexity(rec.get("original_programs"))
             meta[i] = {
                 "cascade_length": rec.get("cascade_length"),
                 "bfcc_dag_len": dag_len,
+                "gt_complexity": gt_complexity,
             }
     return meta
 
@@ -264,6 +266,30 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
             label_c = f"{lo}+" if hi is None else f"{lo}-{hi}"
             bar = "#" * min(cnt, 40)
             print(f"      {label_c:>6} : {cnt:3d}  {bar}")
+
+    # complexity vs ground truth (requires --tasks-file join)
+    if task_meta:
+        pairs = []
+        for rec in records:
+            pred_c = _parse_complexity(rec.get("answer"))
+            gt_c = (task_meta.get(rec.get("task_index")) or {}).get("gt_complexity")
+            if pred_c is not None and gt_c is not None and best_reward(rec) >= 1.0:
+                pairs.append((pred_c, gt_c))
+        if pairs:
+            n_pairs = len(pairs)
+            simpler   = sum(1 for p, g in pairs if p < g)
+            equal     = sum(1 for p, g in pairs if p == g)
+            more_complex = sum(1 for p, g in pairs if p > g)
+            mean_pred = sum(p for p, _ in pairs) / n_pairs
+            mean_gt   = sum(g for _, g in pairs) / n_pairs
+            mean_delta = sum(p - g for p, g in pairs) / n_pairs
+            print(f"\n  Complexity vs ground truth  (correct solutions only, n={n_pairs})")
+            print(f"    Mean predicted complexity : {mean_pred:.2f}")
+            print(f"    Mean GT complexity        : {mean_gt:.2f}")
+            print(f"    Mean delta (pred − GT)    : {mean_delta:+.2f}")
+            print(f"    Simpler than GT  (pred<GT): {simpler:>4} / {n_pairs}  ({100*simpler/n_pairs:.1f}%)")
+            print(f"    Equal to GT      (pred=GT): {equal:>4} / {n_pairs}  ({100*equal/n_pairs:.1f}%)")
+            print(f"    More complex     (pred>GT): {more_complex:>4} / {n_pairs}  ({100*more_complex/n_pairs:.1f}%)")
 
     # cascade length / BFCC breakdowns (requires --tasks-file join)
     if task_meta:
