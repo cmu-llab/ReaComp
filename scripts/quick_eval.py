@@ -111,8 +111,8 @@ def _bucket_label(lo: int, hi: int | None) -> str:
     return f"{lo}" if lo == hi else (f"{lo}+" if hi is None else f"{lo}-{hi}")
 
 
-def _print_breakdown(label: str, key_fn, records: list[dict], n_total: int) -> None:
-    """Print pass rate and mean attempts broken down by a per-record integer key."""
+def _print_breakdown(label: str, key_fn, records: list[dict], n_total: int) -> list[dict]:
+    """Print pass rate and mean attempts broken down by a per-record integer key. Returns row data."""
     by_key: dict[int, list[dict]] = defaultdict(list)
     for rec in records:
         k = key_fn(rec)
@@ -120,7 +120,7 @@ def _print_breakdown(label: str, key_fn, records: list[dict], n_total: int) -> N
             by_key[k].append(rec)
 
     if not by_key:
-        return
+        return []
 
     all_vals = list(by_key.keys())
     buckets = _make_buckets(all_vals)
@@ -128,6 +128,7 @@ def _print_breakdown(label: str, key_fn, records: list[dict], n_total: int) -> N
     print(f"\n  By {label}")
     header = f"    {'value':>8}  {'n':>5}  {'pass%':>6}  {'mean_reward':>11}  {'avg_attempts':>12}"
     print(header)
+    rows = []
     for lo, hi in buckets:
         recs = [r for k, rs in by_key.items() for r in rs if lo <= k <= (hi if hi is not None else 10**9)]
         if not recs:
@@ -138,6 +139,8 @@ def _print_breakdown(label: str, key_fn, records: list[dict], n_total: int) -> N
         mean_att = sum(len(r.get("reward_history") or []) for r in recs) / n
         lbl = _bucket_label(lo, hi)
         print(f"    {lbl:>8}  {n:>5}  {100*solved/n:>5.1f}%  {mean_r:>11.4f}  {mean_att:>12.2f}")
+        rows.append({"value": lbl, "n": n, "pass_pct": round(100 * solved / n, 2), "mean_reward": round(mean_r, 4), "avg_attempts": round(mean_att, 2)})
+    return rows
 
 
 def best_reward(rec: dict) -> float:
@@ -151,7 +154,7 @@ def reward_seq(rec: dict) -> list[float]:
     return [h.get("reward", 0.0) for h in (rec.get("reward_history") or [])]
 
 
-def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None = None) -> None:
+def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None = None) -> dict:
     n = len(records)
     rewards = [best_reward(r) for r in records]
     solved = sum(1 for v in rewards if v >= 1.0)
@@ -207,6 +210,7 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
     print(f"    Avg attempts / task     : {total_calls/n:.2f}")
 
     attempt_buckets = [(1, 1), (2, 2), (3, 5), (6, 10), (11, None)]
+    attempt_dist_rows = []
     print(f"\n  Attempt distribution")
     for lo, hi in attempt_buckets:
         count = sum(v for k, v in attempt_dist.items() if lo <= k <= (hi if hi else 10**9))
@@ -216,7 +220,9 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
         label_k = f"{label_k} attempt{'s' if lo != 1 or hi != 1 else ''}"
         bar = "#" * min(count, 40)
         print(f"    {label_k:>12} : {count:3d}  {bar}")
+        attempt_dist_rows.append({"bucket": label_k, "count": count})
 
+    iter_dist_rows = []
     iter_buckets = [(0, 0), (1, 1), (2, 2), (3, None)]
     print(f"\n  First solved at iteration")
     for lo, hi in iter_buckets:
@@ -225,7 +231,9 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
             continue
         label_it = f"iter {lo}" if lo == hi else f"iter {lo}+"
         print(f"    {label_it:>8} : {count:3d}  ({100*count/n:.1f}%)")
+        iter_dist_rows.append({"bucket": label_it, "count": count, "pct": round(100 * count / n, 2)})
     print(f"    {'never':>8} : {never_perfect:3d}  ({100*never_perfect/n:.1f}%)")
+    iter_dist_rows.append({"bucket": "never", "count": never_perfect, "pct": round(100 * never_perfect / n, 2)})
 
     if blame_counter:
         print(f"\n  Blame distribution (across all iters)")
@@ -233,6 +241,7 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
             print(f"    {blame:<20} : {cnt}")
 
     # token usage
+    token_metrics: dict = {}
     n_with_tokens = sum(1 for r in records if r.get("token_usage"))
     if n_with_tokens:
         total_in    = sum((r.get("token_usage") or {}).get("input",     0) or 0 for r in records)
@@ -245,8 +254,16 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
         if total_reas:
             print(f"    Reasoning : {total_reas:>12,}  (avg {total_reas/n_with_tokens:>8,.1f}/task)")
         print(f"    Total     : {total_toks:>12,}  (avg {total_toks/n_with_tokens:>8,.1f}/task)")
+        token_metrics = {
+            "tasks_with_data": n_with_tokens,
+            "input_total": total_in, "input_avg": round(total_in / n_with_tokens, 1),
+            "output_total": total_out, "output_avg": round(total_out / n_with_tokens, 1),
+            "reasoning_total": total_reas, "reasoning_avg": round(total_reas / n_with_tokens, 1) if total_reas else None,
+            "total": total_toks, "total_avg": round(total_toks / n_with_tokens, 1),
+        }
 
     # PBEBench complexity — computed from the best answer (replace() cascade)
+    complexity_metrics: dict = {}
     complexities = []
     for rec in records:
         c = _parse_complexity(rec.get("answer"))
@@ -256,6 +273,7 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
         nc = len(complexities)
         mean_c = sum(complexities) / nc
         buckets = [(0, 4), (5, 8), (9, 12), (13, 20), (21, None)]
+        complexity_dist_rows = []
         print(f"\n  PBEBench cascade complexity  ({nc}/{n} tasks)")
         print(f"    Mean complexity : {mean_c:.1f}")
         print(f"    Distribution")
@@ -266,8 +284,11 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
             label_c = f"{lo}+" if hi is None else f"{lo}-{hi}"
             bar = "#" * min(cnt, 40)
             print(f"      {label_c:>6} : {cnt:3d}  {bar}")
+            complexity_dist_rows.append({"bucket": label_c, "count": cnt})
+        complexity_metrics = {"n": nc, "mean": round(mean_c, 2), "distribution": complexity_dist_rows}
 
     # complexity vs ground truth (requires --tasks-file join)
+    complexity_vs_gt: dict = {}
     if task_meta:
         pairs = []
         for rec in records:
@@ -290,8 +311,16 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
             print(f"    Simpler than GT  (pred<GT): {simpler:>4} / {n_pairs}  ({100*simpler/n_pairs:.1f}%)")
             print(f"    Equal to GT      (pred=GT): {equal:>4} / {n_pairs}  ({100*equal/n_pairs:.1f}%)")
             print(f"    More complex     (pred>GT): {more_complex:>4} / {n_pairs}  ({100*more_complex/n_pairs:.1f}%)")
+            complexity_vs_gt = {
+                "n": n_pairs,
+                "mean_pred": round(mean_pred, 2), "mean_gt": round(mean_gt, 2),
+                "mean_delta": round(mean_delta, 2),
+                "simpler": simpler, "equal": equal, "more_complex": more_complex,
+            }
 
     # cascade length / BFCC breakdowns (requires --tasks-file join)
+    breakdown_cascade: list[dict] = []
+    breakdown_bfcc: list[dict] = []
     if task_meta:
         def _cascade_len(rec):
             return (task_meta.get(rec.get("task_index")) or {}).get("cascade_length")
@@ -299,18 +328,46 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
         def _bfcc_dag_len(rec):
             return (task_meta.get(rec.get("task_index")) or {}).get("bfcc_dag_len")
 
-        _print_breakdown("cascade length", _cascade_len, records, n)
-        _print_breakdown("BFCC relation count", _bfcc_dag_len, records, n)
+        breakdown_cascade = _print_breakdown("cascade length", _cascade_len, records, n)
+        breakdown_bfcc = _print_breakdown("BFCC relation count", _bfcc_dag_len, records, n)
 
     # unsolved
-    unsolved = [(r.get("task_index"), best_reward(r), len(r.get("reward_history") or []))
-                for r in records if best_reward(r) < 1.0]
+    unsolved = [
+        {"task_index": r.get("task_index"), "best_reward": round(best_reward(r), 4), "attempts": len(r.get("reward_history") or [])}
+        for r in records if best_reward(r) < 1.0
+    ]
     if unsolved:
-        print(f"\n  Unsolved tasks ({len(unsolved)})")
-        for tid, br, na in sorted(unsolved):
-            print(f"    task {tid:>4} : best_reward={br:.2f}, attempts={na}")
+        # print(f"\n  Unsolved tasks ({len(unsolved)})")
+        # for u in sorted(unsolved, key=lambda x: x["task_index"] or 0):
+        #     print(f"    task {u['task_index']:>4} : best_reward={u['best_reward']:.2f}, attempts={u['attempts']}")
+        print(f"\n  Unsolved tasks : {len(unsolved)}")
 
     print()
+
+    return {
+        "label": label,
+        "n": n,
+        "pass_rate": round(100 * solved / n, 2) if n else 0.0,
+        "solved": solved,
+        "mean_reward": round(mean_reward, 4),
+        "task_loss_mean": round(1 - mean_reward, 4),
+        "task_loss_sum": round(sum(1 - v for v in rewards), 4),
+        "feedback": {
+            "no_feedback": single, "used_feedback": multi,
+            "feedback_solved": multi_solved,
+            "total_llm_calls": total_calls,
+            "avg_attempts_per_task": round(total_calls / n, 2) if n else 0.0,
+        },
+        "attempt_distribution": attempt_dist_rows,
+        "first_solved_at_iter": iter_dist_rows,
+        "blame": dict(blame_counter.most_common()),
+        "token_usage": token_metrics or None,
+        "pbe_complexity": complexity_metrics or None,
+        "complexity_vs_gt": complexity_vs_gt or None,
+        "breakdown_by_cascade_length": breakdown_cascade or None,
+        "breakdown_by_bfcc_relations": breakdown_bfcc or None,
+        "unsolved": sorted(unsolved, key=lambda x: x["task_index"] or 0),
+    }
 
 
 def main() -> None:
@@ -322,18 +379,32 @@ def main() -> None:
         help="Task data JSONL (same order as used during eval). "
              "Enables per-cascade-length and per-BFCC-relation-count breakdowns.",
     )
+    parser.add_argument(
+        "--metrics-json",
+        metavar="FILE",
+        help="Write all metrics to this JSON file (one entry per input file, plus COMBINED if multiple).",
+    )
     args = parser.parse_args()
 
     task_meta = load_task_metadata(args.tasks_file) if args.tasks_file else None
 
     all_records = []
+    all_metrics = []
     for path in args.files:
         records = load(path)
-        summarise(records, Path(path).stem, task_meta=task_meta)
+        metrics = summarise(records, Path(path).stem, task_meta=task_meta)
+        all_metrics.append(metrics)
         all_records.extend(records)
 
     if len(args.files) > 1:
-        summarise(all_records, "COMBINED", task_meta=task_meta)
+        combined = summarise(all_records, "COMBINED", task_meta=task_meta)
+        all_metrics.append(combined)
+
+    if args.metrics_json:
+        out = all_metrics[0] if len(all_metrics) == 1 else all_metrics
+        with open(args.metrics_json, "w") as f:
+            json.dump(out, f, indent=2)
+        print(f"Metrics written to {args.metrics_json}")
 
 
 if __name__ == "__main__":
