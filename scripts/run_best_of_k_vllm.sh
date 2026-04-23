@@ -22,7 +22,7 @@ export PORT="${PORT:-8002}"
 export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 mkdir -p outputs
 
-TASKS_FILE="${1:-data/interleaved/pbebench_rg_string_pilot.jsonl}"
+TASKS_FILE="${1:-data/pbebench/lite_tasks_full_og.jsonl}"
 OUT_FILE="outputs/$(basename "${TASKS_FILE%.jsonl}")_best_of_k.jsonl"
 
 python main.py \
@@ -30,8 +30,9 @@ python main.py \
   --tasks-file       "${TASKS_FILE}" \
   --base-url         "http://localhost:${PORT}/v1" \
   --model            "openai/gpt-oss-120b" \
-  --bok-k            5 \
-  --max-tokens       16384 \
+  --bok-k            32 \
+  --max-tokens       32768 \
+  --workers          32 \
   --default-reward   pbebench \
   --output-file      "${OUT_FILE}" \
   --debug-dir        debug_best_of_k \
