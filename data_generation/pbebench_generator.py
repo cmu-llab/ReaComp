@@ -68,8 +68,8 @@ def _build_prompt(rec: dict, program_length: int = 3, program_num: int = 5) -> s
     )
 
 
-def load_pbebench_lite(path: str="changelinglab/PBEBench-Lite", first_k: int=-1):
-    """Load the PBEBench-Lite dataset from Hugging Face. If `first_k` is set to a positive integer, only the first `k` records will be returned."""
+def load_pbebench_dataset(path: str="changelinglab/PBEBench-Lite", first_k: int=-1):
+    """Load the PBEBench-Lite/PBEBench dataset from Hugging Face. If `first_k` is set to a positive integer, only the first `k` records will be returned."""
     ds = datasets.load_dataset(path)['test']
     sel_data = []
     for rec in ds:
@@ -82,9 +82,11 @@ def load_pbebench_lite(path: str="changelinglab/PBEBench-Lite", first_k: int=-1)
 
     return sel_data
 
+
 # main
 if __name__ == "__main__":
     # data = load_pbebench_lite(first_k=50)
-    data = load_pbebench_lite(first_k=-1)
-    write_path = "data/pbebench/lite_tasks_full_og.jsonl"
+    # data = load_pbebench_dataset(first_k=-1)
+    data = load_pbebench_dataset(path="changelinglab/PBEBench", first_k=-1)
+    write_path = "data/pbebench/tasks_full_og.jsonl"
     write_jsonl(data, write_path)
