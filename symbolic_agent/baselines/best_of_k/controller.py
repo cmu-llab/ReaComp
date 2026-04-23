@@ -15,6 +15,7 @@ Use --bok-k to control K; --max-tokens controls the per-attempt token budget.
 import json
 import logging
 import os
+import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -56,8 +57,9 @@ class BestOfKController:
         self.temperature = temperature
 
         self._session_tokens: Dict[str, int] = {"input": 0, "output": 0, "reasoning": 0}
-        self._task_tokens: Dict[str, int] = {"input": 0, "output": 0, "reasoning": 0}
-        self._task_log: List[Dict] = []
+        self._session_tokens_lock = threading.Lock()
+        # Per-thread state: each worker gets its own task log and token counters.
+        self._local = threading.local()
         self._debug_dir: Optional[str] = None
         self._call_counter = 0
 
@@ -129,14 +131,16 @@ class BestOfKController:
                         ),
                     }
 
+                task_tokens = getattr(self._local, "task_tokens", {"input": 0, "output": 0, "reasoning": 0})
                 for key, sess_key in [
                     ("input_tokens", "input"),
                     ("output_tokens", "output"),
                     ("reasoning_tokens", "reasoning"),
                 ]:
                     v = usage.get(key, 0) or 0
-                    self._task_tokens[sess_key] += v
-                    self._session_tokens[sess_key] += v
+                    task_tokens[sess_key] += v
+                    with self._session_tokens_lock:
+                        self._session_tokens[sess_key] += v
 
                 log_entry = {
                     "tag": tag,
@@ -145,7 +149,8 @@ class BestOfKController:
                     "response": {"content": raw, "reasoning_content": cot, "usage": usage},
                     "token_usage": usage,
                 }
-                self._task_log.append(log_entry)
+                task_log = getattr(self._local, "task_log", [])
+                task_log.append(log_entry)
                 if self._debug_dir:
                     self._write_debug(tag, user_message, raw, cot, usage)
                 return raw
@@ -187,14 +192,14 @@ class BestOfKController:
     # ------------------------------------------------------------------
 
     def reset_task_log(self) -> None:
-        self._task_log = []
-        self._task_tokens = {"input": 0, "output": 0, "reasoning": 0}
+        self._local.task_log = []
+        self._local.task_tokens = {"input": 0, "output": 0, "reasoning": 0}
 
     def get_task_log(self) -> List[Dict]:
-        return list(self._task_log)
+        return list(getattr(self._local, "task_log", []))
 
     def get_task_token_usage(self) -> Dict[str, int]:
-        return dict(self._task_tokens)
+        return dict(getattr(self._local, "task_tokens", {"input": 0, "output": 0, "reasoning": 0}))
 
     def get_session_token_usage(self) -> Dict[str, int]:
         return dict(self._session_tokens)
