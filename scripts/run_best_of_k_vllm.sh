@@ -18,7 +18,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-export PORT="${PORT:-8002}"
+export PORT=8004
 export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 mkdir -p outputs
 
