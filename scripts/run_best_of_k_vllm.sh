@@ -22,8 +22,8 @@ export PORT="${PORT:-8002}"
 export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 mkdir -p outputs
 
-TASKS_FILE="${1:-data/pbebench/tasks_full_og.jsonl}"
-OUT_FILE="outputs/$(basename "${TASKS_FILE%.jsonl}")_best_of_k.jsonl"
+TASKS_FILE="data/pbebench/tasks_full_og.jsonl"
+OUT_FILE="outputs/tasks_full_og_best_of_k.jsonl"
 
 python main.py \
   --framework        best_of_k \
@@ -35,7 +35,6 @@ python main.py \
   --workers          32 \
   --default-reward   pbebench \
   --output-file      "${OUT_FILE}" \
-  --debug-dir        debug_best_of_k \
   "$@"
 
 echo "Output: ${OUT_FILE}"
