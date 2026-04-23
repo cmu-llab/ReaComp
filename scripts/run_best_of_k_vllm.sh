@@ -22,7 +22,7 @@ export PORT="${PORT:-8002}"
 export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 mkdir -p outputs
 
-TASKS_FILE="${1:-data/pbebench/lite_tasks_full_og.jsonl}"
+TASKS_FILE="${1:-data/pbebench/tasks_full_og.jsonl}"
 OUT_FILE="outputs/$(basename "${TASKS_FILE%.jsonl}")_best_of_k.jsonl"
 
 python main.py \
