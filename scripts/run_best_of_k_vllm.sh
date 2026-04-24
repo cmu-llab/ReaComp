@@ -34,6 +34,7 @@ python main.py \
   --max-tokens       32768 \
   --workers          32 \
   --default-reward   pbebench \
+  --max-programs     20 \
   --output-file      "${OUT_FILE}" \
   "$@"
 

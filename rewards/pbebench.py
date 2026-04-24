@@ -152,11 +152,6 @@ def reward(
     max_pred_len      : maximum length of predicate A in replace(A, B) (default 3)
     max_transform_len : maximum length of transform B in replace(A, B) (default 3)
     """
-    # Use cascade_length from the task entry if available — this covers both
-    # PBEBench-Lite (max 5) and the hard full dataset (up to 20).
-    if "cascade_length" in entry:
-        max_programs = int(entry["cascade_length"])
-
     if not execution_ok:
         return {
             "value": 0.0,

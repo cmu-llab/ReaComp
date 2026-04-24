@@ -45,6 +45,7 @@ python main.py \
   --dfs-k            32 \
   --max-tokens       32768 \
   --default-reward   pbebench \
+  --max-programs     5 \
   --workers          "${WORKERS}" \
   --output-file      "${OUT_FILE}" \
   --debug-dir        debug_direct_feedback_simplify \

@@ -18,6 +18,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict, Optional, Set
 
+import functools
+
 from dotenv import load_dotenv
 
 from rewards import load_reward
@@ -428,6 +430,8 @@ def _run_parallel_stateless(
         logger.info("--- Task %d (worker) ---", i + 1)
         if reward_name:
             reward_fn = load_reward(reward_name)
+            if args.max_programs is not None:
+                reward_fn = functools.partial(reward_fn, max_programs=args.max_programs)
             return controller.solve_with_reward(
                 task_input=task_input,
                 task_type=task_type,
@@ -769,6 +773,14 @@ def main() -> None:
         metavar="N",
         help="[direct_feedback_simplify] Stop Phase 2 early if the model produces the same "
              "replace() program sequence N times in a row. (default: 3)",
+    )
+    parser.add_argument(
+        "--max-programs",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Override the max_programs constraint passed to the pbebench reward function. "
+             "Use 5 for PBEBench-Lite, 20 for full PBEBench. (default: reward function default)",
     )
     # ---- Parallelism (stateless frameworks only) ----
     parser.add_argument(
@@ -1123,6 +1135,8 @@ def main() -> None:
 
                 if reward_name:
                     reward_fn = load_reward(reward_name)
+                    if args.max_programs is not None:
+                        reward_fn = functools.partial(reward_fn, max_programs=args.max_programs)
                     result = controller.solve_with_reward(
                         task_input=task_input,
                         task_type=task_type,

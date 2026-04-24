@@ -47,6 +47,7 @@ python main.py \
   --max-tokens       32768 \
   --max-reward-iters 32 \
   --default-reward   pbebench \
+  --max-programs     5 \
   --workers          "${WORKERS}" \
   --output-file      "${OUT_FILE}" \
   --debug-dir        debug_direct_feedback \
