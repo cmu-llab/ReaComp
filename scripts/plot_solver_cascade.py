@@ -149,12 +149,16 @@ def main():
 
     fig, ax = plt.subplots(figsize=(10, 5))
 
+    # Keep per-series pass rate arrays for crossover detection
+    series_rates: list[tuple[bool, list[float]]] = []
+
     for i, (by_cl, label, is_bok) in enumerate(all_series):
         color_line, color_fill = COLORS[i % len(COLORS)]
         pass_rates = [
             100 * sum(by_cl[cl]) / len(by_cl[cl]) if by_cl[cl] else float("nan")
             for cl in all_cascade_lengths
         ]
+        series_rates.append((is_bok, pass_rates))
 
         linestyle = "--" if is_bok else "-"
         ax.fill_between(all_cascade_lengths, pass_rates, alpha=0.10, color=color_fill)
@@ -174,6 +178,32 @@ def main():
                         fontsize=7.5, color="#1E3A5F",
                     )
 
+    # Crossover annotation: first CL where best solver exceeds best BoK
+    solver_pr_lists = [pr for is_bok, pr in series_rates if not is_bok]
+    bok_pr_lists    = [pr for is_bok, pr in series_rates if is_bok]
+    if solver_pr_lists and bok_pr_lists:
+        crossover_cl = None
+        crossover_y = None
+        for j, cl in enumerate(all_cascade_lengths):
+            best_solver = max((pr[j] for pr in solver_pr_lists if not np.isnan(pr[j])), default=float("nan"))
+            best_bok    = max((pr[j] for pr in bok_pr_lists    if not np.isnan(pr[j])), default=float("nan"))
+            if not np.isnan(best_solver) and not np.isnan(best_bok) and best_solver > best_bok:
+                crossover_cl = cl
+                crossover_y  = (best_solver + best_bok) / 2
+                break
+        if crossover_cl is not None:
+            ax.axvline(crossover_cl, color="#6B7280", linewidth=1.2, linestyle=":", zorder=2)
+            ax.annotate(
+                f"solver leads\nfrom CL {crossover_cl}",
+                xy=(crossover_cl, crossover_y),
+                xytext=(6, 0),
+                textcoords="offset points",
+                va="center", ha="left",
+                fontsize=8.5, color="#374151",
+                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#D1D5DB", lw=0.8),
+                arrowprops=dict(arrowstyle="-|>", color="#6B7280", lw=1.0),
+            )
+
     # Reference lines
     ax.axhline(100, color="#9CA3AF", linewidth=0.8, linestyle="--", zorder=1)
     ax.axhline(50,  color="#9CA3AF", linewidth=0.8, linestyle=":",  zorder=1)
@@ -191,7 +221,7 @@ def main():
             "Pass rate vs cascade length — comparison\n(PBEBench-Hard, 64 tasks per level)",
             fontsize=13, fontweight="bold",
         )
-        ax.legend(fontsize=11, loc="upper right")
+        ax.legend(fontsize=10, loc="lower left")
 
     ax.set_xticks(all_cascade_lengths)
     ax.set_xlim(all_cascade_lengths[0] - 0.5, all_cascade_lengths[-1] + 0.5)
