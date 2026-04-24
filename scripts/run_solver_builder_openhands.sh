@@ -16,7 +16,7 @@ PORT=${1:-8000}
 
 GPU_NODE=localhost
 BASE_URL=http://${GPU_NODE}:${PORT}/v1
-MODEL=openai/Qwen/Qwen3-Coder-30B-A3B-Instruct  # openai/ prefix required by litellm
+MODEL=openai/Qwen/Qwen3.6-35B-A3B  # openai/ prefix required by litellm
 
 SIF_PATH=/scratch/$USER/sif_images/sandbox.sif
 
@@ -26,11 +26,11 @@ REWARDS_DIR=rewards
 
 # Timestamped output dir so reruns don't overwrite each other
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-OUTPUT_DIR=built_solvers/oh_solver_${TIMESTAMP}
+OUTPUT_DIR=built_solvers/qwen3.6_coder/${TIMESTAMP}
 DEBUG_DIR=debug_oh_solver_builder/${TIMESTAMP}
 
-MAX_STEPS=200
-MAX_TOKENS=16384
+MAX_STEPS=500
+MAX_TOKENS=32768
 # ─────────────────────────────────────────────────────────────────────────────
 
 echo "SolverBuilder run"
