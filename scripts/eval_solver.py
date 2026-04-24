@@ -134,18 +134,20 @@ def evaluate(dataset_key, solver_path, output_dir=None, limit=None, workers=1):
     ]
 
     def _write_row(task_index, rec, result, elapsed_task):
+        reward = result["score"]
         row = {
+            # quick_eval-compatible fields
             "task_index": task_index,
+            "solved": result["success"],
+            "answer": result["program"],
+            "best_reward": reward,
+            "reward_history": [{"iteration": 0, "reward": reward}],
+            "token_usage": {"input": 0, "output": 0, "reasoning": 0},
+            "cost_summary": {"elapsed_s": elapsed_task},
+            # extra context fields (ignored by quick_eval)
             "dataset": cfg["label"],
-            "inputs": rec["inputs"],
-            "outputs": rec["outputs"],
             "cascade_length": rec.get("cascade_length"),
             "bfcc_string": rec.get("bfcc_string"),
-            "success": result["success"],
-            "score": result["score"],
-            "program": result["program"],
-            "solver": solver_path,
-            "elapsed_s": elapsed_task,
         }
         if out_fh is not None:
             out_fh.write(json.dumps(row) + "\n")
