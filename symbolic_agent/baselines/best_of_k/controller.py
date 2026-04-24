@@ -72,7 +72,7 @@ class BestOfKController:
         if base_url:
             import openai
             self._backend = "gpt_oss" if "gpt-oss" in model else "openai"
-            self._client = openai.OpenAI(base_url=base_url, api_key=api_key or "EMPTY")
+            self._client = openai.OpenAI(base_url=base_url, api_key=api_key or "EMPTY", timeout=600.0)
         else:
             import anthropic
             self._backend = "anthropic"
