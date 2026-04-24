@@ -12,7 +12,7 @@ Usage:
     python scripts/eval_bok_hard.py --bok outputs/gpt_oss_120b_pbebench_outputs.jsonl
                                     --tasks data/pbebench/tasks_full_og.jsonl
                                     --solver-cc evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl
-                                    --solver-qw evals/solver_results/qwen3.6_coder/Fri_Apr_24_200_AM/hard.jsonl
+                                    --solver-qw evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/hard.jsonl
 """
 
 import argparse
@@ -194,7 +194,7 @@ def main():
     parser.add_argument("--bok", default="outputs/gpt_oss_120b_pbebench_outputs.jsonl")
     parser.add_argument("--tasks", default="data/pbebench/tasks_full_og.jsonl")
     parser.add_argument("--solver-cc", default="evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl")
-    parser.add_argument("--solver-qw", default="evals/solver_results/qwen3.6_coder/Fri_Apr_24_200_AM/hard.jsonl")
+    parser.add_argument("--solver-qw", default="evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/hard.jsonl")
     parser.add_argument("--metrics-json", default=None)
     args = parser.parse_args()
 

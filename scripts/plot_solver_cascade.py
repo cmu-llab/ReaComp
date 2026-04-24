@@ -11,14 +11,14 @@ Usage:
     # Compare two solvers
     python scripts/plot_solver_cascade.py \\
         --input evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl \\
-                evals/solver_results/qwen3.6_coder/Fri_Apr_24_200_AM/hard.jsonl \\
+                evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/hard.jsonl \\
         --labels "Claude Code" "Qwen3.6-Coder (OH)" \\
         --out figures/solver_cascade_passrate_comparison.png
 
     # Add BoK line
     python scripts/plot_solver_cascade.py \\
         --input evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl \\
-                evals/solver_results/qwen3.6_coder/Fri_Apr_24_200_AM/hard.jsonl \\
+                evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/hard.jsonl \\
         --labels "Claude Code" "Qwen3.6-Coder (OH)" \\
         --bok outputs/gpt_oss_120b_pbebench_outputs.jsonl \\
         --bok-labels "BoK-32 (gpt-oss-120b)" \\
@@ -67,32 +67,35 @@ def load(path: Path) -> defaultdict:
             if cl is None:
                 continue
             if r.get("best_reward") is not None:
-                solved = float(r["best_reward"]) >= 1.0
+                score = float(r["best_reward"])
             elif "solved" in r:
-                solved = bool(r["solved"])
+                score = 1.0 if r["solved"] else 0.0
             else:
-                solved = bool(r.get("success"))
-            by_cl[cl].append(solved)
+                score = 1.0 if r.get("success") else 0.0
+            by_cl[cl].append(score)
     return by_cl
 
 
-def _score_candidate(candidate: str, inputs: list, outputs: list) -> bool:
+def _score_candidate(candidate: str, inputs: list, outputs: list) -> float:
+    """Return fraction of I/O pairs correctly mapped (1.0 = fully solved)."""
     programs, err = _parse_programs(candidate)
     if programs is None:
-        return False
+        return 0.0
     if _validate_programs(programs, max_programs=_BOK_MAX_PROGRAMS):
-        return False
+        return 0.0
+    correct = 0
     for inp, exp in zip(inputs, outputs):
         s = inp
         for pred, transform in programs:
             s = s.replace(pred, transform)
-        if s != exp:
-            return False
-    return True
+        if s == exp:
+            correct += 1
+    return correct / len(inputs) if inputs else 0.0
 
 
 def load_bok(path: Path) -> defaultdict:
-    """Load BoK sampling JSONL {input: {inputs, outputs, cascade_length, index}, outputs: [candidates]}."""
+    """Load BoK sampling JSONL {input: {inputs, outputs, cascade_length, index}, outputs: [candidates]}.
+    Stores the best score across all candidates per task."""
     by_cl: defaultdict = defaultdict(list)
     with open(path) as f:
         for line in f:
@@ -106,8 +109,8 @@ def load_bok(path: Path) -> defaultdict:
                 continue
             inputs = inp["inputs"]
             outputs = inp["outputs"]
-            solved = any(_score_candidate(c, inputs, outputs) for c in rec.get("outputs", []))
-            by_cl[cl].append(solved)
+            best = max((_score_candidate(c, inputs, outputs) for c in rec.get("outputs", [])), default=0.0)
+            by_cl[cl].append(best)
     return by_cl
 
 
@@ -121,8 +124,11 @@ def main():
                         help="One or more BoK sampling JSONL files to overlay")
     parser.add_argument("--bok-labels", nargs="+", default=None, metavar="LABEL",
                         help="Legend labels for --bok files")
+    parser.add_argument("--metric", choices=["pass_rate", "mean_reward"], default="pass_rate",
+                        help="Metric to plot on y-axis (default: pass_rate)")
     parser.add_argument("--out", default=str(DEFAULT_OUT), metavar="FILE")
     args = parser.parse_args()
+    use_mean_reward = args.metric == "mean_reward"
 
     inputs = [Path(p) for p in args.input] if args.input else DEFAULT_INPUT
     labels = args.labels if args.labels else [p.parent.parent.name or p.stem for p in inputs]
@@ -149,29 +155,36 @@ def main():
 
     fig, ax = plt.subplots(figsize=(10, 5))
 
-    # Keep per-series pass rate arrays for crossover detection
-    series_rates: list[tuple[bool, list[float]]] = []
+    # Keep per-series value arrays for crossover detection
+    series_vals: list[tuple[bool, list[float]]] = []
 
     for i, (by_cl, label, is_bok) in enumerate(all_series):
         color_line, color_fill = COLORS[i % len(COLORS)]
-        pass_rates = [
-            100 * sum(by_cl[cl]) / len(by_cl[cl]) if by_cl[cl] else float("nan")
-            for cl in all_cascade_lengths
-        ]
-        series_rates.append((is_bok, pass_rates))
+        if use_mean_reward:
+            values = [
+                sum(by_cl[cl]) / len(by_cl[cl]) if by_cl[cl] else float("nan")
+                for cl in all_cascade_lengths
+            ]
+        else:
+            values = [
+                100 * sum(1 for v in by_cl[cl] if v >= 1.0) / len(by_cl[cl]) if by_cl[cl] else float("nan")
+                for cl in all_cascade_lengths
+            ]
+        series_vals.append((is_bok, values))
 
         linestyle = "--" if is_bok else "-"
-        ax.fill_between(all_cascade_lengths, pass_rates, alpha=0.10, color=color_fill)
-        ax.plot(all_cascade_lengths, pass_rates, marker="o", markersize=6,
+        ax.fill_between(all_cascade_lengths, values, alpha=0.10, color=color_fill)
+        ax.plot(all_cascade_lengths, values, marker="o", markersize=6,
                 linewidth=2.0, color=color_line, linestyle=linestyle, zorder=3, label=label)
 
         # Annotate only for single-series plots
         if total_series == 1:
-            for cl, pr in zip(all_cascade_lengths, pass_rates):
-                if not np.isnan(pr):
+            for cl, v in zip(all_cascade_lengths, values):
+                if not np.isnan(v):
+                    txt = f"{v:.3f}" if use_mean_reward else f"{v:.0f}%"
                     ax.annotate(
-                        f"{pr:.0f}%",
-                        xy=(cl, pr),
+                        txt,
+                        xy=(cl, v),
                         xytext=(0, 8),
                         textcoords="offset points",
                         ha="center", va="bottom",
@@ -179,14 +192,14 @@ def main():
                     )
 
     # Crossover annotation: first CL where best solver exceeds best BoK
-    solver_pr_lists = [pr for is_bok, pr in series_rates if not is_bok]
-    bok_pr_lists    = [pr for is_bok, pr in series_rates if is_bok]
-    if solver_pr_lists and bok_pr_lists:
+    solver_val_lists = [vals for is_bok, vals in series_vals if not is_bok]
+    bok_val_lists    = [vals for is_bok, vals in series_vals if is_bok]
+    if solver_val_lists and bok_val_lists:
         crossover_cl = None
         crossover_y = None
         for j, cl in enumerate(all_cascade_lengths):
-            best_solver = max((pr[j] for pr in solver_pr_lists if not np.isnan(pr[j])), default=float("nan"))
-            best_bok    = max((pr[j] for pr in bok_pr_lists    if not np.isnan(pr[j])), default=float("nan"))
+            best_solver = max((v[j] for v in solver_val_lists if not np.isnan(v[j])), default=float("nan"))
+            best_bok    = max((v[j] for v in bok_val_lists    if not np.isnan(v[j])), default=float("nan"))
             if not np.isnan(best_solver) and not np.isnan(best_bok) and best_solver > best_bok:
                 crossover_cl = cl
                 crossover_y  = (best_solver + best_bok) / 2
@@ -205,28 +218,41 @@ def main():
             )
 
     # Reference lines
-    ax.axhline(100, color="#9CA3AF", linewidth=0.8, linestyle="--", zorder=1)
-    ax.axhline(50,  color="#9CA3AF", linewidth=0.8, linestyle=":",  zorder=1)
+    if use_mean_reward:
+        ax.axhline(1.0, color="#9CA3AF", linewidth=0.8, linestyle="--", zorder=1)
+        ax.axhline(0.5, color="#9CA3AF", linewidth=0.8, linestyle=":",  zorder=1)
+    else:
+        ax.axhline(100, color="#9CA3AF", linewidth=0.8, linestyle="--", zorder=1)
+        ax.axhline(50,  color="#9CA3AF", linewidth=0.8, linestyle=":",  zorder=1)
 
     ax.set_xlabel("Cascade length (number of replace() programs)", fontsize=12)
-    ax.set_ylabel("Pass rate (%)", fontsize=12)
+
+    if use_mean_reward:
+        ax.set_ylabel("Mean reward", fontsize=12)
+        metric_label = "mean reward"
+        y_top = 1.12
+        ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
+    else:
+        ax.set_ylabel("Pass rate (%)", fontsize=12)
+        metric_label = "pass rate"
+        y_top = 112
+        ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%g%%"))
 
     if total_series == 1:
         ax.set_title(
-            "Symbolic solver pass rate vs cascade length\n(PBEBench-Hard, 64 tasks per level)",
+            f"Symbolic solver {metric_label} vs cascade length\n(PBEBench-Hard, 64 tasks per level)",
             fontsize=13, fontweight="bold",
         )
     else:
         ax.set_title(
-            "Pass rate vs cascade length — comparison\n(PBEBench-Hard, 64 tasks per level)",
+            f"{metric_label.capitalize()} vs cascade length — comparison\n(PBEBench-Hard, 64 tasks per level)",
             fontsize=13, fontweight="bold",
         )
         ax.legend(fontsize=10, loc="lower left")
 
     ax.set_xticks(all_cascade_lengths)
     ax.set_xlim(all_cascade_lengths[0] - 0.5, all_cascade_lengths[-1] + 0.5)
-    ax.set_ylim(0, 112)
-    ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%g%%"))
+    ax.set_ylim(0, y_top)
     ax.grid(axis="y", linewidth=0.5, color="#E5E7EB")
     ax.set_axisbelow(True)
     ax.spines["top"].set_visible(False)
