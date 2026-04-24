@@ -137,13 +137,21 @@ def evaluate(dataset_key, solver_path, output_dir=None, limit=None, workers=1):
         for i, rec in enumerate(records)
     ]
 
+    def _normalise_answer(program):
+        """Convert [[A,B],...] pairs to ["replace('A','B')",...] strings if needed."""
+        if not isinstance(program, list):
+            return program
+        if program and isinstance(program[0], (list, tuple)):
+            return [f"replace('{a}', '{b}')" for a, b in program]
+        return program
+
     def _write_row(task_index, rec, result, elapsed_task):
         reward = result["score"]
         row = {
             # quick_eval-compatible fields
             "task_index": task_index,
             "solved": result["success"],
-            "answer": result["program"],
+            "answer": _normalise_answer(result["program"]),
             "best_reward": reward,
             "reward_history": [{"iteration": 0, "reward": reward}],
             "token_usage": {"input": 0, "output": 0, "reasoning": 0},
