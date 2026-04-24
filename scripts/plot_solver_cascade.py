@@ -1,10 +1,18 @@
 """
 Plot symbolic solver pass rate vs cascade length on PBEBench-Hard.
+Supports overlaying multiple solver outputs for comparison.
 
 Usage:
+    # Single solver (original behaviour)
     python scripts/plot_solver_cascade.py
     python scripts/plot_solver_cascade.py --input evals/solver_results/hard.jsonl
-    python scripts/plot_solver_cascade.py --out figures/solver_cascade.png
+
+    # Compare two solvers
+    python scripts/plot_solver_cascade.py \\
+        --input evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl \\
+                evals/solver_results/qwen3.6_coder/Fri_Apr_24_200_AM/hard.jsonl \\
+        --labels "Claude Code" "Qwen3.6-Coder (OH)" \\
+        --out figures/solver_cascade_passrate_comparison.png
 """
 
 import argparse
@@ -18,8 +26,14 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-DEFAULT_INPUT = REPO_ROOT / "evals/solver_results/hard.jsonl"
+DEFAULT_INPUT = [REPO_ROOT / "evals/solver_results/hard.jsonl"]
 DEFAULT_OUT   = REPO_ROOT / "figures/solver_cascade_passrate.png"
+
+COLORS = [
+    ("#2563EB", "#BFDBFE"),  # blue (Claude Code)
+    ("#DC2626", "#FECACA"),  # red  (Qwen)
+    ("#16A34A", "#BBF7D0"),  # green (third solver if needed)
+]
 
 
 def load(path: Path):
@@ -31,45 +45,57 @@ def load(path: Path):
                 continue
             r = json.loads(line)
             cl = r.get("cascade_length")
+            success = r.get("solved") if "solved" in r else r.get("success")
             if cl is not None:
-                by_cl[cl].append(r)
+                by_cl[cl].append(bool(success))
     return by_cl
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default=str(DEFAULT_INPUT), metavar="FILE")
-    parser.add_argument("--out",   default=str(DEFAULT_OUT),   metavar="FILE")
+    parser.add_argument("--input", nargs="+", default=None, metavar="FILE",
+                        help="One or more JSONL result files to plot (default: evals/solver_results/hard.jsonl)")
+    parser.add_argument("--labels", nargs="+", default=None, metavar="LABEL",
+                        help="Legend labels for each input file (default: filename stems)")
+    parser.add_argument("--out", default=str(DEFAULT_OUT), metavar="FILE")
     args = parser.parse_args()
 
-    by_cl = load(Path(args.input))
-    cascade_lengths = sorted(by_cl)
-    pass_rates = [
-        100 * sum(r["success"] for r in by_cl[cl]) / len(by_cl[cl])
-        for cl in cascade_lengths
-    ]
-    ns = [len(by_cl[cl]) for cl in cascade_lengths]
+    inputs = [Path(p) for p in args.input] if args.input else DEFAULT_INPUT
+    labels = args.labels if args.labels else [p.parent.parent.name or p.stem for p in inputs]
 
-    # ── plot ──────────────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(9, 5))
+    if len(labels) < len(inputs):
+        labels += [inputs[i].parent.parent.name or inputs[i].stem for i in range(len(labels), len(inputs))]
 
-    color_line  = "#2563EB"   # blue
-    color_fill  = "#BFDBFE"   # light blue
+    # Collect all cascade lengths across files so x-axis is consistent
+    all_data = [load(p) for p in inputs]
+    all_cascade_lengths = sorted(set(cl for d in all_data for cl in d))
 
-    ax.fill_between(cascade_lengths, pass_rates, alpha=0.18, color=color_fill)
-    ax.plot(cascade_lengths, pass_rates, marker="o", markersize=6,
-            linewidth=2.0, color=color_line, zorder=3)
+    fig, ax = plt.subplots(figsize=(10, 5))
 
-    # Annotate each point with pass%
-    for cl, pr in zip(cascade_lengths, pass_rates):
-        ax.annotate(
-            f"{pr:.0f}%",
-            xy=(cl, pr),
-            xytext=(0, 8),
-            textcoords="offset points",
-            ha="center", va="bottom",
-            fontsize=7.5, color="#1E3A5F",
-        )
+    for i, (by_cl, label) in enumerate(zip(all_data, labels)):
+        color_line, color_fill = COLORS[i % len(COLORS)]
+        pass_rates = [
+            100 * sum(by_cl[cl]) / len(by_cl[cl]) if by_cl[cl] else float("nan")
+            for cl in all_cascade_lengths
+        ]
+        ns = [len(by_cl[cl]) for cl in all_cascade_lengths]
+
+        ax.fill_between(all_cascade_lengths, pass_rates, alpha=0.12, color=color_fill)
+        ax.plot(all_cascade_lengths, pass_rates, marker="o", markersize=6,
+                linewidth=2.0, color=color_line, zorder=3, label=label)
+
+        # Annotate only when a single solver (avoid clutter in comparison mode)
+        if len(inputs) == 1:
+            for cl, pr in zip(all_cascade_lengths, pass_rates):
+                if not np.isnan(pr):
+                    ax.annotate(
+                        f"{pr:.0f}%",
+                        xy=(cl, pr),
+                        xytext=(0, 8),
+                        textcoords="offset points",
+                        ha="center", va="bottom",
+                        fontsize=7.5, color="#1E3A5F",
+                    )
 
     # Reference lines
     ax.axhline(100, color="#9CA3AF", linewidth=0.8, linestyle="--", zorder=1)
@@ -77,11 +103,21 @@ def main():
 
     ax.set_xlabel("Cascade length (number of replace() programs)", fontsize=12)
     ax.set_ylabel("Pass rate (%)", fontsize=12)
-    ax.set_title("Symbolic solver pass rate vs cascade length\n(PBEBench-Hard, 64 tasks per level)",
-                 fontsize=13, fontweight="bold")
 
-    ax.set_xticks(cascade_lengths)
-    ax.set_xlim(cascade_lengths[0] - 0.5, cascade_lengths[-1] + 0.5)
+    if len(inputs) == 1:
+        ax.set_title(
+            "Symbolic solver pass rate vs cascade length\n(PBEBench-Hard, 64 tasks per level)",
+            fontsize=13, fontweight="bold",
+        )
+    else:
+        ax.set_title(
+            "Symbolic solver pass rate vs cascade length — comparison\n(PBEBench-Hard, 64 tasks per level)",
+            fontsize=13, fontweight="bold",
+        )
+        ax.legend(fontsize=11, loc="upper right")
+
+    ax.set_xticks(all_cascade_lengths)
+    ax.set_xlim(all_cascade_lengths[0] - 0.5, all_cascade_lengths[-1] + 0.5)
     ax.set_ylim(0, 112)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%g%%"))
     ax.grid(axis="y", linewidth=0.5, color="#E5E7EB")
