@@ -10,6 +10,10 @@ Three sandboxed baselines for symbolic-library-agent, separate from `main.py`.
 | TroVE | `trove` | Paper-faithful rewrite; 3 modes × K samples per task, reward-based selection |
 | Best-of-K | `best_of_k` | Fully async; K independent samples, pick best by reward; no library |
 
+## SolverBuilder (meta-agent)
+
+A separate entry point (`build_solver.py`) that runs **once** to produce a symbolic solver rather than solving tasks directly. The agent reads `DEMOS.json` reasoning traces and writes `SOLVER.py` + `SOLVER_ALGORITHM.md`. See [solver_builder.md](solver_builder.md) for details.
+
 ## Directory layout
 
 ```
@@ -85,3 +89,4 @@ Checkpoint: `<output>.ckpt.json` — tracks `completed_ids` (set, order-independ
 - [trove.md](trove.md) — TroVE algorithm, token tracking, listing format
 - [pkg_library.md](pkg_library.md) — shared library internals, thread safety
 - [sandbox.md](sandbox.md) — Apptainer sandbox, bind mounts, constraints
+- [solver_builder.md](solver_builder.md) — meta-agent that writes a symbolic solver from DEMOS.json traces
