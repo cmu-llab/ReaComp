@@ -18,6 +18,18 @@
 | BoK-32 ∪ Solver (Qwen3.6) | 926 / 1216 | 76.15% | 0.9836 | +6.50pp |
 | **BoK-32 ∪ CC Solver ∪ Qwen Solver** | **999 / 1216** | **82.15%** | **0.9910** | **+12.50pp** |
 
+## Complexity of solutions (solved tasks only, vs ground truth)
+
+Selection policy: max reward first, min complexity as tiebreak.
+
+| System | n solved | Mean pred | Mean GT | Δ (pred−GT) | Simpler | Equal | More complex |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| BoK-32 (gpt-oss-120b) | 832 | 36.00 | 33.69 | +2.31 | 10.5% | 49.5% | 40.0% |
+| Symbolic Solver (Claude Code) | 847 | 44.21 | 36.16 | +8.06 | 0.5% | 10.7% | 88.8% |
+| Symbolic Solver (Qwen3.6-35B-A3B) | 716 | 38.91 | 35.50 | +3.41 | 2.5% | 24.6% | 72.9% |
+
+**BoK-32 finds the simplest solutions** — 49.5% equal to GT and only +2.31 mean delta, versus +8.06 for the CC solver. This is the "simpler programs" benefit of sampling 32 candidates and picking the best. Both symbolic solvers consistently overshoot GT complexity (88.8% and 72.9% more complex), likely because the induction approach finds valid but redundant programs.
+
 ## Key findings
 
 **1. BoK-32 dominates at short cascades, solvers dominate at long cascades.**
@@ -44,9 +56,12 @@ BoK-32 covers the easy end (low CL, high diversity from 32 samples) while the so
 | `figures/ensemble_hard_meanreward.png` | Mean reward vs CL (individual + ensembles) |
 | `figures/solver_cascade_passrate_with_bok.png` | Pass rate comparison (solvers vs BoK, with crossover) |
 | `figures/solver_cascade_meanreward_with_bok.png` | Mean reward comparison (solvers vs BoK) |
+| `figures/complexity_hard.png` | Mean solution complexity vs CL (solved tasks only) |
+| `figures/complexity_hard_metrics.json` | Complexity stats vs GT as JSON |
 
 ## Scripts
 
 - `scripts/eval_bok_hard.py` — per-system eval + side-by-side CL breakdown
 - `scripts/eval_ensemble_hard.py` — ensemble eval + plots (`--plot`, `--plot-mr`, `--metrics-json`)
 - `scripts/plot_solver_cascade.py` — extended with `--bok`/`--metric` flags; auto-annotates crossover
+- `scripts/complexity_analysis_hard.py` — complexity vs GT analysis + plot (`--plot`, `--metrics-json`)

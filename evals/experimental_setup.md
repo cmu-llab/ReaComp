@@ -35,7 +35,9 @@ All baselines use **gpt-oss-120b** served via vLLM on an internal cluster. The m
 
 **Approach**: generate K independent samples for each task in parallel (temperature > 0), score each against the verifier, and select the highest-reward candidate. Ties broken by cascade complexity (prefer simpler programs).
 
-**Configuration**: K = 32, max 32,768 tokens per sample.
+**PBEBench-Lite configuration**: K = 32, max 32,768 tokens per sample (full CoT budget).
+
+**PBEBench-Hard configuration**: K = 32, max 16,384 tokens per sample (reduced CoT budget). **All 32 attempts are always run, even if a correct solution is found early** — there is no early exit. This is a deliberate choice: PBEBench-Hard tasks are genuinely hard, and continuing past the first correct answer allows the verifier to find *simpler* programs among later candidates. The token cost is therefore a firm upper bound (K × tokens_per_sample) and overestimates real-world usage; in practice one could stop at the first correct answer.
 
 **Key property**: embarrassingly parallel; no feedback loop. Token budget is K × tokens_per_sample, used regardless of whether an early sample is correct.
 

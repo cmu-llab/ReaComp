@@ -122,6 +122,32 @@ def load_cc_solver(path: Path) -> dict[int, dict]:
     return records
 
 
+def load_standard(path: Path) -> dict[int, dict]:
+    """Load any standard quick_eval-compatible JSONL (best_reward + answer).
+    One record per task_index; answer parsed via _parse_programs."""
+    records: dict[int, dict] = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            tid = rec.get("task_index")
+            if tid is None:
+                continue
+            score = float(rec.get("best_reward", 1.0 if rec.get("solved") else 0.0))
+            programs, _ = _parse_programs(rec.get("answer"))
+            complexity = cascade_complexity(programs) if programs else None
+            cl = rec.get("cascade_length")
+            prev = records.get(tid)
+            if prev is None or score > prev["best_score"] or (
+                score == prev["best_score"] and complexity is not None
+                and (prev["complexity"] is None or complexity < prev["complexity"])
+            ):
+                records[tid] = {"cascade_length": cl, "best_score": score, "complexity": complexity}
+    return records
+
+
 def load_qwen_solver(path: Path) -> dict[int, dict]:
     records: dict[int, dict] = {}
     with open(path) as f:
@@ -207,6 +233,7 @@ def make_complexity_plot(
     systems: list[tuple[str, dict[int, dict]]],
     gt: dict[int, int],
     out: Path,
+    subtitle: str = "PBEBench-Hard, solved tasks only, 64 tasks per level",
 ) -> None:
     """Mean complexity vs cascade length (solved tasks only), with GT as reference."""
     all_cls = sorted(set(
@@ -244,8 +271,7 @@ def make_complexity_plot(
     ax.set_xlabel("Cascade length (number of replace() programs)", fontsize=12)
     ax.set_ylabel("Mean cascade complexity", fontsize=12)
     ax.set_title(
-        "Mean complexity of solutions vs cascade length\n"
-        "(PBEBench-Hard, solved tasks only, 64 tasks per level)",
+        f"Mean complexity of solutions vs cascade length\n({subtitle})",
         fontsize=13, fontweight="bold",
     )
     ax.legend(fontsize=10, loc="upper left")
@@ -302,7 +328,8 @@ def main():
         print(f"\nMetrics written to {args.metrics_json}")
 
     if args.plot:
-        make_complexity_plot(systems, gt, Path(args.plot))
+        make_complexity_plot(systems, gt, Path(args.plot),
+                             subtitle="PBEBench-Hard, solved tasks only, 64 tasks per level")
 
 
 if __name__ == "__main__":
