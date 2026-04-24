@@ -35,6 +35,7 @@ class ApptainerSandbox:
         code: str,
         lib_dir: Optional[str] = None,
         timeout: Optional[int] = None,
+        extra_binds: Optional[list] = None,
     ) -> tuple[bool, str, str]:
         """
         Execute code in the Apptainer sandbox.
@@ -49,6 +50,9 @@ class ApptainerSandbox:
             code can do `from <basename> import fn`.
         timeout : int, optional
             Per-call timeout override (seconds). Falls back to self.timeout.
+        extra_binds : list of (host_path, container_path, mode), optional
+            Additional bind mounts beyond exec_dir and lib_dir. mode is "ro" or "rw".
+            E.g. [("/data/DEMOS.json", "/exec/DEMOS.json", "ro")]
 
         Returns
         -------
@@ -68,6 +72,9 @@ class ApptainerSandbox:
             if lib_dir:
                 pkg_name = os.path.basename(lib_dir.rstrip("/"))
                 cmd += ["--bind", f"{lib_dir}:/exec/{pkg_name}:ro"]
+            if extra_binds:
+                for host_path, container_path, mode in extra_binds:
+                    cmd += ["--bind", f"{host_path}:{container_path}:{mode}"]
 
             cmd += [self.sif_path, "python", "/exec/code.py"]
 
