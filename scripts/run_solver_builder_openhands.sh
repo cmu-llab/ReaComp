@@ -24,8 +24,8 @@ BUILDING_PROMPT=building_prompts/SOLVER_BUILDING_PROMPT.md
 DEMOS_PATH=DEMOS.json
 REWARDS_DIR=rewards
 
-# Timestamped output dir so reruns don't overwrite each other
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+# Timestamped output dir matching the claude_code naming convention (e.g. Thu_Apr_23_807_PM)
+TIMESTAMP=$(date +"%a_%b_%-d_%-I%M_%p")
 OUTPUT_DIR=built_solvers/qwen3.6_coder/${TIMESTAMP}
 DEBUG_DIR=debug_oh_solver_builder/${TIMESTAMP}
 
