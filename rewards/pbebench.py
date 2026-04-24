@@ -5,10 +5,10 @@ Each task is a Programming-by-Example problem: given a set of input strings and
 corresponding output strings, the agent must produce an ordered sequence of Python
 str.replace() programs that transforms every input into its paired output.
 
-Constraints (from the task prompt):
+Constraints (parametric — pass overrides to :func:`reward`):
   1. Each program has the form replace(A, B) with quoted string arguments.
-  2. 1 <= len(A) <= 3 characters; len(B) can be 0 (empty string) to 3 characters.
-  3. Maximum 5 programs in a sequence.
+  2. 1 <= len(A) <= max_pred_len (default 3); 0 <= len(B) <= max_transform_len (default 3).
+  3. At most max_programs programs per sequence (default 5 for PBEBench-Lite, 20 for hard).
   4. Only the built-in str.replace() function is used — no other functions or imports.
 
 Score = (number of input→output pairs correctly transformed) / (total pairs).
@@ -81,16 +81,21 @@ def _parse_programs(result: Any) -> Tuple[Optional[List[Tuple[str, str]]], str]:
 
 # ── validation ────────────────────────────────────────────────────────────────
 
-def _validate_programs(programs: List[Tuple[str, str]]) -> List[str]:
+def _validate_programs(
+    programs: List[Tuple[str, str]],
+    max_programs: int = 5,
+    max_pred_len: int = 3,
+    max_transform_len: int = 3,
+) -> List[str]:
     """
     Check each program against the task constraints.
     Returns a list of violation messages (empty list = all constraints satisfied).
     """
     violations: List[str] = []
 
-    if len(programs) > 5:
+    if len(programs) > max_programs:
         violations.append(
-            f"Too many programs: {len(programs)} (maximum is 5)"
+            f"Too many programs: {len(programs)} (maximum is {max_programs})"
         )
 
     for i, (pred, transform) in enumerate(programs):
@@ -100,15 +105,15 @@ def _validate_programs(programs: List[Tuple[str, str]]) -> List[str]:
                 f"Program {idx} replace('{pred}', '{transform}'): "
                 "predicate A must have at least 1 character"
             )
-        elif len(pred) > 3:
+        elif len(pred) > max_pred_len:
             violations.append(
                 f"Program {idx} replace('{pred}', '{transform}'): "
-                f"predicate A has {len(pred)} characters (max 3)"
+                f"predicate A has {len(pred)} characters (max {max_pred_len})"
             )
-        if len(transform) > 3:
+        if len(transform) > max_transform_len:
             violations.append(
                 f"Program {idx} replace('{pred}', '{transform}'): "
-                f"transform B has {len(transform)} characters (max 3)"
+                f"transform B has {len(transform)} characters (max {max_transform_len})"
             )
 
     return violations
@@ -127,15 +132,31 @@ def cascade_complexity(programs: List[Tuple[str, str]]) -> int:
 
 # ── main reward function ───────────────────────────────────────────────────────
 
-def reward(result: Any, execution_ok: bool, entry: Dict) -> Dict:
+def reward(
+    result: Any,
+    execution_ok: bool,
+    entry: Dict,
+    max_programs: int = 5,
+    max_pred_len: int = 3,
+    max_transform_len: int = 3,
+) -> Dict:
     """
     Parameters
     ----------
-    result       : raw Python value returned by execute_with_library(), or the
-                   direct answer string from BCR's direct action; None on failure
-    execution_ok : False if the solution code raised a runtime exception
-    entry        : full task record dict (contains 'inputs', 'outputs', ...)
+    result            : raw Python value returned by execute_with_library(), or the
+                        direct answer string from BCR's direct action; None on failure
+    execution_ok      : False if the solution code raised a runtime exception
+    entry             : full task record dict (contains 'inputs', 'outputs', ...)
+    max_programs      : maximum number of replace() programs allowed (default 5 for
+                        PBEBench-Lite, 20 for hard PBEBench tasks)
+    max_pred_len      : maximum length of predicate A in replace(A, B) (default 3)
+    max_transform_len : maximum length of transform B in replace(A, B) (default 3)
     """
+    # Use cascade_length from the task entry if available — this covers both
+    # PBEBench-Lite (max 5) and the hard full dataset (up to 20).
+    if "cascade_length" in entry:
+        max_programs = int(entry["cascade_length"])
+
     if not execution_ok:
         return {
             "value": 0.0,
@@ -156,14 +177,21 @@ def reward(result: Any, execution_ok: bool, entry: Dict) -> Dict:
             ),
         }
 
-    violations = _validate_programs(programs)
+    violations = _validate_programs(
+        programs,
+        max_programs=max_programs,
+        max_pred_len=max_pred_len,
+        max_transform_len=max_transform_len,
+    )
     if violations:
         return {
             "value": 0.0,
             "message": (
                 "Program sequence violates task constraints — "
                 + "; ".join(violations)
-                + ". Constraints: 1<=len(A)<=3, 0<=len(B)<=3, max 5 programs total."
+                + f". Constraints: 1<=len(A)<={max_pred_len}, "
+                f"0<=len(B)<={max_transform_len}, "
+                f"max {max_programs} programs total."
             ),
         }
 
