@@ -24,6 +24,13 @@ Usage:
                   evals/solver_results/lite.jsonl \\
         --out outputs/ensemble_df_bok_solver.jsonl
 
+    # Efficiency mode: symbolic solver takes priority when correct; LLM tokens
+    # are only counted when the symbolic solver is imperfect.
+    python scripts/ensemble_outputs.py --effi \\
+        --symbolic evals/solver_results/claude_code/.../lite.jsonl \\
+        --sources outputs/lite_tasks_full_og_direct_feedback.jsonl \\
+        --out outputs/ensemble_effi_df_claude_solver.jsonl
+
 Output fields (minimal set for quick_eval.py):
     task_index, solved, answer, best_reward, reward_history, token_usage, cost_summary
 """
@@ -155,6 +162,82 @@ def ensemble(sources: list[dict[int, dict]]) -> list[dict]:
     return output
 
 
+def ensemble_effi(symbolic_src: dict[int, dict], llm_sources: list[dict[int, dict]]) -> list[dict]:
+    """
+    Efficiency-focused ensemble strategy.
+
+    Per task:
+      - If the symbolic solver produced a perfect program (reward == 1.0):
+          use it as-is; token_usage = 0 (LLM never needed).
+      - Otherwise:
+          pick the best LLM candidate by (highest reward, then lowest complexity,
+          then source order); token_usage = sum across all LLM sources for that task.
+    """
+    all_ids = sorted(set(list(symbolic_src.keys()) + [tid for src in llm_sources for tid in src]))
+    output = []
+
+    for tid in all_ids:
+        sym_rec = symbolic_src.get(tid)
+        sym_reward = _best_reward(sym_rec) if sym_rec is not None else 0.0
+
+        if sym_reward >= 1.0:
+            # Symbolic solver is correct — use it, zero token cost.
+            rh = sym_rec.get("reward_history") or [{"iteration": 0, "reward": 1.0}]
+            output.append({
+                "task_index": tid,
+                "solved": True,
+                "answer": _answer(sym_rec),
+                "best_reward": 1.0,
+                "reward_history": rh,
+                "token_usage": {"input": 0, "output": 0, "reasoning": 0},
+                "cost_summary": sym_rec.get("cost_summary", {}),
+            })
+        else:
+            # Symbolic solver imperfect — pick best LLM candidate.
+            llm_candidates = [src[tid] for src in llm_sources if tid in src]
+            if not llm_candidates:
+                # No LLM source either — fall back to symbolic if available.
+                if sym_rec is not None:
+                    rh = sym_rec.get("reward_history") or [{"iteration": 0, "reward": sym_reward}]
+                    output.append({
+                        "task_index": tid,
+                        "solved": sym_reward >= 1.0,
+                        "answer": _answer(sym_rec),
+                        "best_reward": sym_reward,
+                        "reward_history": rh,
+                        "token_usage": {"input": 0, "output": 0, "reasoning": 0},
+                        "cost_summary": sym_rec.get("cost_summary", {}),
+                    })
+                continue
+
+            best_llm_r = max(_best_reward(c) for c in llm_candidates)
+            finalists = [c for c in llm_candidates if _best_reward(c) >= best_llm_r - 1e-9]
+            winner = min(finalists, key=lambda c: (_complexity(_answer(c)), llm_candidates.index(c)))
+
+            answer = _answer(winner)
+            reward = _best_reward(winner)
+            rh = winner.get("reward_history") or [{"iteration": 0, "reward": reward}]
+
+            # Sum token usage across ALL LLM sources for this task.
+            combined_tokens: dict[str, int] = {"input": 0, "output": 0, "reasoning": 0}
+            for c in llm_candidates:
+                tu = c.get("token_usage") or {}
+                for k in combined_tokens:
+                    combined_tokens[k] += int(tu.get(k, 0) or 0)
+
+            output.append({
+                "task_index": tid,
+                "solved": reward >= 1.0,
+                "answer": answer,
+                "best_reward": reward,
+                "reward_history": rh,
+                "token_usage": combined_tokens,
+                "cost_summary": winner.get("cost_summary", {}),
+            })
+
+    return output
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -162,15 +245,31 @@ def main():
                         help="Input JSONL files to ensemble (order determines tie-breaking priority)")
     parser.add_argument("--out", required=True, metavar="FILE",
                         help="Output JSONL path")
+    parser.add_argument("--effi", action="store_true",
+                        help="Efficiency mode: use --symbolic as the symbolic solver source; "
+                             "LLM token cost is zeroed out for tasks the symbolic solver solves perfectly.")
+    parser.add_argument("--symbolic", default="", metavar="FILE",
+                        help="(--effi only) Path to symbolic solver JSONL.")
     args = parser.parse_args()
 
-    sources = [load_source(p) for p in args.sources]
-    total_tasks = len(set(tid for src in sources for tid in src))
-    print(f"Loaded {len(args.sources)} sources, {total_tasks} unique task indices")
-    for p, src in zip(args.sources, sources):
-        print(f"  {Path(p).name}: {len(src)} tasks")
-
-    records = ensemble(sources)
+    if args.effi:
+        if not args.symbolic:
+            parser.error("--effi requires --symbolic FILE")
+        symbolic_src = load_source(args.symbolic)
+        llm_sources = [load_source(p) for p in args.sources]
+        total_tasks = len(set(list(symbolic_src.keys()) + [tid for src in llm_sources for tid in src]))
+        print(f"Efficiency ensemble: symbolic={Path(args.symbolic).name} + {len(args.sources)} LLM source(s), {total_tasks} unique tasks")
+        print(f"  {Path(args.symbolic).name}: {len(symbolic_src)} tasks (symbolic)")
+        for p, src in zip(args.sources, llm_sources):
+            print(f"  {Path(p).name}: {len(src)} tasks (LLM)")
+        records = ensemble_effi(symbolic_src, llm_sources)
+    else:
+        sources = [load_source(p) for p in args.sources]
+        total_tasks = len(set(tid for src in sources for tid in src))
+        print(f"Loaded {len(args.sources)} sources, {total_tasks} unique task indices")
+        for p, src in zip(args.sources, sources):
+            print(f"  {Path(p).name}: {len(src)} tasks")
+        records = ensemble(sources)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w") as f:
