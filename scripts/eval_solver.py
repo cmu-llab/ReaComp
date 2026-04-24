@@ -22,13 +22,14 @@ sys.path.insert(0, REPO_ROOT)  # needed by SOLVER.py to import rewards.*
 
 
 def _default_solver_path():
-    bl = os.path.join(REPO_ROOT, "built_libraries")
     paths = []
-    for dirpath, _, filenames in os.walk(bl):
-        if "SOLVER.py" in filenames:
-            paths.append(os.path.join(dirpath, "SOLVER.py"))
+    for search_root in ("built_solvers", "built_libraries"):
+        d = os.path.join(REPO_ROOT, search_root)
+        for dirpath, _, filenames in os.walk(d):
+            if "SOLVER.py" in filenames:
+                paths.append(os.path.join(dirpath, "SOLVER.py"))
     if not paths:
-        raise FileNotFoundError("No SOLVER.py found under built_libraries/")
+        raise FileNotFoundError("No SOLVER.py found under built_solvers/ or built_libraries/")
     return max(paths, key=os.path.getmtime)
 
 
@@ -66,17 +67,20 @@ DATASETS = {
 
 def _run_task(args):
     """Called in a worker process. Loads the solver fresh per-process."""
+    import inspect
     task_index, rec, solver_path, max_programs, max_pred_len, max_transform_len = args
     # Each worker imports the solver independently (no shared state)
     solve_pbe, _ = _load_solver(solver_path)
     examples = list(zip(rec["inputs"], rec["outputs"]))
+    # Pass only kwargs the solver actually accepts
+    sig_params = set(inspect.signature(solve_pbe).parameters)
+    kwargs = {"max_programs": max_programs}
+    if "max_pred_len" in sig_params:
+        kwargs["max_pred_len"] = max_pred_len
+    if "max_transform_len" in sig_params:
+        kwargs["max_transform_len"] = max_transform_len
     t0 = time.time()
-    result = solve_pbe(
-        examples,
-        max_programs=max_programs,
-        max_pred_len=max_pred_len,
-        max_transform_len=max_transform_len,
-    )
+    result = solve_pbe(examples, **kwargs)
     return task_index, rec, result, round(time.time() - t0, 3)
 
 
