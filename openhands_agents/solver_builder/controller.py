@@ -36,10 +36,10 @@ You have three tools:
 
   execute_code(code)
       Run Python code in a sandbox.
-      DEMOS.json is at /workspace/DEMOS.json.
+      DEMOS_PBEBENCH.json is mounted at /workspace/DEMOS.json.
       The verifier is directly importable (sys.path already includes /workspace):
           from rewards.pbebench import reward
-      Use this to explore DEMOS.json, understand task structure, and test
+      Use this to explore /workspace/DEMOS.json, understand task structure, and test
       small solver logic snippets before writing the final files.
 
   write_file(filename, content)
@@ -248,7 +248,7 @@ class SolverBuilderController:
         else:
             file_note = (
                 "File path reference guide (for @-references in the spec below):\n"
-                "  @DEMOS.json         → /workspace/DEMOS.json   (use execute_code to read)\n"
+                "  @DEMOS_PBEBENCH.json → /workspace/DEMOS.json   (use execute_code to read)\n"
                 "  @rewards/pbebench.py → importable as: from rewards.pbebench import reward\n"
                 "  @SOLVER.py          → write via write_file(filename='SOLVER.py', content=...)\n"
                 "  @SOLVER_ALGORITHM.md → write via write_file(filename='SOLVER_ALGORITHM.md', content=...)\n"
