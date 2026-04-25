@@ -15,6 +15,12 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+try:
+    import editdistance as _editdistance
+    _EDITDISTANCE_AVAILABLE = True
+except ImportError:
+    _EDITDISTANCE_AVAILABLE = False
+
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
@@ -67,6 +73,75 @@ def _parse_complexity(answer) -> int | None:
     return sum(len(pred) + len(transform) for pred, transform in programs)
 
 
+def _apply_programs(programs: list[tuple[str, str]], inputs: list[str]) -> list[str]:
+    """Apply a replace() cascade to each input string."""
+    results = []
+    for inp in inputs:
+        cur = inp
+        for pred, transform in programs:
+            cur = cur.replace(pred, transform)
+        results.append(cur)
+    return results
+
+
+def _parse_programs_any(answer) -> list[tuple[str, str]] | None:
+    """Parse programs from any answer format: replace() strings or [[pred,transform],...] pairs."""
+    if answer is None:
+        return None
+    # Qwen-style: [[pred, transform], ...] or [pred, transform] (single pair)
+    if isinstance(answer, list) and answer:
+        first = answer[0]
+        if isinstance(first, (list, tuple)) and len(first) == 2 and all(isinstance(x, str) for x in first):
+            return [(str(p), str(t)) for p, t in answer]
+    from rewards.pbebench import _parse_programs as _pbebench_parse
+    programs, _ = _pbebench_parse(answer)
+    return programs
+
+
+def _edit_sim(pred_outputs: list[str], inputs: list[str], targets: list[str]) -> float | None:
+    """
+    Edit similarity: 1 - (edit_dist(pred, target) / edit_dist(input, target)).
+    Tokenised by whitespace, summed over all pairs. Returns None if denominator is 0.
+    """
+    if not _EDITDISTANCE_AVAILABLE:
+        return None
+    pred_tok    = [s.split() for s in pred_outputs]
+    inputs_tok  = [s.split() for s in inputs]
+    targets_tok = [s.split() for s in targets]
+    num = sum(_editdistance.eval(p, t) for p, t in zip(pred_tok, targets_tok))
+    den = sum(_editdistance.eval(i, t) for i, t in zip(inputs_tok, targets_tok))
+    if den == 0:
+        return None
+    return 1.0 - num / den
+
+
+def _syntax_valid_slr(answer, validation_program: str) -> bool | None:
+    """
+    Return True if the rule is syntactically valid Prolog, False if not, None on error.
+    Only called for records with best_reward == 0.0 (positive reward implies valid syntax).
+    """
+    try:
+        from rewards.slr_bench import _get_judge, _extract_rule
+        rule, _ = _extract_rule(answer)
+        if rule is None:
+            return False
+        judge = _get_judge()
+        results = judge.compute(
+            predictions=[rule],
+            references=[{
+                "validation_program": validation_program,
+                "evaluation_config": {
+                    "positive_predicate": "eastbound",
+                    "negative_predicate": "westbound",
+                },
+            }],
+        )
+        detail = results["detailed_results"][0]
+        return bool(detail.get("syntax_valid", False))
+    except Exception:
+        return None
+
+
 def load(path: str) -> list[dict]:
     tasks: dict[int, dict] = {}
     with open(path) as f:
@@ -113,8 +188,11 @@ def load_task_metadata(path: str) -> dict[int, dict]:
                 "cascade_length": rec.get("cascade_length"),
                 "bfcc_dag_len": dag_len,
                 "gt_complexity": gt_complexity,
+                "inputs": rec.get("inputs"),
+                "outputs": rec.get("outputs"),
                 "slr_gt_rule": gt_rule,
                 "slr_gt_complexity": slr_gt_complexity,
+                "validation_program": rec.get("validation program"),
                 "rule_complexity": rec.get("rule complexity"),
                 "curriculum_level": rec.get("curriculum level"),
                 "curriculum_tier": rec.get("curriculum tier"),
@@ -348,6 +426,88 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
                 "simpler": simpler, "equal": equal, "more_complex": more_complex,
             }
 
+    # PBEBench edit similarity (requires --tasks-file with inputs/outputs)
+    edit_sim_metrics: dict = {}
+    if task_meta and _EDITDISTANCE_AVAILABLE:
+        sim_scores = []
+        for rec in records:
+            m = task_meta.get(rec.get("task_index")) or {}
+            task_inputs  = m.get("inputs")
+            task_outputs = m.get("outputs")
+            if not task_inputs or not task_outputs:
+                continue
+            programs = _parse_programs_any(rec.get("answer"))
+            if programs is None:
+                continue
+            pred_outputs = _apply_programs(programs, task_inputs)
+            sim = _edit_sim(pred_outputs, task_inputs, task_outputs)
+            if sim is not None:
+                sim_scores.append(sim)
+        if sim_scores:
+            mean_sim = sum(sim_scores) / len(sim_scores)
+            solved_sim_scores = []
+            for rec in records:
+                if best_reward(rec) < 1.0:
+                    continue
+                m = task_meta.get(rec.get("task_index")) or {}
+                task_inputs  = m.get("inputs")
+                task_outputs = m.get("outputs")
+                if not task_inputs or not task_outputs:
+                    continue
+                programs = _parse_programs_any(rec.get("answer"))
+                if programs is None:
+                    continue
+                pred_outputs = _apply_programs(programs, task_inputs)
+                sim = _edit_sim(pred_outputs, task_inputs, task_outputs)
+                if sim is not None:
+                    solved_sim_scores.append(sim)
+            mean_sim_solved = sum(solved_sim_scores) / len(solved_sim_scores) if solved_sim_scores else None
+            print(f"\n  Edit similarity  ({len(sim_scores)}/{n} tasks)")
+            print(f"    Mean (all tasks)     : {mean_sim:.4f}")
+            if mean_sim_solved is not None:
+                print(f"    Mean (solved only)   : {mean_sim_solved:.4f}")
+            edit_sim_metrics = {
+                "n": len(sim_scores),
+                "mean": round(mean_sim, 4),
+                "mean_solved": round(mean_sim_solved, 4) if mean_sim_solved is not None else None,
+            }
+
+    # SLR-Bench syntax rate
+    # Invariant (validated): partial_score > 0 ↔ syntax_valid=True.
+    # So records with best_reward > 0 are always syntax-valid; only re-run the judge
+    # for best_reward == 0.0 records to distinguish syntax errors from logic failures.
+    slr_syntax_metrics: dict = {}
+    _is_slr = any(r.get("curriculum_tier") is not None or r.get("dataset") == "SLR-Bench" for r in records)
+    if _is_slr:
+        n_positive = sum(1 for r in records if best_reward(r) > 0.0)
+        zero_records = [r for r in records if best_reward(r) == 0.0]
+        n_zero_syntax_valid = 0
+        if zero_records and task_meta:
+            print(f"\n  SLR syntax check: re-running judge on {len(zero_records)} zero-reward records...")
+            for rec in zero_records:
+                m = task_meta.get(rec.get("task_index")) or {}
+                vp = m.get("validation_program")
+                if not vp:
+                    continue
+                sv = _syntax_valid_slr(rec.get("answer"), vp)
+                if sv:
+                    n_zero_syntax_valid += 1
+        n_syntax_valid = n_positive + n_zero_syntax_valid
+        syntax_rate = 100.0 * n_syntax_valid / n if n else 0.0
+        print(f"\n  SLR syntax rate")
+        print(f"    Syntax-valid (reward>0)  : {n_positive}/{n}")
+        if zero_records:
+            print(f"    Syntax-valid (reward=0)  : {n_zero_syntax_valid}/{len(zero_records)}")
+        print(f"    Overall syntax rate      : {n_syntax_valid}/{n} = {syntax_rate:.1f}%")
+        slr_syntax_metrics = {
+            "n_syntax_valid": n_syntax_valid,
+            "n_total": n,
+            "syntax_rate": round(syntax_rate, 2),
+            "n_positive_reward": n_positive,
+            "n_zero_reward_syntax_valid": n_zero_syntax_valid,
+            "n_zero_reward_syntax_invalid": len(zero_records) - n_zero_syntax_valid,
+        }
+
     # cascade length / BFCC breakdowns (requires --tasks-file join)
     breakdown_cascade: list[dict] = []
     breakdown_bfcc: list[dict] = []
@@ -515,6 +675,7 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
         "token_usage": token_metrics or None,
         "pbe_complexity": complexity_metrics or None,
         "complexity_vs_gt": complexity_vs_gt or None,
+        "edit_sim": edit_sim_metrics or None,
         "breakdown_by_cascade_length": breakdown_cascade or None,
         "breakdown_by_bfcc_relations": breakdown_bfcc or None,
         "slr_complexity": slr_complexity_metrics or None,
@@ -522,6 +683,7 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
         "slr_breakdown_by_tier": slr_breakdown_tier or None,
         "slr_breakdown_by_level": slr_breakdown_level or None,
         "slr_breakdown_by_rule_complexity": slr_breakdown_complexity or None,
+        "slr_syntax": slr_syntax_metrics or None,
         "unsolved": sorted(unsolved, key=lambda x: x["task_index"] or 0),
     }
 
