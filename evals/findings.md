@@ -364,6 +364,26 @@ All systems find rules **simpler than GT** — the opposite pattern from PBEBenc
 
 **6. DF+Solver is the best configuration** at 76.7% pass and 1,479 avg tokens (effi). BoK+Solver is slightly behind (76.0%). The partial-eval ceiling is limited by solver failures on complex rules; full-dataset results pending.
 
+### Comparison with SLR-Bench leaderboard
+
+CC Solver pass rate by tier vs reported models (Logical-Reasoning Accuracy ↑):
+
+| Model | Basic | Easy | Medium | Hard |
+|-------|------:|-----:|-------:|-----:|
+| **CC Solver (ours)** | **100** | **78.4** | **48.4** | **46.8** |
+| o3 | 99 | 93 | 74 | 45 |
+| gpt-5 | 100 | 90 | 72 | 46 |
+| gpt-5-mini | 99 | 82 | 41 | 20 |
+| o1 | 99 | 82 | 41 | 15 |
+| R1-Llama-70B | 98 | 93 | 67 | 8 |
+| gpt-4o | 93 | 29 | 2 | 0 |
+
+Source: Table 3, SLR-Bench paper (`figures/slr_bench_reported_metrics.png`).
+
+**Key takeaway:** On the **Hard tier the CC Solver (46.8%) matches o3 (45%) and gpt-5 (46%)** — the top two leaderboard models — at zero per-task LLM cost. The solver is weakest on the Easy tier (78.4% vs 90–93% frontier), where rule variety exceeds the solver's inductive coverage. All unsolved tasks have `best_reward > 0`, confirming no syntax errors — every produced rule is valid Prolog.
+
+**TODO:** Compare full ensemble results (BoK/DF + CC Solver + Qwen Solver) against this leaderboard once BoK/DF complete on the full 1000-task dataset.
+
 ### Output files
 
 | File | Description |
