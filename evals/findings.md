@@ -86,6 +86,26 @@ Selection policy: max reward first, min complexity as tiebreak.
 
 Performance collapses at CL=5 (50.0%) — at the 5-program limit there is no slack for feed/bleed ordering interactions.
 
+### Comparison with PBEBench-Lite reported results
+
+Source: Table in PBEBench paper (`figures/pbebench_lite_reported_metrics.png`). Reported scores use **single attempt, Pass@1, 8192 CoT tokens** — no scaling. Our BoK (K=32) and DF (K=32) use substantially more compute and are not directly comparable to those single-attempt entries; they are included here only for orientation.
+
+| Model | Pass@1 / Pass% | Notes |
+|-------|---------------:|-------|
+| gpt-oss-120b (paper, single attempt) | 62.5% | 8192 CoT tokens, no scaling |
+| GPT-5 (paper, single attempt) | 72.4% | reported |
+| **CC Solver (ours)** | **80.4%** | zero LLM tokens, zero per-task cost |
+| **OH Qwen Solver (ours)** | **53.4%** | zero LLM tokens, Qwen3.6-35B-A3B |
+| BoK-32 (gpt-oss-120b, K=32) | 93.9% | 67K avg tokens (32× scaled) |
+| DF-32 (gpt-oss-120b, K=32) | 92.4% | 110K avg tokens (32× scaled) |
+| **BoK-32 + CC Solver** | **93.95%** | 67K avg tokens |
+| **DF-32 + CC Solver** | **93.1%** | 110K avg tokens |
+| **DF+BoK + CC Solver** | **94.9%** | 178K avg tokens |
+
+**Key takeaway:** The CC Solver alone (80.4%) **surpasses the reported gpt-oss-120b single-attempt score (62.5%) and GPT-5 (72.4%)** at zero per-task inference cost. Once BoK/DF scaling is applied our LLM baselines dominate — but the symbolic solver's standalone score is competitive with frontier models at their unscaled (single-attempt) setting.
+
+**TODO:** Add Edit Sim and Complexity columns from our results once computed; add ensembled results to this table.
+
 ### Key findings
 
 **1. Symbolic solvers alone are surprisingly strong.** The Claude solver reaches 80.4% pass at zero LLM token cost. Qwen is weaker (53.4%) but produces notably tighter programs (Δ+1.70 vs GT, vs +3.00 for Claude).
