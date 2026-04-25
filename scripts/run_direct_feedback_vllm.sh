@@ -37,16 +37,19 @@ DATASET="${DATASET:-lite}"
 case "${DATASET}" in
   slr)
     TASKS_FILE="data/slr_bench/v1_All_full.jsonl"
+    OUT_FILE="outputs/slr_bench_direct_feedback.jsonl"
     DEFAULT_REWARD="slr_bench"
     DEFAULT_MAX_PROGRAMS=""
     ;;
   hard)
     TASKS_FILE="data/pbebench/tasks_full_og.jsonl"
+    OUT_FILE="outputs/tasks_full_og_direct_feedback.jsonl"
     DEFAULT_REWARD="pbebench"
     DEFAULT_MAX_PROGRAMS="20"
     ;;
   lite|*)
     TASKS_FILE="data/pbebench/lite_tasks_full_og.jsonl"
+    OUT_FILE="outputs/lite_tasks_full_og_direct_feedback.jsonl"
     DEFAULT_REWARD="pbebench"
     DEFAULT_MAX_PROGRAMS="5"
     ;;
@@ -55,9 +58,6 @@ esac
 MAX_PROGRAMS="${MAX_PROGRAMS:-${DEFAULT_MAX_PROGRAMS}}"
 PROGRAMS_ARG=""
 [[ -n "${MAX_PROGRAMS}" ]] && PROGRAMS_ARG="--max-programs ${MAX_PROGRAMS}"
-
-STEM="$(basename "${TASKS_FILE%.jsonl}")"
-OUT_FILE="outputs/${STEM}_direct_feedback.jsonl"
 
 echo "Tasks   : ${TASKS_FILE}"
 echo "Output  : ${OUT_FILE}  (checkpoint: ${OUT_FILE%.jsonl}.ckpt.json)"
