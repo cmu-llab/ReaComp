@@ -166,5 +166,5 @@ def dispatch_tool_call(toolbox: TroVEToolbox, tool_call) -> str:
         toolbox_code=toolbox.get_full_code(),
     )
     if not is_ok:
-        return json.dumps({"error": "execution failed", "stderr": _truncate(output)})
+        return json.dumps({"error": "execution failed", "stdout": _truncate(output)})
     return _truncate(output)
