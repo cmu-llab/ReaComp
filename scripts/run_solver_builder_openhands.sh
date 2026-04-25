@@ -20,7 +20,7 @@ MODEL=openai/Qwen/Qwen3.6-35B-A3B  # openai/ prefix required by litellm
 
 SIF_PATH=/scratch/$USER/sif_images/sandbox.sif
 
-BUILDING_PROMPT=building_prompts/SOLVER_BUILDING_PROMPT.md
+BUILDING_PROMPT=building_prompts/SOLVER_BUILDING_PROMPT_SLR.md
 DEMOS_PATH=DEMOS.json
 REWARDS_DIR=rewards
 
