@@ -156,6 +156,22 @@ def _append_task_output(result: dict, task_index: int, output_file: str) -> None
         "token_usage": result.get("token_usage", {}),
         "agent_messages": result.get("agent_messages", []),
     }
+    # TroVE telemetry: passthrough when present so scripts/analyze_trove_run.py
+    # (and any other post-hoc analyzer) can read per-task tool-use stats and the
+    # final library state from the JSONL. Keys are absent on non-TroVE runs.
+    for key in (
+        "won_mode",
+        "import_eligible",
+        "import_was_winner",
+        "tool_calls",
+        "tool_call_count",
+        "tools_called",
+        "actually_called",
+        "trove_stopped_reason",
+        "library_snapshot",
+    ):
+        if key in result:
+            record[key] = result[key]
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, default=str) + "\n")
