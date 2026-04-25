@@ -16,6 +16,7 @@ Score = partial_score from the evaluate library ∈ [0.0, 1.0].
 """
 
 import re
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 _EXAMPLES_BLOCK_RE = re.compile(
@@ -58,6 +59,7 @@ _PROLOG_RULE_RE = re.compile(
 )
 
 _symbolic_judge = None
+_judge_lock = threading.Lock()
 
 def no_tqdm(iterable=None, *args, **kwargs):
     return iterable if iterable is not None else []
@@ -157,17 +159,18 @@ def reward(
         return {"value": 0.0, "message": "Entry missing 'validation program' field."}
 
     try:
-        judge = _get_judge()
-        eval_results = judge.compute(
-            predictions=[rule],
-            references=[{
-                "validation_program": validation_program,
-                "evaluation_config": {
-                    "positive_predicate": "eastbound",
-                    "negative_predicate": "westbound",
-                },
-            }],
-        )
+        with _judge_lock:
+            judge = _get_judge()
+            eval_results = judge.compute(
+                predictions=[rule],
+                references=[{
+                    "validation_program": validation_program,
+                    "evaluation_config": {
+                        "positive_predicate": "eastbound",
+                        "negative_predicate": "westbound",
+                    },
+                }],
+            )
     except Exception as e:
         return {"value": 0.0, "message": f"Evaluation error: {e}"}
 
