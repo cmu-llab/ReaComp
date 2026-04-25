@@ -88,23 +88,28 @@ Performance collapses at CL=5 (50.0%) — at the 5-program limit there is no sla
 
 ### Comparison with PBEBench-Lite reported results
 
-Source: Table in PBEBench paper (`figures/pbebench_lite_reported_metrics.png`). Reported scores use **single attempt, Pass@1, 8192 CoT tokens** — no scaling. Our BoK (K=32) and DF (K=32) use substantially more compute and are not directly comparable to those single-attempt entries; they are included here only for orientation.
+Source: PBEBench paper (`figures/pbebench_lite_reported_metrics.png`). Paper numbers use **single attempt, Pass@1, 8192 CoT tokens** — no test-time scaling. Our BoK (K=32) and DF (K=32) use substantially more compute and are not directly comparable; they are included for reference. Symbolic solvers use **zero per-task LLM inference**.
 
-| Model | Pass@1 / Pass% | Notes |
-|-------|---------------:|-------|
-| gpt-oss-120b (paper, single attempt) | 62.5% | 8192 CoT tokens, no scaling |
-| GPT-5 (paper, single attempt) | 72.4% | reported |
-| **CC Solver (ours)** | **80.4%** | zero LLM tokens, zero per-task cost |
-| **OH Qwen Solver (ours)** | **53.4%** | zero LLM tokens, Qwen3.6-35B-A3B |
-| BoK-32 (gpt-oss-120b, K=32) | 93.9% | 67K avg tokens (32× scaled) |
-| DF-32 (gpt-oss-120b, K=32) | 92.4% | 110K avg tokens (32× scaled) |
-| **BoK-32 + CC Solver** | **93.95%** | 67K avg tokens |
-| **DF-32 + CC Solver** | **93.1%** | 110K avg tokens |
-| **DF+BoK + CC Solver** | **94.9%** | 178K avg tokens |
+| Model | Pass% | Complexity | Avg tokens | Notes |
+|-------|------:|-----------:|-----------:|-------|
+| Codestral-22B †  | 1.1% | 15.4 | — | reported, single attempt |
+| Qwen2.5-32B-Instruct †  | 1.8% | 14.9 | — | reported, single attempt |
+| Qwen3-32B † | 41.9% | 6.57 | — | reported, with CoT |
+| gpt-oss-120b † | 62.5% | 10.93 | — | reported, single attempt, 8192 CoT |
+| GPT-5 † | 72.4% | 10.58 | — | reported, single attempt |
+| **CC Solver (ours)** | **80.4%** | — | **0** | zero LLM tokens |
+| **OH Qwen Solver (ours)** | **53.4%** | — | **0** | zero LLM tokens, Qwen3.6-35B-A3B |
+| BoK-32, gpt-oss-120b (ours) | 93.9% | — | 67,479 | K=32, 32× compute |
+| DF-32, gpt-oss-120b (ours) | 92.4% | — | 110,267 | K=32 sequential |
+| **BoK-32 + CC Solver (ours)** | **93.95%** | — | 67,479 | |
+| **DF-32 + CC Solver (ours)** | **93.1%** | — | 110,267 | |
+| **DF+BoK + CC Solver (ours)** | **94.9%** | — | 177,746 | |
 
-**Key takeaway:** The CC Solver alone (80.4%) **surpasses the reported gpt-oss-120b single-attempt score (62.5%) and GPT-5 (72.4%)** at zero per-task inference cost. Once BoK/DF scaling is applied our LLM baselines dominate — but the symbolic solver's standalone score is competitive with frontier models at their unscaled (single-attempt) setting.
+† Reported scores from PBEBench paper; not re-run by us.
 
-**TODO:** Add Edit Sim and Complexity columns from our results once computed; add ensembled results to this table.
+**Key takeaway:** The CC Solver alone (80.4%) **surpasses gpt-oss-120b (62.5%) and GPT-5 (72.4%)** at their single-attempt setting — at zero per-task inference cost. The symbolic solver's standalone result is competitive with frontier LLMs before any test-time scaling is applied.
+
+**TODO:** Compute and fill Edit Sim and Complexity columns for our systems.
 
 ### Key findings
 
@@ -274,6 +279,23 @@ Both solvers re-run on PBEBench-Hard with identical settings to measure determin
 
 All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no task swings from clearly solved to clearly failed. Both solvers are essentially deterministic; variance is negligible for reporting purposes.
 
+### Comparison with PBEBench-Hard reported results
+
+The **BoK-32 gpt-oss-120b results are taken directly from the PBEBench paper's public release** (`outputs/gpt_oss_120b_pbebench_hard_outputs.jsonl`) — we re-use rather than re-run them. Paper numbers for other models use single attempt, Pass@1. Symbolic solvers use zero per-task LLM inference.
+
+| Model | Pass% | Avg tokens | Notes |
+|-------|------:|-----------:|-------|
+| gpt-oss-120b, BoK-32 † | 68.4% | 273,143 | from PBEBench paper release; K=32 w/ CoT |
+| **CC Solver (ours)** | **69.7%** | **0** | zero LLM tokens |
+| **OH Qwen Solver (ours)** | **58.9%** | **0** | zero LLM tokens, Qwen3.6-35B-A3B |
+| **BoK-32 + CC Solver (ours)** | **79.4%** | 273,143 | +11.0pp over BoK alone |
+| **BoK-32 + Qwen Solver (ours)** | **76.2%** | 273,143 | |
+| **BoK-32 + CC + Qwen Solvers (ours)** | **82.2%** | 273,143 | +13.8pp over BoK alone |
+
+† Re-used from PBEBench paper public release; not re-run by us.
+
+**Key takeaway:** The CC Solver alone (69.7%) **matches BoK-32 gpt-oss-120b (68.4%)** — the paper's strongest scaled baseline — at zero per-task inference cost. Ensembling the symbolic solvers with BoK-32 yields a +13.8pp gain (82.2%), the largest absolute improvement in the Hard setting.
+
 ### Key findings
 
 **1. BoK-32 dominates at short cascades, solvers dominate at long cascades.** Crossover at CL 12–13. BoK-32 hits near 100% for CL 2–8 while both solvers are at 85–95%. At CL 16+ BoK-32 collapses to <41% while the Claude solver holds 55–68%.
@@ -386,23 +408,29 @@ All systems find rules **simpler than GT** — the opposite pattern from PBEBenc
 
 ### Comparison with SLR-Bench leaderboard
 
-CC Solver pass rate by tier vs reported models (Logical-Reasoning Accuracy ↑):
+> **NOTE: PARTIAL RESULTS** — BoK and DF cover only 565/577 of 1000 tasks; Qwen solver not yet complete. Ensemble columns will be filled once full results are in. CC Solver rows are final (1000/1000 tasks).
 
-| Model | Basic | Easy | Medium | Hard |
-|-------|------:|-----:|-------:|-----:|
-| **CC Solver (ours)** | **100** | **78.4** | **48.4** | **46.8** |
-| o3 | 99 | 93 | 74 | 45 |
-| gpt-5 | 100 | 90 | 72 | 46 |
-| gpt-5-mini | 99 | 82 | 41 | 20 |
-| o1 | 99 | 82 | 41 | 15 |
-| R1-Llama-70B | 98 | 93 | 67 | 8 |
-| gpt-4o | 93 | 29 | 2 | 0 |
+Source: Table 3, SLR-Bench paper (`figures/slr_bench_reported_metrics.png`). Reported scores use single attempt, no test-time scaling. Our BoK/DF use K=32. Symbolic solvers use zero per-task LLM inference.
 
-Source: Table 3, SLR-Bench paper (`figures/slr_bench_reported_metrics.png`).
+**Pass rate by curriculum tier (Logical-Reasoning Accuracy ↑):**
 
-**Key takeaway:** On the **Hard tier the CC Solver (46.8%) matches o3 (45%) and gpt-5 (46%)** — the top two leaderboard models — at zero per-task LLM cost. The solver is weakest on the Easy tier (78.4% vs 90–93% frontier), where rule variety exceeds the solver's inductive coverage. All unsolved tasks have `best_reward > 0`, confirming no syntax errors — every produced rule is valid Prolog.
+| Model | Overall | Basic | Easy | Medium | Hard | Avg tokens | Notes |
+|-------|--------:|------:|-----:|-------:|-----:|-----------:|-------|
+| gpt-4o † | — | 93 | 29 | 2 | 0 | — | reported, single attempt |
+| o3 † | — | 99 | 93 | 74 | 45 | — | reported |
+| gpt-5 † | — | 100 | 90 | 72 | 46 | — | reported |
+| **CC Solver (ours)** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **0** | zero LLM tokens |
+| **OH Qwen Solver (ours)** | — | — | — | — | — | **0** | TODO: complete run |
+| BoK-32, gpt-oss-120b (ours, partial) | 100%* | — | — | — | — | 5,564* | *on 565/1000 tasks |
+| DF-32, gpt-oss-120b (ours, partial) | 100%* | — | — | — | — | 5,665* | *on 577/1000 tasks |
+| BoK-32 + CC Solver (ours, partial) | 76.0% | — | — | — | — | 3,144 | partial ensemble |
+| DF-32 + CC Solver (ours, partial) | 76.7% | — | — | — | — | 3,269 | partial ensemble |
 
-**TODO:** Compare full ensemble results (BoK/DF + CC Solver + Qwen Solver) against this leaderboard once BoK/DF complete on the full 1000-task dataset.
+† Reported scores from SLR-Bench paper; not re-run by us.
+
+**Key takeaway (partial):** On the **Hard tier the CC Solver (46.8%) matches o3 (45%) and gpt-5 (46%)** — the top leaderboard models — at zero per-task LLM cost. The solver is weakest on Easy (78.4% vs 90–93% frontier) where rule variety exceeds inductive coverage. All unsolved tasks have `best_reward > 0` — no syntax errors, every produced rule is valid Prolog.
+
+**TODO:** Fill ensemble columns (Qwen solver, full BoK/DF, BoK/DF + both solvers) and per-tier breakdown for LLM baselines once full 1000-task results are in.
 
 ### Output files
 
