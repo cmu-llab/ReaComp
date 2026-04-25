@@ -62,6 +62,8 @@ BoK = 32 parallel samples, max 32,768 tokens/sample. DF = up to 32 sequential at
 
 *Effi mode: use solver output unconditionally when it scores 1.0; count zero LLM tokens for those tasks.*
 
+> **Model note for paper:** The LLM baselines (BoK, DF) use **gpt-oss-120b** served via vLLM. The symbolic solvers are induced by a separate coding agent: the Claude Code solver by **claude-sonnet-4-6** (Claude Code session), the Qwen solver by **Qwen3.6-35B-A3B** (a smaller MoE model) running inside OpenHands. These are distinct models — the effi token savings reflect replacing gpt-oss-120b inference with a zero-cost symbolic program, not with the solver-building model. The solver-building cost (~191K tokens for Qwen, one-time) is separate from and negligible relative to the inference savings (see finding 8).
+
 ### Complexity of solutions (solved tasks only, vs GT)
 
 Selection policy: max reward first, min complexity as tiebreak.
@@ -322,6 +324,8 @@ Solver fails when:
 | DF + Solver (effi) | 1000 | **76.7%** | **0.9772** | **1,479** | 1.551 | −0.738 |
 
 *Effi saves ~65% tokens vs standard for BoK (1,093 vs 3,144) and ~55% for DF (1,479 vs 3,269).*
+
+> **Model note for paper:** LLM baselines use **gpt-oss-120b**; the symbolic solver is induced by **Qwen3.6-35B-A3B** running inside OpenHands (~116K tokens, one-time). These are distinct models — effi savings reflect replacing gpt-oss-120b inference with zero-cost symbolic execution, not the solver-building model. Build cost amortises at 64.9 tasks (15.4× return over 1000 tasks, 6.5% per-task overhead).
 
 ### Rule complexity vs ground truth (correct solutions only)
 
