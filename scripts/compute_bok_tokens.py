@@ -41,6 +41,8 @@ import json
 import sys
 from pathlib import Path
 
+from tqdm import tqdm
+
 
 def _make_counter(tokenizer_name: str):
     if tokenizer_name:
@@ -96,7 +98,7 @@ def compute(path: str, count, solver_rewards: dict | None = None) -> tuple[list[
     with open(path) as f:
         lines = [l.strip() for l in f if l.strip()]
 
-    for i, line in enumerate(lines):
+    for i, line in enumerate(tqdm(lines, desc="computing tokens", unit="task")):
         rec = json.loads(line)
         inp = rec.get("input") or {}
         prompt = inp.get("prompt") or ""
