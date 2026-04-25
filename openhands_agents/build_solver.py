@@ -54,6 +54,9 @@ def main():
                         help="Max agent steps in the conversation")
 
     # Debug
+    parser.add_argument("--solver-type", choices=["pbe", "slr"], default="pbe",
+                        help="Task type: 'pbe' (PBEBench) or 'slr' (SLR-Bench). "
+                             "Controls system prompt and expected output filenames. (default: pbe)")
     parser.add_argument("--debug-dir", default="",
                         help="Directory for debug JSON (trajectory, summary)")
 
@@ -87,10 +90,12 @@ def main():
         api_key=args.api_key,
         max_steps=args.max_steps,
         max_tokens=args.max_tokens,
+        solver_type=args.solver_type,
     )
 
     logger.info("Starting SolverBuilder conversation...")
     logger.info("  building_prompt : %s", args.building_prompt)
+    logger.info("  solver_type     : %s", args.solver_type)
     logger.info("  demos_path      : %s", args.demos_path)
     logger.info("  rewards_dir     : %s", args.rewards_dir)
     logger.info("  output_dir      : %s", args.output_dir)

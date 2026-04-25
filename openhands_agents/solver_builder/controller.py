@@ -26,7 +26,7 @@ from .tools import SBExecuteCodeTool, SBWriteFileTool, SBFinishTool
 logger = logging.getLogger(__name__)
 
 
-_SYSTEM_PROMPT = """\
+_SYSTEM_PROMPT_PBE = """\
 You are an expert in symbolic program induction and Python.
 
 Your task is to write a symbolic solver for Programming-by-Example (PBE) tasks.
@@ -71,6 +71,57 @@ Requirements:
 Do NOT produce placeholder code. Write a complete, working implementation.
 """
 
+_SYSTEM_PROMPT_SLR = """\
+You are an expert in symbolic rule induction and Python.
+
+Your task is to write a symbolic solver for SLR-Bench (Symbolic Logic Rule) tasks.
+You will be given a detailed specification in the user message.
+
+You have three tools:
+
+  execute_code(code)
+      Run Python code in a sandbox.
+      DEMOS.json is at /workspace/DEMOS.json.
+      The reward module is importable (sys.path already includes /workspace):
+          from rewards.slr_bench import reward, parse_prompt_examples, rule_complexity
+      SWI-Prolog is installed — you can also verify rules via the HuggingFace judge:
+          from rewards.slr_bench import _get_judge
+      Use this to explore DEMOS.json, understand task structure, and test
+      small solver logic snippets before writing the final files.
+
+  write_file(filename, content)
+      Write a file to the output directory.
+      Call once with filename='SOLVER_SLR.py' and once with filename='SOLVER_SLR_ALGORITHM.md'.
+      You MUST call this for both files before finishing.
+
+  finish(summary)
+      Signal that you are done. Call after both files have been written.
+
+Workflow:
+  1. Read the specification in the user message carefully.
+  2. Use execute_code to inspect DEMOS.json (structure, patterns, rule forms).
+  3. Design your solver algorithm based on what you observe.
+  4. Write SOLVER_SLR.py with the complete implementation.
+  5. Write SOLVER_SLR_ALGORITHM.md with a clear algorithm description.
+  6. Call finish with a brief summary.
+
+Requirements:
+  - The solver must implement solve_slr(examples) where examples is a list of
+    (facts_string, label) pairs; label is "eastbound" or "westbound".
+  - Use only the Python standard library (no numpy, sympy, etc.).
+  - The solver must score candidates using a local Python evaluator (do NOT
+    require SWI-Prolog at inference time — evaluate purely in Python).
+  - Return a dict with at least: success (bool), program (str), top_k_programs (list[str]),
+    score (float 0–1).
+  - The output program must be a valid Prolog rule string ending with '.', e.g.:
+    'eastbound(T) :- has_car(T, C), car_len(C, short).'
+
+Do NOT produce placeholder code. Write a complete, working implementation.
+"""
+
+# Default to PBE for backwards compatibility; SLR selected via solver_type param.
+_SYSTEM_PROMPT = _SYSTEM_PROMPT_PBE
+
 
 class SolverBuilderController:
     """
@@ -103,6 +154,7 @@ class SolverBuilderController:
         api_key: str = "EMPTY",
         max_steps: int = 200,
         max_tokens: int = 16384,
+        solver_type: str = "pbe",
     ):
         self.base_url = base_url
         self.model = model
@@ -113,6 +165,7 @@ class SolverBuilderController:
         self.output_dir = os.path.abspath(output_dir)
         self.max_steps = max_steps
         self.max_tokens = max_tokens
+        self.solver_type = solver_type
 
         self._llm = LLM(
             model=model,
@@ -121,12 +174,14 @@ class SolverBuilderController:
             max_tokens=max_tokens,
         )
 
+        system_prompt = _SYSTEM_PROMPT_SLR if solver_type == "slr" else _SYSTEM_PROMPT_PBE
+
         # Write system prompt to a temp .j2 file (SDK requires a file path).
         fd, self._system_prompt_file = tempfile.mkstemp(
             suffix=".j2", prefix="sb_system_prompt_"
         )
         with os.fdopen(fd, "w") as f:
-            f.write(_SYSTEM_PROMPT)
+            f.write(system_prompt)
 
     def _extra_binds(self) -> list:
         """
@@ -180,15 +235,26 @@ class SolverBuilderController:
         done_path = os.path.join(task_dir, "done.txt")
 
         # Prepend path resolution note so the agent knows where @-referenced files live.
-        file_note = (
-            "File path reference guide (for @-references in the spec below):\n"
-            "  @DEMOS.json         → /workspace/DEMOS.json   (use execute_code to read)\n"
-            "  @rewards/pbebench.py → importable as: from rewards.pbebench import reward\n"
-            "  @SOLVER.py          → write via write_file(filename='SOLVER.py', content=...)\n"
-            "  @SOLVER_ALGORITHM.md → write via write_file(filename='SOLVER_ALGORITHM.md', content=...)\n"
-            "\n"
-            "---\n\n"
-        )
+        if self.solver_type == "slr":
+            file_note = (
+                "File path reference guide (for @-references in the spec below):\n"
+                "  @DEMOS.json              → /workspace/DEMOS.json   (use execute_code to read)\n"
+                "  @rewards/slr_bench.py    → importable as: from rewards.slr_bench import reward, parse_prompt_examples, rule_complexity\n"
+                "  @SOLVER_SLR.py           → write via write_file(filename='SOLVER_SLR.py', content=...)\n"
+                "  @SOLVER_SLR_ALGORITHM.md → write via write_file(filename='SOLVER_SLR_ALGORITHM.md', content=...)\n"
+                "\n"
+                "---\n\n"
+            )
+        else:
+            file_note = (
+                "File path reference guide (for @-references in the spec below):\n"
+                "  @DEMOS.json         → /workspace/DEMOS.json   (use execute_code to read)\n"
+                "  @rewards/pbebench.py → importable as: from rewards.pbebench import reward\n"
+                "  @SOLVER.py          → write via write_file(filename='SOLVER.py', content=...)\n"
+                "  @SOLVER_ALGORITHM.md → write via write_file(filename='SOLVER_ALGORITHM.md', content=...)\n"
+                "\n"
+                "---\n\n"
+            )
         user_message = file_note + building_prompt
 
         agent = self._make_agent(task_dir)
@@ -211,8 +277,12 @@ class SolverBuilderController:
             logger.warning("solver_builder conversation error: %s\n%s",
                            exc, traceback.format_exc())
 
-        solver_path = os.path.join(self.output_dir, "SOLVER.py")
-        algorithm_path = os.path.join(self.output_dir, "SOLVER_ALGORITHM.md")
+        if self.solver_type == "slr":
+            solver_fname, algo_fname = "SOLVER_SLR.py", "SOLVER_SLR_ALGORITHM.md"
+        else:
+            solver_fname, algo_fname = "SOLVER.py", "SOLVER_ALGORITHM.md"
+        solver_path = os.path.join(self.output_dir, solver_fname)
+        algorithm_path = os.path.join(self.output_dir, algo_fname)
         summary = ""
         if os.path.exists(done_path):
             summary = open(done_path).read().strip()

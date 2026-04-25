@@ -20,13 +20,21 @@ MODEL=openai/Qwen/Qwen3.6-35B-A3B  # openai/ prefix required by litellm
 
 SIF_PATH=/scratch/$USER/sif_images/sandbox.sif
 
-BUILDING_PROMPT=building_prompts/SOLVER_BUILDING_PROMPT_SLR.md
-DEMOS_PATH=DEMOS.json
+SOLVER_TYPE="${SOLVER_TYPE:-slr}"   # pbe or slr
+
+if [[ "${SOLVER_TYPE}" == "slr" ]]; then
+    BUILDING_PROMPT=building_prompts/SOLVER_BUILDING_PROMPT_SLR.md
+    DEMOS_PATH=DEMOS_SLRBENCH.json
+else
+    BUILDING_PROMPT=building_prompts/SOLVER_BUILDING_PROMPT_PBE.md
+    DEMOS_PATH=DEMOS.json
+fi
+
 REWARDS_DIR=rewards
 
 # Timestamped output dir matching the claude_code naming convention (e.g. Thu_Apr_23_807_PM)
 TIMESTAMP=$(date +"%a_%b_%-d_%-I%M_%p")
-OUTPUT_DIR=built_solvers/qwen3.6_coder/${TIMESTAMP}
+OUTPUT_DIR=built_solvers/qwen3.6_35b_a3b/${TIMESTAMP}
 DEBUG_DIR=debug_oh_solver_builder/${TIMESTAMP}
 
 MAX_STEPS=500
@@ -41,6 +49,7 @@ echo ""
 
 python -m openhands_agents.build_solver \
     --building-prompt "$BUILDING_PROMPT" \
+    --solver-type "$SOLVER_TYPE" \
     --demos-path "$DEMOS_PATH" \
     --rewards-dir "$REWARDS_DIR" \
     --output-dir "$OUTPUT_DIR" \
