@@ -27,7 +27,7 @@ if [[ "${SOLVER_TYPE}" == "slr" ]]; then
     DEMOS_PATH=DEMOS_SLRBENCH.json
 else
     BUILDING_PROMPT=building_prompts/SOLVER_BUILDING_PROMPT_PBE.md
-    DEMOS_PATH=DEMOS.json
+    DEMOS_PATH=DEMOS_PBEBENCH.json
 fi
 
 REWARDS_DIR=rewards
