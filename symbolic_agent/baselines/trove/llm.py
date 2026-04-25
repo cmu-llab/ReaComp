@@ -189,7 +189,8 @@ class TroVELLMClient:
                     messages=messages,
                     # No response_format — TroVE uses free-form text
                 )
-                raw = response.choices[0].message.content or ""
+                msg = response.choices[0].message
+                raw = msg.content or getattr(msg, "reasoning_content", "") or ""
                 u = getattr(response, "usage", None)
                 details = getattr(u, "completion_tokens_details", None)
                 usage = {
