@@ -62,7 +62,7 @@ BoK = 32 parallel samples, max 32,768 tokens/sample. DF = up to 32 sequential at
 
 *Effi mode: use solver output unconditionally when it scores 1.0; count zero LLM tokens for those tasks.*
 
-> **Model note for paper:** The LLM baselines (BoK, DF) use **gpt-oss-120b** served via vLLM. The symbolic solvers are induced by a separate coding agent: the Claude Code solver by **claude-sonnet-4-6** (Claude Code session), the Qwen solver by **Qwen3.6-35B-A3B** (a smaller MoE model) running inside OpenHands. These are distinct models — the effi token savings reflect replacing gpt-oss-120b inference with a zero-cost symbolic program, not with the solver-building model. The solver-building cost (~191K tokens for Qwen, one-time) is separate from and negligible relative to the inference savings (see finding 8).
+> **Model note for paper:** The LLM baselines (BoK, DF) use **gpt-oss-120b** served via vLLM. The symbolic solvers are induced by a separate coding agent: the Claude Code solver by **claude-sonnet-4-6** (Claude Code session), the Qwen solver by **Qwen3.6-35B-A3B** (a smaller MoE model than gpt-oss-120b) running inside OpenHands. These are distinct models from the inference LLM — the effi token savings reflect replacing gpt-oss-120b inference with a zero-cost symbolic program, not with the solver-building model. The solver-building cost (~191K tokens for Qwen, one-time) is separate from and negligible relative to the inference savings (see finding 8).
 
 ### Complexity of solutions (solved tasks only, vs GT)
 
