@@ -115,3 +115,16 @@ if [[ -n "$METRICS_JSON" ]]; then
 else
     $EVAL "${EVAL_ARGS[@]}" --tasks-file $TASKS
 fi
+
+echo ""
+echo "=== Generating comparison plots ==="
+
+python scripts/plot_slr_comparison.py --plot \
+    --df   $DF \
+    --bok  $BOK \
+    --claude-solver $CC \
+    --qwen-solver   $QWEN \
+    --dataset $TASKS
+
+echo ""
+echo "Done. Figures written to figures/slr_comparison_*.png"
