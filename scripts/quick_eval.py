@@ -9,15 +9,32 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 _REPLACE_RE = re.compile(
     r"""replace\(\s*["']([^"']*)["']\s*,\s*["']([^"']*)["']\s*\)""",
     re.IGNORECASE,
 )
+
+
+def _parse_slr_complexity(answer) -> int | None:
+    """Extract a Prolog eastbound rule from answer and return its rule_complexity."""
+    try:
+        from rewards.slr_bench import rule_complexity, _extract_rule
+        rule, _ = _extract_rule(answer)
+        if rule is None:
+            return None
+        return rule_complexity(rule)
+    except Exception:
+        return None
 
 
 def _parse_complexity(answer) -> int | None:
@@ -67,7 +84,11 @@ def load(path: str) -> list[dict]:
 
 
 def load_task_metadata(path: str) -> dict[int, dict]:
-    """Load task data file and return {task_index: {cascade_length, bfcc_dag_len, gt_complexity}} dict."""
+    """Load task data file and return {task_index: metadata} dict.
+
+    Supports both PBEBench (cascade_length, bfcc_dag, original_programs) and
+    SLR-Bench (ground-truth rule, rule complexity, curriculum level/tier) formats.
+    """
     meta: dict[int, dict] = {}
     with open(path) as f:
         for i, line in enumerate(f):
@@ -75,6 +96,7 @@ def load_task_metadata(path: str) -> dict[int, dict]:
             if not line:
                 continue
             rec = json.loads(line)
+            # PBEBench fields
             bfcc_dag = rec.get("bfcc_dag")
             dag_len = None
             if bfcc_dag is not None:
@@ -84,10 +106,18 @@ def load_task_metadata(path: str) -> dict[int, dict]:
                 except (json.JSONDecodeError, TypeError):
                     pass
             gt_complexity = _parse_complexity(rec.get("original_programs"))
+            # SLR-Bench fields
+            gt_rule = rec.get("ground-truth rule")
+            slr_gt_complexity = _parse_slr_complexity(gt_rule) if gt_rule else None
             meta[i] = {
                 "cascade_length": rec.get("cascade_length"),
                 "bfcc_dag_len": dag_len,
                 "gt_complexity": gt_complexity,
+                "slr_gt_rule": gt_rule,
+                "slr_gt_complexity": slr_gt_complexity,
+                "rule_complexity": rec.get("rule complexity"),
+                "curriculum_level": rec.get("curriculum level"),
+                "curriculum_tier": rec.get("curriculum tier"),
             }
     return meta
 
@@ -262,7 +292,7 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
             "total": total_toks, "total_avg": round(total_toks / n_with_tokens, 1),
         }
 
-    # PBEBench complexity — computed from the best answer (replace() cascade)
+    # PBEBench cascade complexity — computed from the best answer (replace() cascade)
     complexity_metrics: dict = {}
     complexities = []
     for rec in records:
@@ -331,6 +361,127 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
         breakdown_cascade = _print_breakdown("cascade length", _cascade_len, records, n)
         breakdown_bfcc = _print_breakdown("BFCC relation count", _bfcc_dag_len, records, n)
 
+    # SLR-Bench rule complexity — analogous to PBEBench cascade complexity
+    slr_complexity_metrics: dict = {}
+    slr_complexity_vs_gt: dict = {}
+    _slr_complexities = []
+    for rec in records:
+        c = _parse_slr_complexity(rec.get("answer"))
+        if c is not None:
+            _slr_complexities.append(c)
+    if _slr_complexities:
+        nc = len(_slr_complexities)
+        mean_c = sum(_slr_complexities) / nc
+        buckets = [(1, 1), (2, 2), (3, 3), (4, 4), (5, None)]
+        slr_dist_rows = []
+        print(f"\n  SLR rule complexity  ({nc}/{n} tasks)")
+        print(f"    Mean complexity : {mean_c:.2f}")
+        print(f"    Distribution")
+        for lo, hi in buckets:
+            cnt = sum(1 for c in _slr_complexities if lo <= c <= (hi if hi is not None else 10**9))
+            if not cnt:
+                continue
+            label_c = f"{lo}+" if hi is None else f"{lo}"
+            bar = "#" * min(cnt, 40)
+            print(f"      {label_c:>4} : {cnt:3d}  {bar}")
+            slr_dist_rows.append({"bucket": label_c, "count": cnt})
+        slr_complexity_metrics = {"n": nc, "mean": round(mean_c, 3), "distribution": slr_dist_rows}
+
+        # vs ground truth (requires --tasks-file with SLR data)
+        if task_meta and any(v.get("slr_gt_complexity") is not None for v in task_meta.values()):
+            pairs = []
+            for rec in records:
+                pred_c = _parse_slr_complexity(rec.get("answer"))
+                gt_c = (task_meta.get(rec.get("task_index")) or {}).get("slr_gt_complexity")
+                if pred_c is not None and gt_c is not None and best_reward(rec) >= 1.0:
+                    pairs.append((pred_c, gt_c))
+            if pairs:
+                n_pairs = len(pairs)
+                simpler = sum(1 for p, g in pairs if p < g)
+                equal   = sum(1 for p, g in pairs if p == g)
+                more_complex = sum(1 for p, g in pairs if p > g)
+                mean_pred  = sum(p for p, _ in pairs) / n_pairs
+                mean_gt    = sum(g for _, g in pairs) / n_pairs
+                mean_delta = sum(p - g for p, g in pairs) / n_pairs
+                print(f"\n  SLR rule complexity vs GT  (correct solutions only, n={n_pairs})")
+                print(f"    Mean predicted complexity : {mean_pred:.3f}")
+                print(f"    Mean GT complexity        : {mean_gt:.3f}")
+                print(f"    Mean delta (pred − GT)    : {mean_delta:+.3f}")
+                print(f"    Simpler than GT  (pred<GT): {simpler:>4} / {n_pairs}  ({100*simpler/n_pairs:.1f}%)")
+                print(f"    Equal to GT      (pred=GT): {equal:>4} / {n_pairs}  ({100*equal/n_pairs:.1f}%)")
+                print(f"    More complex     (pred>GT): {more_complex:>4} / {n_pairs}  ({100*more_complex/n_pairs:.1f}%)")
+                slr_complexity_vs_gt = {
+                    "n": n_pairs,
+                    "mean_pred": round(mean_pred, 3), "mean_gt": round(mean_gt, 3),
+                    "mean_delta": round(mean_delta, 3),
+                    "simpler": simpler, "equal": equal, "more_complex": more_complex,
+                }
+
+    # SLR-Bench breakdowns — triggered by presence of curriculum_level / curriculum_tier fields
+    slr_breakdown_tier: list[dict] = []
+    slr_breakdown_level: list[dict] = []
+    slr_breakdown_complexity: list[dict] = []
+    _slr_records = [r for r in records if r.get("curriculum_tier") is not None or r.get("curriculum_level") is not None]
+    if _slr_records:
+        # By curriculum tier (ordered)
+        _tier_order = ["basic", "easy", "medium", "hard"]
+        _by_tier: dict = defaultdict(list)
+        for rec in _slr_records:
+            t = rec.get("curriculum_tier")
+            if t:
+                _by_tier[t].append(rec)
+        if _by_tier:
+            print(f"\n  By curriculum tier")
+            print(f"    {'tier':>8}  {'n':>5}  {'pass%':>6}  {'mean_reward':>11}")
+            for tier in _tier_order:
+                recs = _by_tier.get(tier, [])
+                if not recs:
+                    continue
+                nt = len(recs)
+                sol = sum(1 for r in recs if best_reward(r) >= 1.0)
+                mr = sum(best_reward(r) for r in recs) / nt
+                print(f"    {tier:>8}  {nt:>5}  {100*sol/nt:>5.1f}%  {mr:>11.4f}")
+                slr_breakdown_tier.append({"tier": tier, "n": nt, "pass_pct": round(100*sol/nt, 2), "mean_reward": round(mr, 4)})
+
+        # By curriculum level (grouped into 5-level bands)
+        _by_level: dict = defaultdict(list)
+        for rec in _slr_records:
+            lv = rec.get("curriculum_level")
+            if lv is not None:
+                _by_level[int(lv)].append(rec)
+        if _by_level:
+            _level_buckets = [(1, 5), (6, 10), (11, 15), (16, 20)]
+            print(f"\n  By curriculum level")
+            print(f"    {'levels':>8}  {'n':>5}  {'pass%':>6}  {'mean_reward':>11}")
+            for lo, hi in _level_buckets:
+                recs = [r for lv, rs in _by_level.items() for r in rs if lo <= lv <= hi]
+                if not recs:
+                    continue
+                nt = len(recs)
+                sol = sum(1 for r in recs if best_reward(r) >= 1.0)
+                mr = sum(best_reward(r) for r in recs) / nt
+                lbl = f"{lo}-{hi}"
+                print(f"    {lbl:>8}  {nt:>5}  {100*sol/nt:>5.1f}%  {mr:>11.4f}")
+                slr_breakdown_level.append({"levels": lbl, "n": nt, "pass_pct": round(100*sol/nt, 2), "mean_reward": round(mr, 4)})
+
+        # By rule complexity (string labels like '1', '1-2', '2-3', etc.)
+        _by_rc: dict = defaultdict(list)
+        for rec in _slr_records:
+            rc = rec.get("rule_complexity")
+            if rc is not None:
+                _by_rc[str(rc)].append(rec)
+        if _by_rc:
+            _rc_order = sorted(_by_rc.keys(), key=lambda x: float(x.split("-")[0]))
+            print(f"\n  By rule complexity")
+            print(f"    {'complexity':>10}  {'n':>5}  {'pass%':>6}  {'mean_reward':>11}")
+            for rc in _rc_order:
+                recs = _by_rc[rc]
+                nt = len(recs)
+                sol = sum(1 for r in recs if best_reward(r) >= 1.0)
+                mr = sum(best_reward(r) for r in recs) / nt
+                print(f"    {rc:>10}  {nt:>5}  {100*sol/nt:>5.1f}%  {mr:>11.4f}")
+                slr_breakdown_complexity.append({"rule_complexity": rc, "n": nt, "pass_pct": round(100*sol/nt, 2), "mean_reward": round(mr, 4)})
+
     # unsolved
     unsolved = [
         {"task_index": r.get("task_index"), "best_reward": round(best_reward(r), 4), "attempts": len(r.get("reward_history") or [])}
@@ -366,6 +517,11 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
         "complexity_vs_gt": complexity_vs_gt or None,
         "breakdown_by_cascade_length": breakdown_cascade or None,
         "breakdown_by_bfcc_relations": breakdown_bfcc or None,
+        "slr_complexity": slr_complexity_metrics or None,
+        "slr_complexity_vs_gt": slr_complexity_vs_gt or None,
+        "slr_breakdown_by_tier": slr_breakdown_tier or None,
+        "slr_breakdown_by_level": slr_breakdown_level or None,
+        "slr_breakdown_by_rule_complexity": slr_breakdown_complexity or None,
         "unsolved": sorted(unsolved, key=lambda x: x["task_index"] or 0),
     }
 
