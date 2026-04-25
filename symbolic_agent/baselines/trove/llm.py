@@ -16,7 +16,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +218,174 @@ class TroVELLMClient:
                     time.sleep(wait)
         logger.warning("All OpenAI retries exhausted (tag=%s): %s", tag, last_exc)
         return ""
+
+    # ------------------------------------------------------------------
+    # Native tool calling (OpenAI/vLLM only)
+    # ------------------------------------------------------------------
+
+    def chat_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        model: str,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        max_tool_iters: int = 8,
+        on_tool_call: Optional[Callable[[Any], str]] = None,
+        tag: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Multi-turn chat completion that supports native OpenAI tool calls.
+
+        Returns
+        -------
+        {
+            "final_text":     str,         # message.content (or reasoning_content fallback)
+            "tool_calls":     list[dict],  # ordered, each {name, args_preview, result_preview, ok}
+            "iterations":     int,         # number of round-trips actually used
+            "stopped_reason": str,         # "no_tool_calls" | "max_iters" | "error"
+        }
+
+        The caller is responsible for providing `on_tool_call(tc) -> str`,
+        which is invoked for every tool_call returned by the model. The
+        return value (already a string) is sent back as the tool message.
+
+        Anthropic backend is not supported — this method exists for the
+        OpenAI/vLLM tool-calling flow only. It raises NotImplementedError
+        on Anthropic as a defensive guard; controllers must check
+        `self.backend == "openai"` before calling.
+        """
+        if self.backend != "openai":
+            raise NotImplementedError("chat_with_tools requires the openai backend")
+
+        if on_tool_call is None:
+            raise ValueError("chat_with_tools requires an on_tool_call callback")
+
+        recorded_calls: List[Dict[str, Any]] = []
+        convo: List[Dict[str, Any]] = list(messages)
+        iterations = 0
+        final_text = ""
+        stopped_reason = "no_tool_calls"
+
+        for it in range(max_tool_iters + 1):
+            iterations = it + 1
+            iter_tag = f"{tag}_iter{it}" if tag else f"iter{it}"
+            response = None
+            last_exc = None
+
+            for attempt in range(3):
+                try:
+                    response = self._client.chat.completions.create(
+                        model=model,
+                        max_tokens=max_tokens,
+                        messages=convo,
+                        tools=tools,
+                        tool_choice="auto",
+                    )
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    if getattr(exc, "status_code", None) == 400:
+                        logger.warning(
+                            "OpenAI chat_with_tools 400 (tag=%s): %s", iter_tag, exc
+                        )
+                        self._record(iter_tag, model, json.dumps(convo)[:2000], "", max_tokens, {})
+                        return {
+                            "final_text": "",
+                            "tool_calls": recorded_calls,
+                            "iterations": iterations,
+                            "stopped_reason": "error",
+                        }
+                    if attempt < 2:
+                        wait = 5 * (2 ** attempt)
+                        logger.warning(
+                            "chat_with_tools failed (attempt %d/3, tag=%s): %s. Retrying in %ds.",
+                            attempt + 1, iter_tag, exc, wait,
+                        )
+                        time.sleep(wait)
+
+            if response is None:
+                logger.warning("All chat_with_tools retries exhausted (tag=%s): %s", iter_tag, last_exc)
+                stopped_reason = "error"
+                break
+
+            msg = response.choices[0].message
+            content = msg.content or getattr(msg, "reasoning_content", "") or ""
+            tool_calls = getattr(msg, "tool_calls", None) or []
+
+            u = getattr(response, "usage", None)
+            details = getattr(u, "completion_tokens_details", None)
+            usage = {
+                "input_tokens": getattr(u, "prompt_tokens", 0) or 0,
+                "output_tokens": getattr(u, "completion_tokens", 0) or 0,
+                "reasoning_tokens": getattr(details, "reasoning_tokens", 0) or 0 if details else 0,
+            }
+            self._record(
+                iter_tag,
+                model,
+                json.dumps(convo)[:2000],
+                json.dumps({"content": content, "tool_calls_count": len(tool_calls)}),
+                max_tokens,
+                usage,
+            )
+
+            if not tool_calls:
+                final_text = content
+                stopped_reason = "no_tool_calls"
+                break
+
+            assistant_msg: Dict[str, Any] = {
+                "role": "assistant",
+                "content": content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            }
+            convo.append(assistant_msg)
+
+            for tc in tool_calls:
+                try:
+                    result = on_tool_call(tc)
+                    ok = True
+                except Exception as exc:
+                    result = json.dumps({"error": f"on_tool_call raised: {exc}"})
+                    ok = False
+                args_preview = (tc.function.arguments or "")[:200]
+                result_preview = (result or "")[:200]
+                recorded_calls.append(
+                    {
+                        "name": tc.function.name,
+                        "args_preview": args_preview,
+                        "result_preview": result_preview,
+                        "ok": ok,
+                    }
+                )
+                convo.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result,
+                    }
+                )
+
+            if it >= max_tool_iters - 1:
+                stopped_reason = "max_iters"
+                final_text = content
+                break
+
+        return {
+            "final_text": final_text,
+            "tool_calls": recorded_calls,
+            "iterations": iterations,
+            "stopped_reason": stopped_reason,
+        }
 
     # ------------------------------------------------------------------
     # Logging
