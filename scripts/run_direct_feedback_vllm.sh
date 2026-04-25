@@ -9,10 +9,13 @@
 # tasks are skipped even if workers finish out of order.
 #
 # Usage:
-#   bash scripts/run_direct_feedback_vllm.sh                       # defaults
+#   bash scripts/run_direct_feedback_vllm.sh                       # PBEBench-Lite (default)
 #   bash scripts/run_direct_feedback_vllm.sh --tasks-file <file>   # override tasks file
+#   DATASET=hard bash scripts/run_direct_feedback_vllm.sh          # PBEBench-Hard
+#   DATASET=slr  bash scripts/run_direct_feedback_vllm.sh          # SLR-Bench
 #   PORT=8003 bash scripts/run_direct_feedback_vllm.sh             # different port
 #   WORKERS=8 bash scripts/run_direct_feedback_vllm.sh             # parallelism
+#   MAX_PROGRAMS=20 DATASET=hard bash scripts/run_direct_feedback_vllm.sh
 #
 # Token budget per task (upper bound): df_k × max_tokens
 #   default: 32 × 32768 = 1,048,576 tokens max (CoT-heavy model)
@@ -29,7 +32,30 @@ export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 export WORKERS="${WORKERS:-16}"
 mkdir -p outputs
 
-TASKS_FILE="${1:-data/pbebench/lite_tasks_full_og.jsonl}"
+DATASET="${DATASET:-lite}"
+
+case "${DATASET}" in
+  slr)
+    TASKS_FILE="data/slr_bench/v1_All_full.jsonl"
+    DEFAULT_REWARD="slr_bench"
+    DEFAULT_MAX_PROGRAMS=""
+    ;;
+  hard)
+    TASKS_FILE="data/pbebench/tasks_full_og.jsonl"
+    DEFAULT_REWARD="pbebench"
+    DEFAULT_MAX_PROGRAMS="20"
+    ;;
+  lite|*)
+    TASKS_FILE="data/pbebench/lite_tasks_full_og.jsonl"
+    DEFAULT_REWARD="pbebench"
+    DEFAULT_MAX_PROGRAMS="5"
+    ;;
+esac
+
+MAX_PROGRAMS="${MAX_PROGRAMS:-${DEFAULT_MAX_PROGRAMS}}"
+PROGRAMS_ARG=""
+[[ -n "${MAX_PROGRAMS}" ]] && PROGRAMS_ARG="--max-programs ${MAX_PROGRAMS}"
+
 STEM="$(basename "${TASKS_FILE%.jsonl}")"
 OUT_FILE="outputs/${STEM}_direct_feedback.jsonl"
 
@@ -46,8 +72,8 @@ python main.py \
   --df-k             32 \
   --max-tokens       32768 \
   --max-reward-iters 32 \
-  --default-reward   pbebench \
-  --max-programs     5 \
+  --default-reward   "${DEFAULT_REWARD}" \
+  ${PROGRAMS_ARG} \
   --workers          "${WORKERS}" \
   --output-file      "${OUT_FILE}" \
   --debug-dir        debug_direct_feedback \

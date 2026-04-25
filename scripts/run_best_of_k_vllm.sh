@@ -2,8 +2,11 @@
 # Run Best-of-K sampling baseline against a local vLLM server.
 #
 # Usage:
-#   bash scripts/run_best_of_k_vllm.sh                       # defaults below
-#   bash scripts/run_best_of_k_vllm.sh --tasks-file <file>   # override tasks file
+#   bash scripts/run_best_of_k_vllm.sh                        # PBEBench-Hard (default)
+#   bash scripts/run_best_of_k_vllm.sh --tasks-file <file>    # override tasks file
+#   DATASET=lite bash scripts/run_best_of_k_vllm.sh           # PBEBench-Lite
+#   DATASET=slr  bash scripts/run_best_of_k_vllm.sh           # SLR-Bench
+#   MAX_PROGRAMS=5 DATASET=lite bash scripts/run_best_of_k_vllm.sh
 #
 # Token budget:
 #   K × max_tokens per task (e.g. 5 × 4096 = 20,480 tokens upper bound)
@@ -18,12 +21,36 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-export PORT=8004
+export PORT="${PORT:-8004}"
 export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 mkdir -p outputs
 
-TASKS_FILE="data/pbebench/tasks_full_og.jsonl"
-OUT_FILE="outputs/tasks_full_og_best_of_k.jsonl"
+DATASET="${DATASET:-hard}"
+
+case "${DATASET}" in
+  slr)
+    TASKS_FILE="data/slr_bench/v1_All_full.jsonl"
+    OUT_FILE="outputs/slr_bench_best_of_k.jsonl"
+    DEFAULT_REWARD="slr_bench"
+    DEFAULT_MAX_PROGRAMS=""
+    ;;
+  lite)
+    TASKS_FILE="data/pbebench/lite_tasks_full_og.jsonl"
+    OUT_FILE="outputs/lite_tasks_full_og_best_of_k.jsonl"
+    DEFAULT_REWARD="pbebench"
+    DEFAULT_MAX_PROGRAMS="5"
+    ;;
+  hard|*)
+    TASKS_FILE="data/pbebench/tasks_full_og.jsonl"
+    OUT_FILE="outputs/tasks_full_og_best_of_k.jsonl"
+    DEFAULT_REWARD="pbebench"
+    DEFAULT_MAX_PROGRAMS="20"
+    ;;
+esac
+
+MAX_PROGRAMS="${MAX_PROGRAMS:-${DEFAULT_MAX_PROGRAMS}}"
+PROGRAMS_ARG=""
+[[ -n "${MAX_PROGRAMS}" ]] && PROGRAMS_ARG="--max-programs ${MAX_PROGRAMS}"
 
 python main.py \
   --framework        best_of_k \
@@ -33,8 +60,8 @@ python main.py \
   --bok-k            32 \
   --max-tokens       32768 \
   --workers          32 \
-  --default-reward   pbebench \
-  --max-programs     20 \
+  --default-reward   "${DEFAULT_REWARD}" \
+  ${PROGRAMS_ARG} \
   --output-file      "${OUT_FILE}" \
   "$@"
 
