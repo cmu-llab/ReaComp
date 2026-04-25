@@ -808,6 +808,23 @@ def main() -> None:
         help="[TroVE] Trim low-frequency toolbox functions every N tasks. "
              "Paper default: 500. Set to 9999 to disable for small datasets. (default: 500)",
     )
+    parser.add_argument(
+        "--trove-selection",
+        choices=["reward", "consistency"],
+        default="reward",
+        help="[TroVE] Candidate selection strategy. 'reward' (default) uses "
+             "the per-task reward function with AST tie-breaking. "
+             "'consistency' uses the original TroVE majority-vote algorithm. "
+             "(default: reward)",
+    )
+    parser.add_argument(
+        "--trove-task-family",
+        choices=["default", "pbebench"],
+        default="default",
+        help="[TroVE] Task family for prompt selection and parser strictness. "
+             "'pbebench' uses PBEBench-shaped few-shots and strict **Solution** "
+             "parsing (no fallback to any python block). (default: default)",
+    )
     # ReGAL-specific flags
     parser.add_argument(
         "--regal-train-file",
@@ -1007,8 +1024,13 @@ def main() -> None:
             debug_dir=args.debug_dir,
             k=args.trove_k,
             trim_every=args.trove_trim_every,
+            task_family=args.trove_task_family,
+            selection=args.trove_selection,
         )
-        logger.info("Framework: TroVE (k=%d, trim_every=%d)", args.trove_k, args.trove_trim_every)
+        logger.info(
+            "Framework: TroVE (k=%d, trim_every=%d, task_family=%s, selection=%s)",
+            args.trove_k, args.trove_trim_every, args.trove_task_family, args.trove_selection,
+        )
     elif args.framework == "regal":
         from pathlib import Path as _Path
         controller = ReGALController(
