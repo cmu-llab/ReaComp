@@ -68,18 +68,34 @@ class TroVEController:
     model : str
         LLM model identifier.
     base_url : str, optional
-        For OpenAI-compatible (vLLM) backends.
+        For OpenAI-compatible (vLLM) backends. When set, ``self.backend`` is
+        ``"openai"``; otherwise ``"anthropic"``. Native tool-calling IMPORT
+        requires the openai backend.
     debug_dir : str, optional
     k : int
         Number of samples per mode (paper default: 5).
     trim_every : int
         Trim toolbox every N tasks (paper default: 500).
     trim_C : float
-        Trimming threshold multiplier: threshold = C·log₂₀(n). Default: 0.5.
+        Trimming threshold multiplier: threshold = C·log₂₀(n). Default: 1.0
+        (matches the original TroVE implementation).
     temperature : float
         Sampling temperature. Default: 0.3 (TroVE paper).
     top_p : float
         Nucleus sampling top-p. Default: 0.95 (TroVE paper).
+    task_family : str
+        Prompt/parsing family. ``"default"`` (generic) or ``"pbebench"``
+        (PBEBench-shaped few-shots; strict ``**Solution**`` parsing).
+    selection : str
+        Candidate selection strategy. ``"reward"`` (default) uses the
+        reward function when available and falls back to consistency;
+        ``"consistency"`` always uses the original TroVE majority-vote.
+    max_tool_iters : int
+        Maximum tool-call rounds per IMPORT trajectory in the native
+        tool-calling path. Default: 8.
+    tool_schema_topk : int
+        Number of top-frequency toolbox functions exposed as OpenAI tool
+        schemas in the native IMPORT path. Default: 10.
     """
 
     def __init__(
