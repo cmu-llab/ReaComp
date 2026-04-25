@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-METRICS_JSON=""
+METRICS_JSON="metrics/slr_all.json"
 for arg in "$@"; do
   case $arg in
     --metrics-json) shift; METRICS_JSON="$1"; shift ;;

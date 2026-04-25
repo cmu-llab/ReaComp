@@ -21,7 +21,7 @@
 
 set -euo pipefail
 
-METRICS_JSON=""
+METRICS_JSON="metrics/pbebench_lite_all.json"
 for arg in "$@"; do
   case $arg in
     --metrics-json=*) METRICS_JSON="${arg#*=}" ;;
