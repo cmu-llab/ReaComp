@@ -104,7 +104,7 @@ Performance collapses at CL=5 (50.0%) — at the 5-program limit there is no sla
 - Best symbolic-only: Claude+Qwen solver ensemble (83.5%, zero tokens)
 - Closest to GT complexity: Qwen3.6 solver alone (Δ+0.46) — but only 53.4% pass rate
 
-**8. Solver construction cost is negligible when amortised.** The Qwen solver was built in a single OpenHands session costing ~202K tokens (76 real turns over 3h 21min; measured via `scripts/compute_trajectory_tokens.py`). Effi mode saves 25,819 tokens/task on Lite — the build cost recoups at 7.8 tasks and is only 0.78% of per-task savings across the full 1008-task eval (129× return). On Hard (CoT-heavy, 166K tokens saved/task) break-even is 1.2 tasks and the return is ~1000×. The one-time construction cost is essentially free relative to inference savings at any realistic evaluation scale.
+**8. Solver construction cost is negligible when amortised.** The Qwen solver was built in a single OpenHands session costing ~202K tokens (76 real turns over 3h 21min; measured via `scripts/compute_trajectory_tokens.py`, accounting for KV caching). Effi mode saves 25,819 tokens/task on Lite — the build cost recoups at 7.8 tasks and is only 0.78% of per-task savings across the full 1008-task eval (129× return). On Hard (CoT-heavy, 166K tokens saved/task) break-even is 1.2 tasks and the return is ~1000×. Even under the pessimistic assumption of no KV caching (4.8M tokens), break-even is 186 tasks on Lite (5.4× return, 18.5% overhead/task) and 29 tasks on Hard (42× return, 2.4% overhead/task). The one-time construction cost is negligible relative to inference savings at any realistic evaluation scale.
 
 ### Output files
 
