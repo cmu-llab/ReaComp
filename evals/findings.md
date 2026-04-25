@@ -243,6 +243,17 @@ Solver fails when:
 2. All-four-BFCC tasks require holding multiple interacting constraints within the beam horizon.
 3. A single-character pattern that fixes a changed pair also appears in many unchanged pairs — the safe-phase beam search discards it and the unrestricted phase doesn't recover in time.
 
+### Solver variance (run-to-run stability)
+
+Both solvers re-run on PBEBench-Hard with identical settings to measure determinism. Results written to `hard_run2.jsonl` alongside run1.
+
+| System | Run 1 Pass% | Run 2 Pass% | Δ Pass% | Per-task agreement | Flips |
+|---|---:|---:|---:|---:|---:|
+| Claude Code solver | 69.65% | 69.74% | +0.09pp | 1211/1216 (99.6%) | 5 |
+| Qwen3.6-35B-A3B solver | 58.88% | 57.89% | −1.00pp | 1180/1216 (97.0%) | 36 |
+
+All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no task swings from clearly solved to clearly failed. Both solvers are essentially deterministic; variance is negligible for reporting purposes.
+
 ### Key findings
 
 **1. BoK-32 dominates at short cascades, solvers dominate at long cascades.** Crossover at CL 12–13. BoK-32 hits near 100% for CL 2–8 while both solvers are at 85–95%. At CL 16+ BoK-32 collapses to <41% while the Claude solver holds 55–68%.
@@ -263,9 +274,11 @@ Solver fails when:
 
 | File | Description |
 |---|---|
-| `outputs/gpt_oss_120b_pbebench_outputs.jsonl` | BoK-32 raw outputs |
-| `evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl` | Claude solver results |
-| `evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/hard.jsonl` | Qwen solver results |
+| `outputs/gpt_oss_120b_pbebench_hard_outputs.jsonl` | BoK-32 raw outputs |
+| `evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl` | Claude solver results (run 1) |
+| `evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard_run2.jsonl` | Claude solver results (run 2, variance check) |
+| `evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/hard.jsonl` | Qwen solver results (run 1) |
+| `evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/hard_run2.jsonl` | Qwen solver results (run 2, variance check) |
 | `metrics/bok_hard_tokens_cluster.json` | Token usage breakdown (with CoT) |
 | `figures/ensemble_hard_metrics.json` | All metrics as JSON |
 | `figures/ensemble_hard_passrate.png` | Pass rate vs CL |
