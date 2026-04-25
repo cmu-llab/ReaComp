@@ -85,16 +85,27 @@ def compute(path: str, count) -> tuple[dict, dict]:
             except StopIteration:
                 pass
 
-    # Reconstruct cumulative context for counted turns only
+    # Reconstruct token counts with KV caching.
+    # Turn 0 pays for the full context (system prompt); each subsequent turn
+    # pays only for the new tokens added since the previous turn (previous
+    # output + observation), since the prior context is cached.
     counted_indices = {id(r): i for i, r in enumerate(action_events)}
     total_input = total_output = 0
-    context = sp_toks
+    new_tokens_this_turn = sp_toks  # first turn pays for system prompt
 
     for r in counted_turns:
         i = counted_indices[id(r)]
         out_toks = count(_thought_text(r) + _action_text(r))
-        total_input  += context
+        total_input  += new_tokens_this_turn
         total_output += out_toks
+        # next turn only pays for this turn's output + its observation
+        new_tokens_this_turn = out_toks + obs_map.get(i, 0)
+
+    # Final context window = full accumulated context
+    context = sp_toks
+    for r in counted_turns:
+        i = counted_indices[id(r)]
+        out_toks = count(_thought_text(r) + _action_text(r))
         context += out_toks + obs_map.get(i, 0)
 
     # Session metadata
