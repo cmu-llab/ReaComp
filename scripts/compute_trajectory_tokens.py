@@ -44,6 +44,9 @@ except ImportError:
 
 _REAL_TOOLS = {"sb_execute_code", "sb_write_file"}
 _FINISH_TOOL = "sb_finish"
+# OpenHands truncates observation content to this many chars before sending to LLM
+# (LLM_MAX_MESSAGE_CHARS, default 30000)
+_MAX_OBS_CHARS = 30_000
 
 
 def _thought_text(rec: dict) -> str:
@@ -81,7 +84,11 @@ def compute(path: str, count) -> tuple[dict, dict]:
     for i, r in enumerate(action_events):
         if r.get("tool_name") in _REAL_TOOLS:
             try:
-                obs_map[i] = count(json.dumps(next(obs_iter)))
+                obs = next(obs_iter)
+                # OpenHands truncates observation content to _MAX_OBS_CHARS before
+                # sending to the LLM; cap here to reflect actual tokens seen by model
+                obs_content = str(obs.get("observation", ""))[:_MAX_OBS_CHARS]
+                obs_map[i] = count(obs_content)
             except StopIteration:
                 pass
 
