@@ -15,6 +15,7 @@ Usage:
 """
 import argparse
 import json
+import multiprocessing
 import os
 import sys
 import time
@@ -80,45 +81,65 @@ DATASETS = {
 # Worker function (must be top-level for pickling by ProcessPoolExecutor)
 # ---------------------------------------------------------------------------
 
+def _solve_in_child(solver_path, cfg, rec, queue):
+    """Runs inside a child process spawned by _run_task for timeout enforcement."""
+    import inspect
+    solve_fn, _, _ = _load_solver(solver_path)
+    try:
+        if cfg["kind"] == "slr":
+            from rewards.slr_bench import parse_prompt_examples
+            parsed = parse_prompt_examples(rec["prompt"])
+            examples = list(zip(parsed["inputs"], parsed["outputs"]))
+            result = solve_fn(examples)
+            score = result.get("score", 1.0 if result["success"] else 0.0)
+            queue.put({"success": result["success"], "program": result.get("program"), "score": score})
+        else:
+            examples = list(zip(rec["inputs"], rec["outputs"]))
+            sig_params = set(inspect.signature(solve_fn).parameters)
+            kwargs = {"max_programs": cfg["max_programs"]}
+            if "max_pred_len" in sig_params:
+                kwargs["max_pred_len"] = cfg["max_pred_len"]
+            if "max_transform_len" in sig_params:
+                kwargs["max_transform_len"] = cfg["max_transform_len"]
+            queue.put(solve_fn(examples, **kwargs))
+    except Exception as e:
+        queue.put({"error": str(e)})
+
+
+_FAILED = {"success": False, "program": None, "score": 0.0}
+
+
 def _run_task(args):
     """Called in a worker process. Loads the solver fresh per-process."""
-    import inspect
-    task_index, rec, solver_path, cfg = args
-    solve_fn, _, solver_kind = _load_solver(solver_path)
+    task_index, rec, solver_path, cfg, task_timeout = args
 
-    if cfg["kind"] == "slr":
-        from rewards.slr_bench import parse_prompt_examples
-        parsed = parse_prompt_examples(rec["prompt"])
-        examples = list(zip(parsed["inputs"], parsed["outputs"]))
-        t0 = time.time()
-        result = solve_fn(examples)
-        elapsed = round(time.time() - t0, 3)
-        # Score via internal accuracy (no SWI-Prolog needed for pass/fail metric)
-        score = result.get("score", 1.0 if result["success"] else 0.0)
-        return task_index, rec, {
-            "success": result["success"],
-            "program": result.get("program"),
-            "score": score,
-        }, elapsed
-
-    # PBEBench path
-    examples = list(zip(rec["inputs"], rec["outputs"]))
-    sig_params = set(inspect.signature(solve_fn).parameters)
-    kwargs = {"max_programs": cfg["max_programs"]}
-    if "max_pred_len" in sig_params:
-        kwargs["max_pred_len"] = cfg["max_pred_len"]
-    if "max_transform_len" in sig_params:
-        kwargs["max_transform_len"] = cfg["max_transform_len"]
+    queue = multiprocessing.Queue(maxsize=1)
+    proc = multiprocessing.Process(
+        target=_solve_in_child,
+        args=(solver_path, cfg, rec, queue),
+        daemon=True,
+    )
     t0 = time.time()
-    result = solve_fn(examples, **kwargs)
-    return task_index, rec, result, round(time.time() - t0, 3)
+    proc.start()
+    proc.join(timeout=task_timeout if task_timeout != float("inf") else None)
+    elapsed = round(time.time() - t0, 3)
+
+    if proc.is_alive():
+        proc.kill()
+        proc.join()
+        return task_index, rec, _FAILED, elapsed
+
+    result = queue.get_nowait() if not queue.empty() else _FAILED
+    if "error" in result:
+        result = _FAILED
+    return task_index, rec, result, elapsed
 
 
 # ---------------------------------------------------------------------------
 # Evaluate
 # ---------------------------------------------------------------------------
 
-def evaluate(dataset_key, solver_path, output_dir=None, limit=None, workers=1):
+def evaluate(dataset_key, solver_path, output_dir=None, limit=None, workers=1, task_timeout=None):
     cfg = DATASETS[dataset_key]
     with open(cfg["path"]) as fh:
         records = [json.loads(line) for line in fh]
@@ -153,8 +174,9 @@ def evaluate(dataset_key, solver_path, output_dir=None, limit=None, workers=1):
     solved = 0
     total_score = 0.0
 
+    effective_timeout = task_timeout if task_timeout is not None else float("inf")
     task_args = [
-        (i, rec, solver_path, cfg)
+        (i, rec, solver_path, cfg, effective_timeout)
         for i, rec in enumerate(records)
         if i not in completed_rows
     ]
@@ -284,6 +306,10 @@ def main():
             "(default: no output files)"
         ),
     )
+    parser.add_argument(
+        "--task-timeout", type=int, default=None,
+        help="Per-task timeout in seconds. Tasks exceeding this are marked failed. (default: no limit)",
+    )
     args = parser.parse_args()
 
     _, solver_path, _ = _load_solver(args.solver)  # validate path; workers load it themselves
@@ -308,11 +334,14 @@ def main():
         if args.workers > 1:
             print(f"Workers : {args.workers}")
         print()
+        if args.task_timeout:
+            print(f"Timeout : {args.task_timeout}s per task")
         summary = evaluate(
             key, solver_path,
             output_dir=args.output_dir,
             limit=args.limit,
             workers=args.workers,
+            task_timeout=args.task_timeout,
         )
         summaries.append(summary)
 
