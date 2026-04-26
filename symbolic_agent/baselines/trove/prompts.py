@@ -214,6 +214,14 @@ _CREATE_INSTRUCTION_DEFAULT = (
     "if you believe the function can be reused to solve other questions."
 )
 
+_CREATE_INSTRUCTION_PBEBENCH = (
+    "You task is to write Python program solutions to the given questions.\n"
+    "In CREATE mode, you must define at least one reusable helper function "
+    "inside a **Tools** code block. The **Solution** block should use or "
+    "accompany that helper as appropriate, but the printed answer must remain "
+    "a Python list of replace() call strings."
+)
+
 _CREATE_EXAMPLE_DEFAULT = """\
 ## Example
 **Question**
@@ -272,7 +280,12 @@ _CREATE_TASK_TEMPLATE = """\
 
 def build_create_prompt(question: str, task_family: str = "default") -> str:
     """Build the CREATE-mode prompt for a single task."""
-    instruction = _CREATE_INSTRUCTION_DEFAULT + _format_override(task_family)
+    create_instruction = (
+        _CREATE_INSTRUCTION_PBEBENCH
+        if task_family == "pbebench"
+        else _CREATE_INSTRUCTION_DEFAULT
+    )
+    instruction = create_instruction + _format_override(task_family)
     example = _CREATE_EXAMPLE_PBEBENCH if task_family == "pbebench" else _CREATE_EXAMPLE_DEFAULT
     return (
         instruction

@@ -464,6 +464,7 @@ class TroVEController:
         """Reward-based candidate selection. Returns (best_index, (reward, message))."""
         best_idx = 0
         best_reward = -1.0
+        best_reuse = -1
         best_ast = float("inf")
         best_message = ""
         for i, c in enumerate(candidates):
@@ -475,12 +476,35 @@ class TroVEController:
                 logger.debug("Reward scoring error for candidate %d: %s", i, exc)
                 score, msg = 0.0, str(exc)
             ast_size = count_ast_nodes(c.get("solution_code", ""))
-            if score > best_reward or (score == best_reward and ast_size < best_ast):
+            reuse_signal = self._reuse_signal(c)
+            if (
+                score > best_reward
+                or (
+                    score == best_reward
+                    and (
+                        reuse_signal > best_reuse
+                        or (reuse_signal == best_reuse and ast_size < best_ast)
+                    )
+                )
+            ):
                 best_idx = i
                 best_reward = score
+                best_reuse = reuse_signal
                 best_ast = ast_size
                 best_message = msg
         return best_idx, (best_reward, best_message)
+
+    @staticmethod
+    def _reuse_signal(candidate: dict) -> int:
+        """Tie-break signal for candidates that support TroVE's toolbox."""
+        functions = candidate.get("functions") or []
+        tool_calls = candidate.get("tool_calls") or []
+        unique_tool_names = {
+            (tc.get("name") or "").split("<|", 1)[0].strip()
+            for tc in tool_calls
+            if isinstance(tc, dict) and tc.get("name")
+        }
+        return len(functions) + len({name for name in unique_tool_names if name})
 
     def _select_best_by_consistency(self, candidates: List[dict]) -> int:
         """

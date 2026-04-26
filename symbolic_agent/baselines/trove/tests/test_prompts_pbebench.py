@@ -19,6 +19,8 @@ def test_pbebench_create_prompt_models_replace_program_list_stdout():
     prompt = build_create_prompt("Task", task_family="pbebench")
 
     _assert_pbebench_prompt_prints_program_sequence(prompt)
+    assert "must define at least one reusable helper function" in prompt
+    assert "**Tools**" in prompt
 
 
 def test_pbebench_skip_prompt_models_replace_program_list_stdout():
