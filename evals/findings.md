@@ -210,7 +210,7 @@ All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no t
 
 **7. Best trade-off points:**
 - Best pass rate (zero cost): All Symbolic union (84.7%, 0 tokens)
-- Best pass rate overall: BoK + All Symbolic (85.8%, 273K avg tokens/task)
+- Best pass rate overall: BoK + All Symbolic effi (85.8%, ~5K avg tokens/task)
 - Best symbolic-only: All Symbolic union beats BoK-32 standalone by +16.3pp at zero cost
 
 ### Output files
