@@ -423,6 +423,18 @@ Parses each facts string into a normalised car model (cars re-indexed as c1, c2,
 
 **5. KV caching saves ~98% of input tokens.** No-cache totals are 20–34× higher than KV-cache totals (e.g. 4.4M vs 191K). All construction cost figures in the paper use the KV-cache estimate as the realistic lower bound.
 
+### Solver ensemble results (symbolic-only, no LLM)
+
+| Ensemble | Lite Pass% | Hard Pass% | Avg tokens |
+|----------|----------:|----------:|----------:|
+| CC solver only | 80.4% | 69.7% | 0 |
+| Qwen run 3 only (best single Qwen) | 79.2% | 51.8% | 0 |
+| 3 Qwen CoT runs union (runs 1+2+3) | 85.5% | 78.9% | 0 |
+| All 5 Qwen solvers union (+48ex, +12ex) | 86.2% | 82.0% | 0 |
+| CC + all 6 Qwen solvers union | **91.3%** | **84.7%** | 0 |
+
+Ensembling multiple Qwen runs (same demos, different algorithms) recovers most of the variance lost in any single run. Three CoT runs alone reach 85.5% Lite / 78.9% Hard — beating the original CC+Qwen ensemble (83.5% Lite). Adding CC pushes to 91.3% Lite / 84.7% Hard, the best symbolic-only result across all settings.
+
 ### Output files
 
 | File | Description |
@@ -430,6 +442,12 @@ Parses each facts string into a normalised car model (cars re-indexed as c1, c2,
 | `evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/` | 100 examples + CoT (run 1) |
 | `evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/` | 100 examples + CoT (run 2) |
 | `evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_440_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/` | 100 examples + CoT (run 3) |
+| `outputs/hard_ensemble_qwen3runs.jsonl` | 3 Qwen CoT runs union (Hard) |
+| `outputs/hard_ensemble_qwen_all.jsonl` | All 5 Qwen solvers union (Hard) |
+| `outputs/hard_ensemble_all_solvers.jsonl` | CC + all 6 Qwen solvers union (Hard) |
+| `outputs/lite_ensemble_qwen3runs.jsonl` | 3 Qwen CoT runs union (Lite) |
+| `outputs/lite_ensemble_qwen_all.jsonl` | All 5 Qwen solvers union (Lite) |
+| `outputs/lite_ensemble_all_solvers.jsonl` | CC + all 6 Qwen solvers union (Lite) |
 | `evals/solver_results/qwen3.6_35b_a3b/Sat_Apr_25_819_PM_DEMOS_PBEBENCH_seed_42_100_examples/` | 100 examples, no CoT |
 | `evals/solver_results/qwen3.6_35b_a3b/Sat_Apr_25_1104_PM_DEMOS_PBEBENCH_seed_42_48_examples_with_CoT/` | 48 examples + CoT |
 | `evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_120_AM_DEMOS_PBEBENCH_seed_42_12_examples_with_CoT/` | 12 examples + CoT |
