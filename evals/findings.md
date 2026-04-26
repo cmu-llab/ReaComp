@@ -25,10 +25,12 @@ Datasets, DSL constraints, and baseline configurations are documented in `evals/
 
 ### Main results
 
+Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**. Not reported for † baselines (not re-run by us).
+
 | System | Pass% | Mean reward | Edit Sim | Complexity Δ | Avg tokens/task |
 |---|---:|---:|---:|---:|---:|
-| gpt-oss-120b, single attempt † | 62.5% | — | 69.9 | −0.67 | — |
-| GPT-5, single attempt † | 72.4% | — | 76.5 | −1.02 | — |
+| gpt-oss-120b, single attempt † | 62.5% | — | 69.9 | — | — |
+| GPT-5, single attempt † | 72.4% | — | 76.5 | — | — |
 | **CC Solver** | **80.4%** | **0.9438** | **93.7** | **+3.00** | **0** |
 | **Qwen Solver (best run)** | **65.7%** | **0.9022** | **87.4** | **+3.01** | **0** |
 | **CC + Qwen Solvers (union)** | **84.6%** | **0.9607** | **94.9** | **+2.16** | **0** |
@@ -41,7 +43,7 @@ Datasets, DSL constraints, and baseline configurations are documented in `evals/
 | **BoK + CC Solver (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.94** | **45,277** |
 | **BoK + All Symbolic (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.19** | **43,113** |
 
-† Reported scores from PBEBench paper (`figures/pbebench_lite_reported_metrics.png`); not re-run by us. Single attempt, Pass@1, 8192 CoT tokens — no test-time scaling.
+† Reported scores from PBEBench paper (`figures/pbebench_lite_reported_metrics.png`); not re-run by us. Single attempt, Pass@1, 8192 CoT tokens — no test-time scaling. Edit Sim from the same paper figure.
 
 > **Model note:** LLM baselines use **gpt-oss-120b** served via vLLM. Symbolic solvers are induced by a separate coding agent (CC by claude-sonnet-4-6; Qwen by Qwen3.6-35B-A3B inside OpenHands) — distinct from the inference LLM. Effi token savings reflect replacing gpt-oss-120b inference with zero-cost symbolic execution; solver build cost (~216K tokens KV-cache, one-time) is negligible at any realistic eval scale (see Finding 8).
 
