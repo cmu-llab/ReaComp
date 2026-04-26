@@ -42,7 +42,7 @@ To study the effect of the demos file on solver quality, we ablate over the numb
 
 | Ablation | `DEMOS_PATH` |
 |----------|-------------|
-| 100 examples, no CoT *(main)* | `demos/DEMOS_PBEBENCH_seed_42_100_examples.json` |
+| 100 examples, with CoT *(main/default)* | `demos/DEMOS_PBEBENCH_seed_42_100_examples_with_CoT.json` |
 | 100 examples, with CoT | `demos/DEMOS_PBEBENCH_seed_42_100_examples_with_CoT.json` |
 | 48 examples, with CoT | `demos/DEMOS_PBEBENCH_seed_42_48_examples_with_CoT.json` |
 | 12 examples, with CoT | `demos/DEMOS_PBEBENCH_seed_42_12_examples_with_CoT.json` |
@@ -114,8 +114,8 @@ Full step-by-step commands for all experiments are in **[COMMANDS.md](COMMANDS.m
 │   ├── SOLVER_BUILDING_PROMPT_PBE.md   # spec given to coding agent for PBEBench solver
 │   └── SOLVER_BUILDING_PROMPT_SLR.md   # spec given to coding agent for SLR-Bench solver
 ├── demos/
-│   ├── DEMOS_PBEBENCH_seed_42_100_examples.json              # 100 PBEBench traces (no CoT) — main
-│   ├── DEMOS_PBEBENCH_seed_42_100_examples_with_CoT.json    # 100 PBEBench traces + CoT
+│   ├── DEMOS_PBEBENCH_seed_42_100_examples.json              # 100 PBEBench traces (no CoT)
+│   ├── DEMOS_PBEBENCH_seed_42_100_examples_with_CoT.json    # 100 PBEBench traces + CoT — default
 │   ├── DEMOS_PBEBENCH_seed_42_48_examples_with_CoT.json     # 48 examples + CoT (ablation)
 │   ├── DEMOS_PBEBENCH_seed_42_12_examples_with_CoT.json     # 12 examples + CoT (ablation)
 │   └── DEMOS_SLRBENCH_seed_42_92_examples_with_CoT.json     # 92 SLR-Bench reasoning traces
