@@ -340,13 +340,13 @@ The **BoK-32 gpt-oss-120b results are taken directly from the PBEBench paper's p
 
 ### Performance
 
-| Demos | Run | Lite Pass% | Hard Pass% | Solver path |
-|-------|----:|----------:|----------:|-------------|
-| 100 examples + CoT | 1 | 53.4% | 58.9% | `qwen3.6_35b_a3b/Fri_Apr_24_200_AM/` |
-| 100 examples + CoT | **2** | **65.7%** | **74.7%** | `qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/` |
-| 100 examples, **no CoT** | 1 | 42.1% | 24.8% | `qwen3.6_35b_a3b/Sat_Apr_25_819_PM_DEMOS_PBEBENCH_seed_42_100_examples/` |
-| 48 examples + CoT | 1 | 55.7% | 76.2% | `qwen3.6_35b_a3b/Sat_Apr_25_1104_PM_DEMOS_PBEBENCH_seed_42_48_examples_with_CoT/` |
-| 12 examples + CoT | 1 | 47.7% | 50.4% | `qwen3.6_35b_a3b/Sun_Apr_26_120_AM_DEMOS_PBEBENCH_seed_42_12_examples_with_CoT/` |
+| Demos | Run | Lite Pass% | Hard Pass% | Algorithm (short) |
+|-------|----:|----------:|----------:|-------------------|
+| 100 examples + CoT | 1 | 53.4% | 58.9% | greedy + multi-pass residual fixing |
+| 100 examples + CoT | 2 | **65.7%** | **74.7%** | safety-first greedy + 2-step lookahead |
+| 100 examples, **no CoT** | 1 | 42.1% | 24.8% | beam search + heuristic scoring |
+| 48 examples + CoT | 1 | 55.7% | 76.2% | multi-start greedy + permutation reorder |
+| 12 examples + CoT | 1 | 47.7% | 50.4% | adaptive beam search |
 
 ### Solver construction token cost
 
@@ -357,6 +357,27 @@ The **BoK-32 gpt-oss-120b results are taken directly from the PBEBench paper's p
 | 100 examples, no CoT | 1 | 102 | 227,002 | 7,670,723 | 135,686 |
 | 48 examples + CoT | 1 | 82 | 176,868 | 4,126,622 | 101,435 |
 | 12 examples + CoT | 1 | 49 | 106,526 | 1,638,817 | 63,418 |
+
+### Qualitative trajectory analysis
+
+Each OpenHands run produced a different solver algorithm despite identical inputs (for same-demos runs). Qwen appears to explore fundamentally different designs across runs rather than converging on a canonical approach.
+
+**100 examples + CoT, run 1 — "Greedy + multi-pass residual fixing"** (`Fri_Apr_24_200_AM`):
+Extracts edit regions between input and output (longest-common-prefix/suffix anchoring), then generates candidates via three strategies: direct substitution, split candidates (splitting a complex edit into two simpler replaces), and context extension (extending the edit boundary to capture adjacent characters). Greedy selection uses a score of `n_fix − 2×n_break`. After greedy construction, a two-phase residual pass tries single programs then pairs to fix remaining examples. Produces correct but sometimes overly complex cascades. The split-candidate strategy is the most distinctive insight, directly capturing multi-step edits as pairs.
+
+**100 examples + CoT, run 2 — "Safety-first greedy + 2-step lookahead"** (`Sun_Apr_26_402_PM`):
+Separates examples into "changed" (providing signal) and "unchanged" (providing safety constraints). Candidates are pre-filtered to discard any that modify unchanged pairs — a hard safety gate applied before scoring, not as a penalty. Generates both direct candidates and 2-step lookahead candidates (enumerate A1/B1 pairs, check if the intermediate can reach output in one more step). Greedy selection picks by improvement count, with a fallback to best-overall if no candidate improves. The safety-first design results in a tighter search space and the 2-step lookahead explicitly handles feeding interactions. This approach achieved the highest Lite pass rate (65.7%) of any Qwen run.
+
+**100 examples, no CoT — "Beam search + heuristic scoring"** (`Sat_Apr_25_819_PM`):
+Without reasoning traces the agent fell back to a textbook beam search: enumerate all (A,B) pairs scoring them by how many diffs they fully explain (×1000) plus partial progress (×10), then run beam search (beam_size=50) using the verifier to select states. No structural insights about edit regions, feeding interactions, or multi-step decomposition — just breadth-first exploration. The resulting solver is the weakest, especially on Hard, because beam search without structural priors doesn't scale to long cascades.
+
+**48 examples + CoT — "Multi-start greedy + permutation reorder"** (`Sat_Apr_25_1104_PM`):
+Adopts the clearest separation of concerns: greedy construction using exact candidates (programs that directly solve an example) plus progress candidates (programs that reduce edit distance), followed by a best-ordering search that tries all permutations for ≤8 programs and random-shuffle + local-swap for larger sequences. Multi-start (multiple random seeds) provides diversity. The permutation reorder step is the key insight: it explicitly handles feeding/bleeding interactions by scoring different program orderings, rather than hoping the greedy order is correct. This design is the most principled and also achieved the highest Hard pass rate (76.2%) among single runs.
+
+**12 examples + CoT — "Adaptive beam search"** (`Sun_Apr_26_120_AM`):
+Uses beam search with adaptive parameters (beam width and max programs scale with the fraction of changed examples). Adds a diversity constraint (no repeated candidates within a sequence) and an alternative-path fallback for partial success. The adaptive complexity is a reasonable heuristic but the limited example set (12) meant the agent lacked sufficient signal to invent structural insights like edit-region anchoring or permutation reordering. The resulting solver is a competent but generic beam search, clearly below the CoT runs with richer examples.
+
+**Summary pattern:** CoT traces enable the agent to learn structural insights about the DSL (edit regions, feeding interactions, program ordering). Without CoT it defaults to brute-force beam search. With CoT but too few examples (12), it produces a competent but under-informed search. The best solvers share a common trait: an explicit mechanism for handling program-order interactions (permutation reorder, 2-step lookahead, or split-candidate pairs).
 
 ### Key findings
 
