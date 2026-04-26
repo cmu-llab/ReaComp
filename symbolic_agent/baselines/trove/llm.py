@@ -26,6 +26,24 @@ DEFAULT_TOP_P = 0.95
 DEFAULT_MAX_TOKENS = 512
 
 
+def _message_text(msg: Any) -> str:
+    """Return visible text from OpenAI/vLLM chat message variants."""
+    content = getattr(msg, "content", None)
+    if content:
+        return content
+    for field in ("reasoning_content", "reasoning"):
+        value = getattr(msg, field, None)
+        if value:
+            return value
+    extra = getattr(msg, "model_extra", None) or {}
+    if isinstance(extra, dict):
+        for field in ("reasoning_content", "reasoning"):
+            value = extra.get(field)
+            if value:
+                return value
+    return ""
+
+
 class TroVELLMClient:
     """
     Backend-agnostic plain-text LLM client for TroVE generation.
@@ -190,7 +208,7 @@ class TroVELLMClient:
                     # No response_format — TroVE uses free-form text
                 )
                 msg = response.choices[0].message
-                raw = msg.content or getattr(msg, "reasoning_content", "") or ""
+                raw = _message_text(msg)
                 u = getattr(response, "usage", None)
                 details = getattr(u, "completion_tokens_details", None)
                 usage = {
@@ -309,7 +327,7 @@ class TroVELLMClient:
                 break
 
             msg = response.choices[0].message
-            content = msg.content or getattr(msg, "reasoning_content", "") or ""
+            content = _message_text(msg)
             tool_calls = getattr(msg, "tool_calls", None) or []
 
             u = getattr(response, "usage", None)
