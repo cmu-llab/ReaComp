@@ -34,6 +34,7 @@ Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutio
 | **CC Solver** | **80.4%** | **0.9438** | **93.7** | **+3.00** | **0** |
 | **Qwen Solver (best run)** | **65.7%** | **0.9022** | **87.4** | **+3.01** | **0** |
 | **CC + Qwen Solvers (union)** | **84.6%** | **0.9607** | **94.9** | **+2.16** | **0** |
+| **All Symbolic Solvers (union)** | **91.3%** | **0.9772** | **96.6** | **+1.88** | **0** |
 | DF-32 (gpt-oss-120b) | 92.4% | 0.9796 | 97.3 | +2.11 | 110,267 |
 | BoK-32 (gpt-oss-120b) | 93.8% | 0.9808 | 97.8 | +2.19 | 67,480 |
 | DF + Qwen Solver (effi) | 92.9% | 0.9810 | 97.5 | +2.89 | 89,493 |
@@ -60,20 +61,20 @@ CC solver collapses at CL=5 (50%) — at the 5-program limit there is little sla
 
 ### Key findings
 
-**1. Symbolic solvers alone are surprisingly strong.** The CC Solver (80.4%) surpasses gpt-oss-120b (62.5%) and GPT-5 (72.4%) at their single-attempt setting — at zero per-task inference cost. The Qwen Solver (65.7%) beats gpt-oss-120b single attempt as well.
+**1. Symbolic solvers alone are surprisingly strong.** The CC Solver (80.4%) surpasses gpt-oss-120b (62.5%) and GPT-5 (72.4%) at their single-attempt setting — at zero per-task inference cost. The Qwen Solver (65.7%) also beats gpt-oss-120b single attempt.
 
-**2. Symbolic + LLM ensembles consistently outperform either alone.** BoK alone caps at 93.8%; adding the CC Solver (effi) reaches 93.9% while cutting tokens by 33% (45K vs 67K avg/task). DF + All Symbolic effi reaches 93.2% at only 78K avg tokens — 29% cheaper than DF alone.
+**2. Unioning all symbolic solvers reaches 91.3% at zero LLM cost.** The full symbolic union (CC + all 6 Qwen runs) achieves 91.3% pass — within 2.5pp of BoK-32 (93.8%) while spending zero tokens. This is the strongest zero-cost result and the tightest complexity (Δ+1.88), as the union can always pick the simplest correct answer among diverse solver outputs.
 
-**3. The all-symbolic union is the best zero-cost option.** CC + Qwen union reaches 84.6% pass, +4.2pp over CC alone, at zero LLM cost. When paired with BoK or DF in effi mode, it also yields the lowest token cost of any ensemble configuration.
+**3. Symbolic + LLM ensembles consistently outperform either alone.** BoK alone caps at 93.8%; adding the CC Solver (effi) reaches 93.9% while cutting tokens by 33% (45K vs 67K avg/task). DF + All Symbolic effi reaches 93.2% at only 78K avg tokens — 29% cheaper than DF alone.
 
-**4. Effi mode preserves pass rate while cutting cost.** BoK + All Symbolic effi matches BoK + CC Solver effi in pass rate (93.9%) but saves a further 2K tokens/task by using the union solver (which covers more tasks perfectly), with no pass rate tradeoff.
+**4. Effi mode preserves pass rate while cutting cost.** BoK + All Symbolic effi matches BoK + CC Solver effi in pass rate (93.9%) but saves a further 2K tokens/task, with no pass rate tradeoff.
 
-**5. Effi slightly increases complexity Δ vs standalone LLM.** LLM outputs are less parsimonious than GT: DF standalone Δ+2.11, but DF+CC effi rises to Δ+3.00 because the CC solver's outputs (Δ+3.00) replace LLM outputs on tasks it solves. The all-symbolic effi mitigates this — union solver includes Qwen whose outputs are tighter.
+**5. Effi slightly increases complexity Δ vs standalone LLM.** DF standalone Δ+2.11, but DF+CC effi rises to Δ+3.00 because the CC solver's outputs replace LLM outputs on tasks it solves. All-Symbolic effi mitigates this (Δ+2.18) since the union includes tighter Qwen outputs.
 
-**6. BoK finds simpler programs than DF.** BoK Δ+2.19 vs DF Δ+2.11 — similar, but BoK has the advantage of selecting the minimum-complexity correct candidate from 32 samples.
+**6. BoK finds simpler programs than DF.** BoK Δ+2.19 vs DF Δ+2.11 — similar, but BoK selects the minimum-complexity correct candidate from 32 samples.
 
 **7. Best trade-off points:**
-- Best pass rate (zero cost): CC + Qwen union (84.6%, 0 tokens)
+- Best pass rate (zero cost): All Symbolic union (91.3%, 0 tokens, Δ+1.88)
 - Best pass rate + token efficiency: BoK + All Symbolic effi (93.9%, 43K avg tokens/task)
 - Best pass rate regardless of cost: BoK + CC Solver effi or BoK + All Symbolic effi (93.9%)
 
@@ -87,7 +88,8 @@ CC solver collapses at CL=5 (50%) — at the 5-program limit there is little sla
 | `evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_.../lite.jsonl` | Qwen Solver results (run 2) |
 | `outputs/lite_tasks_full_og_best_of_k_stripped.jsonl` | BoK raw outputs (stripped) |
 | `outputs/lite_tasks_full_og_direct_feedback_stripped.jsonl` | DF raw outputs (stripped) |
-| `outputs/lite_union_solvers.jsonl` | CC + Qwen union |
+| `outputs/lite_union_solvers.jsonl` | CC + Qwen (run 2) union |
+| `outputs/lite_ensemble_all_solvers.jsonl` | All Symbolic union (CC + all 6 Qwen runs) |
 | `outputs/lite_effi_bok_cc.jsonl` | BoK + CC Solver (effi) |
 | `outputs/lite_effi_bok_qwen_run2.jsonl` | BoK + Qwen Solver (effi) |
 | `outputs/lite_effi_bok_all_solvers.jsonl` | BoK + All Symbolic (effi) |
