@@ -368,6 +368,8 @@ The **BoK-32 gpt-oss-120b results are taken directly from the PBEBench paper's p
 
 **5. KV caching saves ~98% of input tokens.** No-cache totals are 20–34× higher than KV-cache totals (e.g. 4.4M vs 191K for the original run). All construction cost figures in the paper use the KV-cache estimate as the realistic lower bound.
 
+**6. TODO — solver variance ablation (same demos, multiple runs).** The four ablations above each use a different demos file, so solver quality differences could reflect either example composition or run-to-run stochasticity in the OpenHands agent. To isolate these, re-run the Qwen solver 2–3 times on the default PBE demos (`demos/DEMOS_PBEBENCH_seed_42_100_examples_with_CoT.json`) and compare pass rates across runs. This would bound the noise floor and determine whether the 48-example result (+17pp on Hard) is reproducibly better or within variance.
+
 ### Output files
 
 | File | Description |

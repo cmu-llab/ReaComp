@@ -95,14 +95,112 @@ VLLM_API_KEY=EMPTY             # for local vLLM (BoK / DF baselines)
 
 ## Reproduction
 
-Full step-by-step commands for all experiments are in **[COMMANDS.md](COMMANDS.md)**:
+Full step-by-step commands are also in **[COMMANDS.md](COMMANDS.md)**. Quick reference below.
 
-1. Solver induction (Claude Code CLI or OpenHands + Qwen)
-2. Evaluating symbolic solvers on PBEBench / SLR-Bench
-3. Running LLM baselines (BoK, Direct Feedback) via vLLM
-4. Ensembling + eval + figure generation
-5. Quick eval on any output file
-6. Solver variance check
+### 1. Solver induction (coding agent writes SOLVER.py)
+
+**Claude Code (interactive session — run from project root):**
+```bash
+# The agent reads demos/ and building_prompts/, then writes SOLVER.py + SOLVER_ALGORITHM.md
+claude  # open Claude Code, then @ the building prompt and demos file manually
+```
+
+**OpenHands + Qwen (fully automated):**
+```bash
+# PBEBench solver (default: 100 examples + CoT)
+SOLVER_TYPE=pbe bash scripts/run_solver_builder_openhands.sh <PORT>
+
+# SLR-Bench solver (default: 92 examples + CoT)
+SOLVER_TYPE=slr bash scripts/run_solver_builder_openhands.sh <PORT>
+
+# Ablation: override the demos file
+SOLVER_TYPE=pbe DEMOS_PATH=demos/DEMOS_PBEBENCH_seed_42_48_examples_with_CoT.json \
+    bash scripts/run_solver_builder_openhands.sh <PORT>
+```
+Output lands in `built_solvers/qwen3.6_35b_a3b/<TIMESTAMP>[_<demos_tag>]/`.
+
+### 2. Evaluating symbolic solvers
+
+```bash
+# PBEBench-Lite + Hard (both splits)
+python scripts/eval_solver.py \
+    --solver built_solvers/<agent>/<timestamp>/SOLVER.py \
+    --dataset both \
+    --workers 32 \
+    --task-timeout 60 \
+    --output-dir evals/solver_results/<agent>/<timestamp>
+
+# SLR-Bench only
+python scripts/eval_solver.py \
+    --solver built_solvers/<agent>/<timestamp>/SOLVER_SLR.py \
+    --dataset slr \
+    --workers 32 \
+    --task-timeout 3600 \
+    --output-dir evals/solver_results/slr_<agent>/<timestamp>
+```
+Writes `lite.jsonl`, `hard.jsonl`, or `slr.jsonl` + `*_summary.json` to `--output-dir`.
+
+### 3. Running LLM baselines (requires local vLLM serving `gpt-oss-120b`)
+
+```bash
+# Best-of-K
+DATASET=lite bash scripts/run_best_of_k_vllm.sh    # PBEBench-Lite
+DATASET=hard bash scripts/run_best_of_k_vllm.sh    # PBEBench-Hard
+DATASET=slr  bash scripts/run_best_of_k_vllm.sh    # SLR-Bench
+# Override port: PORT=8004 DATASET=lite bash scripts/run_best_of_k_vllm.sh
+
+# Direct Feedback
+DATASET=lite bash scripts/run_direct_feedback_vllm.sh
+DATASET=hard bash scripts/run_direct_feedback_vllm.sh
+DATASET=slr  bash scripts/run_direct_feedback_vllm.sh
+# Override port/workers: PORT=8002 WORKERS=16 bash scripts/run_direct_feedback_vllm.sh
+```
+Both scripts checkpoint after every task — safe to kill and relaunch.
+
+### 4. Ensembling, eval, and plots
+
+Run the full pipeline (ensembles → quick_eval → figures) for each benchmark:
+
+```bash
+bash scripts/run_all_pbebench_lite_evals.sh   # → metrics/pbebench_lite_all.json
+bash scripts/run_all_pbebench_hard_evals.sh   # → metrics/pbebench_hard_all.json
+bash scripts/run_all_slr_evals.sh             # → metrics/slr_all.json
+```
+
+Or run individual steps:
+
+```bash
+# Build a single ensemble
+python scripts/ensemble_outputs.py \
+    --sources outputs/lite_tasks_full_og_best_of_k.jsonl \
+              evals/solver_results/claude_code/<timestamp>/lite.jsonl \
+    --out outputs/my_ensemble.jsonl
+
+# Effi mode (solver takes priority when reward=1.0; zero LLM tokens counted for those tasks)
+python scripts/ensemble_outputs.py --effi \
+    --symbolic evals/solver_results/claude_code/<timestamp>/lite.jsonl \
+    --sources  outputs/lite_tasks_full_og_best_of_k.jsonl \
+    --out outputs/my_ensemble_effi.jsonl
+
+# Quick eval on any JSONL output
+python scripts/quick_eval.py outputs/my_ensemble.jsonl \
+    --tasks-file data/pbebench/lite_tasks_full_og.jsonl \
+    --metrics-json metrics/my_ensemble.json
+```
+
+### 5. Trajectory token cost (solver construction)
+
+```bash
+# Estimate token cost of a solver-builder run (with/without KV caching)
+python scripts/compute_trajectory_tokens.py \
+    debug_oh_solver_builder/<timestamp>/solver_builder_trajectory.json
+
+# With exact Qwen tokenizer (requires transformers)
+python scripts/compute_trajectory_tokens.py \
+    debug_oh_solver_builder/<timestamp>/solver_builder_trajectory.json \
+    --tokenizer Qwen/Qwen3-Coder-30B-A3B-Instruct \
+    --metrics-json metrics/solver_build_tokens.json
+```
 
 ---
 
