@@ -101,7 +101,9 @@ def _solve_in_child(solver_path, cfg, rec, queue):
                 kwargs["max_pred_len"] = cfg["max_pred_len"]
             if "max_transform_len" in sig_params:
                 kwargs["max_transform_len"] = cfg["max_transform_len"]
-            queue.put(solve_fn(examples, **kwargs))
+            result = solve_fn(examples, **kwargs)
+            score = result.get("score", max(result["scores"]) if result.get("scores") else (1.0 if result["success"] else 0.0))
+            queue.put({"success": result["success"], "program": result.get("program"), "score": score})
     except Exception as e:
         queue.put({"error": str(e)})
 
