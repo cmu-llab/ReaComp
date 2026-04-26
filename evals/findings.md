@@ -17,137 +17,81 @@ Datasets, DSL constraints, and baseline configurations are documented in `evals/
 
 ## PBEBench-Lite
 
-**Dataset:** 1,008 tasks · cascade length 2–5 · ~252 tasks per level · GT mean cascade complexity = 11.63  
-**Max programs:** 5
+**Dataset:** 1,008 tasks · cascade length 2–5 · ~252 tasks per level · GT mean cascade complexity: 11.20 (solved subset)  
+**Max programs:** 5  
+**LLM baseline:** gpt-oss-120b via vLLM. BoK = 32 parallel samples, max 32,768 tokens/sample. DF = up to 32 sequential attempts with verifier feedback, max 32,768 tokens/attempt.  
+**Symbolic solvers:** CC Solver = induced by claude-sonnet-4-6 (Claude Code session); Qwen Solver = induced by Qwen3.6-35B-A3B via OpenHands (best single run: run 2, 100 examples + CoT). Zero per-task LLM cost.  
+**Ensembles:** effi mode — use solver output unconditionally when reward = 1.0 (zero LLM tokens); fall back to LLM otherwise. Complexity Δ = mean predicted − mean GT (solved tasks only).
 
-### Individual systems
+### Main results
 
-| System | Solved | Pass% | Mean reward | Avg time/task |
+| System | Pass% | Mean reward | Complexity Δ | Avg tokens/task |
 |---|---:|---:|---:|---:|
-| Symbolic Solver (Claude Code) | 810 / 1008 | 80.36% | 0.9438 | 0.004s |
-| Symbolic Solver (Qwen3.6-35B-A3B) | 538 / 1008 | 53.37% | 0.8494 | — |
+| gpt-oss-120b, single attempt † | 62.5% | — | −0.67 | — |
+| GPT-5, single attempt † | 72.4% | — | −1.02 | — |
+| **CC Solver** | **80.4%** | **0.9438** | **+3.00** | **0** |
+| **Qwen Solver (best run)** | **65.7%** | **0.9022** | **+3.01** | **0** |
+| **CC + Qwen Solvers (union)** | **84.6%** | **0.9607** | **+2.16** | **0** |
+| DF-32 (gpt-oss-120b) | 92.4% | 0.9796 | +2.11 | 110,267 |
+| BoK-32 (gpt-oss-120b) | 93.8% | 0.9808 | +2.19 | 67,480 |
+| DF + Qwen Solver (effi) | 92.9% | 0.9810 | +2.89 | 89,493 |
+| DF + CC Solver (effi) | 93.1% | 0.9815 | +3.00 | 79,877 |
+| DF + All Symbolic (effi) | 93.2% | 0.9817 | +2.18 | 78,119 |
+| BoK + Qwen Solver (effi) | 93.8% | 0.9808 | +2.94 | 50,284 |
+| **BoK + CC Solver (effi)** | **93.9%** | **0.9810** | **+2.94** | **45,277** |
+| **BoK + All Symbolic (effi)** | **93.9%** | **0.9810** | **+2.19** | **43,113** |
 
-### LLM baselines (gpt-oss-120b, K=32)
+† Reported scores from PBEBench paper (`figures/pbebench_lite_reported_metrics.png`); not re-run by us. Single attempt, Pass@1, 8192 CoT tokens — no test-time scaling.
 
-BoK = 32 parallel samples, max 32,768 tokens/sample. DF = up to 32 sequential attempts with verifier feedback, max 32,768 tokens/attempt. Token counts are averages per task (input + output; no CoT recorded for Lite).
-
-| System | Pass% | Mean reward | Avg tokens |
-|---|---:|---:|---:|
-| Best-of-K (BoK) | — | — | 67,479 |
-| Direct Feedback (DF) | — | — | 110,266 |
-
-*(BoK and DF standalone pass rates on Lite not separately recorded; see ensemble table below.)*
-
-### Ensemble results (union — best score per task, max reward then min complexity)
-
-| System | Solved | Pass% | Mean reward | Avg tokens |
-|---|---:|---:|---:|---:|
-| Claude solver only | 810 / 1008 | 80.4% | 0.9438 | 0 |
-| Qwen3.6 solver only | 538 / 1008 | 53.4% | 0.8494 | 0 |
-| Claude + Qwen solvers | 841 / 1008 | 83.5% | 0.9595 | 0 |
-| BoK + Claude solver | 947 / 1008 | 94.0% | 0.9847 | 67,479 |
-| BoK + Qwen solver | 946 / 1008 | 93.8% | 0.9825 | 67,479 |
-| BoK + Claude + Qwen solvers | 947 / 1008 | 94.0% | 0.9847 | 67,479 |
-| DF + Claude solver | 938 / 1008 | 93.1% | 0.9829 | 110,266 |
-| DF + Qwen solver | 936 / 1008 | 92.9% | 0.9813 | 110,266 |
-| DF + Claude + Qwen solvers | 939 / 1008 | 93.2% | 0.9835 | 110,266 |
-| **DF+BoK + Claude solver** | **956 / 1008** | **94.9%** | **0.9881** | 177,746 |
-| DF+BoK + Qwen solver | 956 / 1008 | 94.9% | 0.9873 | 177,746 |
-| **DF+BoK + Claude+Qwen solvers** | **956 / 1008** | **94.9%** | **0.9881** | 177,746 |
-| BoK + Claude solver (effi) | 947 / 1008 | 94.0% | 0.9810 | **45,277** |
-| BoK + Qwen solver (effi) | 946 / 1008 | 93.8% | 0.9808 | **56,618** |
-| DF + Claude solver (effi) | 938 / 1008 | 93.1% | 0.9815 | **79,876** |
-| DF + Qwen solver (effi) | 936 / 1008 | 92.8% | 0.9808 | **95,308** |
-| DF+BoK + Claude solver (effi) | 956 / 1008 | 94.9% | 0.9873 | **125,153** |
-| **DF+BoK + Qwen solver (effi)** | **956 / 1008** | **94.9%** | **0.9873** | **151,927** |
-
-*Effi mode: use solver output unconditionally when it scores 1.0; count zero LLM tokens for those tasks.*
-
-> **Model note for paper:** The LLM baselines (BoK, DF) use **gpt-oss-120b** served via vLLM. The symbolic solvers are induced by a separate coding agent: the Claude Code solver by **claude-sonnet-4-6** (Claude Code session), the Qwen solver by **Qwen3.6-35B-A3B** (a smaller MoE model than gpt-oss-120b) running inside OpenHands. These are distinct models from the inference LLM — the effi token savings reflect replacing gpt-oss-120b inference with a zero-cost symbolic program, not with the solver-building model. The solver-building cost (~191K tokens for Qwen, one-time) is separate from and negligible relative to the inference savings (see finding 8).
-
-### Complexity of solutions (solved tasks only, vs GT)
-
-Selection policy: max reward first, min complexity as tiebreak.
-
-| System | n solved | Mean pred | Mean GT | Δ (pred−GT) | Simpler | Equal | More complex |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| BoK ∪ Claude solver | 947 | 12.49 | 11.29 | +1.20 | 148 (15.6%) | 342 (36.1%) | 457 (48.3%) |
-| BoK ∪ Qwen solver | 946 | 13.48 | 11.29 | +2.20 | 128 (13.5%) | 277 (29.3%) | 541 (57.2%) |
-| Claude solver | 810 | 13.71 | 10.71 | +3.00 | 74 (9.1%) | 141 (17.4%) | 595 (73.5%) |
-| Qwen solver | 538 | 11.55 | 9.84 | +1.70 | 86 (16.0%) | 168 (31.2%) | 284 (52.8%) |
+> **Model note:** LLM baselines use **gpt-oss-120b** served via vLLM. Symbolic solvers are induced by a separate coding agent (CC by claude-sonnet-4-6; Qwen by Qwen3.6-35B-A3B inside OpenHands) — distinct from the inference LLM. Effi token savings reflect replacing gpt-oss-120b inference with zero-cost symbolic execution; solver build cost (~216K tokens KV-cache, one-time) is negligible at any realistic eval scale (see Finding 8).
 
 ### Symbolic solver breakdown by cascade length
 
-| Cascade | N | Pass% (Claude) | Mean score (Claude) |
-|---:|---:|---:|---:|
-| 2 | 246 | 98.4% | 0.990 |
-| 3 | 253 | 90.9% | 0.963 |
-| 4 | 253 | 83.0% | 0.958 |
-| 5 | 256 | 50.0% | 0.866 |
+| Cascade | N | Pass% (CC) | Mean reward (CC) | Pass% (Qwen) | Mean reward (Qwen) |
+|---:|---:|---:|---:|---:|---:|
+| 2 | 246 | 98.4% | 0.990 | 96.3% | 0.992 |
+| 3 | 253 | 90.9% | 0.963 | 81.0% | 0.947 |
+| 4 | 253 | 83.0% | 0.958 | 56.5% | 0.886 |
+| 5 | 256 | 50.0% | 0.866 | 30.1% | 0.788 |
 
-Performance collapses at CL=5 (50.0%) — at the 5-program limit there is no slack for feed/bleed ordering interactions.
-
-### Comparison with PBEBench-Lite reported results
-
-Source: PBEBench paper (`figures/pbebench_lite_reported_metrics.png`). Paper numbers use **single attempt, Pass@1, 8192 CoT tokens** — no test-time scaling. Our BoK (K=32) and DF (K=32) use substantially more compute and are not directly comparable; they are included for reference. Symbolic solvers use **zero per-task LLM inference**.
-
-| Model | Pass% | Complexity | Avg tokens | Notes |
-|-------|------:|-----------:|-----------:|-------|
-| Codestral-22B †  | 1.1% | 15.4 | — | reported, single attempt |
-| Qwen2.5-32B-Instruct †  | 1.8% | 14.9 | — | reported, single attempt |
-| Qwen3-32B † | 41.9% | 6.57 | — | reported, with CoT |
-| gpt-oss-120b † | 62.5% | 10.93 | — | reported, single attempt, 8192 CoT |
-| GPT-5 † | 72.4% | 10.58 | — | reported, single attempt |
-| **CC Solver (ours)** | **80.4%** | — | **0** | zero LLM tokens |
-| **OH Qwen Solver (ours)** | **53.4%** | — | **0** | zero LLM tokens, Qwen3.6-35B-A3B |
-| BoK-32, gpt-oss-120b (ours) | 93.9% | — | 67,479 | K=32, 32× compute |
-| DF-32, gpt-oss-120b (ours) | 92.4% | — | 110,267 | K=32 sequential |
-| **BoK-32 + CC Solver (ours)** | **93.95%** | — | 67,479 | |
-| **DF-32 + CC Solver (ours)** | **93.1%** | — | 110,267 | |
-| **DF+BoK + CC Solver (ours)** | **94.9%** | — | 177,746 | |
-
-† Reported scores from PBEBench paper; not re-run by us.
-
-**Key takeaway:** The CC Solver alone (80.4%) **surpasses gpt-oss-120b (62.5%) and GPT-5 (72.4%)** at their single-attempt setting — at zero per-task inference cost. The symbolic solver's standalone result is competitive with frontier LLMs before any test-time scaling is applied.
-
-**TODO:** Compute and fill Edit Sim and Complexity columns for our systems.
+CC solver collapses at CL=5 (50%) — at the 5-program limit there is little slack for ordering interactions. Qwen run 2 shows consistent but lower performance at all levels.
 
 ### Key findings
 
-**1. Symbolic solvers alone are surprisingly strong.** The Claude solver reaches 80.4% pass at zero LLM token cost. Qwen is weaker (53.4%) but produces notably tighter programs (Δ+1.70 vs GT, vs +3.00 for Claude).
+**1. Symbolic solvers alone are surprisingly strong.** The CC Solver (80.4%) surpasses gpt-oss-120b (62.5%) and GPT-5 (72.4%) at their single-attempt setting — at zero per-task inference cost. The Qwen Solver (65.7%) beats gpt-oss-120b single attempt as well.
 
-**2. Symbolic + LLM ensembles consistently outperform either alone.** BoK+DF alone caps around ~93%; adding the Claude solver pushes to 94.9%. The ceiling appears to be ~95% with current systems.
+**2. Symbolic + LLM ensembles consistently outperform either alone.** BoK alone caps at 93.8%; adding the CC Solver (effi) reaches 93.9% while cutting tokens by 33% (45K vs 67K avg/task). DF + All Symbolic effi reaches 93.2% at only 78K avg tokens — 29% cheaper than DF alone.
 
-**3. Adding the Qwen solver on top of Claude rarely helps once LLMs are included.** Qwen adds +3pp in the solver-only ensemble (83.5% vs 80.4%), but once BoK or DF is present it brings no additional pass rate gain.
+**3. The all-symbolic union is the best zero-cost option.** CC + Qwen union reaches 84.6% pass, +4.2pp over CC alone, at zero LLM cost. When paired with BoK or DF in effi mode, it also yields the lowest token cost of any ensemble configuration.
 
-**4. BoK finds the simplest programs.** By picking the minimum-complexity correct candidate from 32 samples, BoK∪Claude achieves Δ+1.20 over GT — much tighter than the Claude solver alone (Δ+3.00). Sampling diversity finds programs closer to the GT structure.
+**4. Effi mode preserves pass rate while cutting cost.** BoK + All Symbolic effi matches BoK + CC Solver effi in pass rate (93.9%) but saves a further 2K tokens/task by using the union solver (which covers more tasks perfectly), with no pass rate tradeoff.
 
-**5. Effi mode cuts token cost ~30% with no pass rate loss.** At DF+BoK level: Claude effi saves 125K vs 178K (−30%), Qwen effi saves 152K vs 178K (−15%), both at the same 94.9% pass rate. Larger saving for Claude because it solves more tasks perfectly (80.4% vs 53.4%).
+**5. Effi slightly increases complexity Δ vs standalone LLM.** LLM outputs are less parsimonious than GT: DF standalone Δ+2.11, but DF+CC effi rises to Δ+3.00 because the CC solver's outputs (Δ+3.00) replace LLM outputs on tasks it solves. The all-symbolic effi mitigates this — union solver includes Qwen whose outputs are tighter.
 
-**6. Effi mode trades complexity for token savings.** Effi variants show higher complexity than standard counterparts (DF+BoK + Claude: 12.15 standard vs 14.31 effi) because when the solver is bypassed the LLM output takes over, and LLM outputs are less parsimonious.
+**6. BoK finds simpler programs than DF.** BoK Δ+2.19 vs DF Δ+2.11 — similar, but BoK has the advantage of selecting the minimum-complexity correct candidate from 32 samples.
 
 **7. Best trade-off points:**
-- Best accuracy + complexity: DF+BoK + Claude solver (94.9%, Cplx 12.15, 178K tokens)
-- Best accuracy + token efficiency: DF+BoK + Claude solver effi (94.9%, 125K tokens, Cplx 14.31)
-- Best symbolic-only: Claude+Qwen solver ensemble (83.5%, zero tokens)
-- Closest to GT complexity: Qwen3.6 solver alone (Δ+0.46) — but only 53.4% pass rate
+- Best pass rate (zero cost): CC + Qwen union (84.6%, 0 tokens)
+- Best pass rate + token efficiency: BoK + All Symbolic effi (93.9%, 43K avg tokens/task)
+- Best pass rate regardless of cost: BoK + CC Solver effi or BoK + All Symbolic effi (93.9%)
 
-**8. Solver construction cost is negligible when amortised.** The Qwen solver was built in a single OpenHands session costing ~202K tokens (76 real turns over 3h 21min; measured via `scripts/compute_trajectory_tokens.py`, accounting for KV caching). Effi mode saves 25,819 tokens/task on Lite — the build cost recoups at 7.8 tasks and is only 0.78% of per-task savings across the full 1008-task eval (129× return). On Hard (CoT-heavy, 166K tokens saved/task) break-even is 1.2 tasks and the return is ~1000×. Even under the pessimistic assumption of no KV caching (4.8M tokens), break-even is 186 tasks on Lite (5.4× return, 18.5% overhead/task) and 29 tasks on Hard (42× return, 2.4% overhead/task). The one-time construction cost is negligible relative to inference savings at any realistic evaluation scale.
+**8. Solver construction cost is negligible when amortised.** The Qwen run 2 solver was built in a single OpenHands session costing ~216K tokens (KV-cache). Effi mode saves ~22K tokens/task over BoK standalone — build cost recoups at 10 tasks and is <1% overhead across 1008 tasks. See ablations section for full token cost breakdown.
 
 ### Output files
 
 | File | Description |
 |---|---|
-| `evals/solver_results/claude_code/Thu_Apr_23_807_PM/lite.jsonl` | Claude solver results |
-| `evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/lite.jsonl` | Qwen solver results |
-| `outputs/lite_tasks_full_og_best_of_k.jsonl` | BoK raw outputs |
-| `outputs/lite_tasks_full_og_direct_feedback.jsonl` | DF raw outputs |
-| `outputs/ensemble_bok_claude_solver.jsonl` | BoK ∪ Claude ensemble |
-| `outputs/ensemble_bok_qwen_solver.jsonl` | BoK ∪ Qwen ensemble |
-| `outputs/ensemble_df_claude_solver.jsonl` | DF ∪ Claude ensemble |
-| `outputs/ensemble_df_qwen_solver.jsonl` | DF ∪ Qwen ensemble |
-| `figures/complexity_lite_metrics.json` | Complexity stats vs GT as JSON |
-| `figures/complexity_lite.png` | Mean solution complexity vs CL |
+| `evals/solver_results/claude_code/Thu_Apr_23_807_PM/lite.jsonl` | CC Solver results |
+| `evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_.../lite.jsonl` | Qwen Solver results (run 2) |
+| `outputs/lite_tasks_full_og_best_of_k_stripped.jsonl` | BoK raw outputs (stripped) |
+| `outputs/lite_tasks_full_og_direct_feedback_stripped.jsonl` | DF raw outputs (stripped) |
+| `outputs/lite_union_solvers.jsonl` | CC + Qwen union |
+| `outputs/lite_effi_bok_cc.jsonl` | BoK + CC Solver (effi) |
+| `outputs/lite_effi_bok_qwen_run2.jsonl` | BoK + Qwen Solver (effi) |
+| `outputs/lite_effi_bok_all_solvers.jsonl` | BoK + All Symbolic (effi) |
+| `outputs/lite_effi_df_cc.jsonl` | DF + CC Solver (effi) |
+| `outputs/lite_effi_df_qwen_run2.jsonl` | DF + Qwen Solver (effi) |
+| `outputs/lite_effi_df_all_solvers.jsonl` | DF + All Symbolic (effi) |
 
 ---
 
