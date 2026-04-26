@@ -25,21 +25,21 @@ Datasets, DSL constraints, and baseline configurations are documented in `evals/
 
 ### Main results
 
-| System | Pass% | Mean reward | Complexity Δ | Avg tokens/task |
-|---|---:|---:|---:|---:|
-| gpt-oss-120b, single attempt † | 62.5% | — | −0.67 | — |
-| GPT-5, single attempt † | 72.4% | — | −1.02 | — |
-| **CC Solver** | **80.4%** | **0.9438** | **+3.00** | **0** |
-| **Qwen Solver (best run)** | **65.7%** | **0.9022** | **+3.01** | **0** |
-| **CC + Qwen Solvers (union)** | **84.6%** | **0.9607** | **+2.16** | **0** |
-| DF-32 (gpt-oss-120b) | 92.4% | 0.9796 | +2.11 | 110,267 |
-| BoK-32 (gpt-oss-120b) | 93.8% | 0.9808 | +2.19 | 67,480 |
-| DF + Qwen Solver (effi) | 92.9% | 0.9810 | +2.89 | 89,493 |
-| DF + CC Solver (effi) | 93.1% | 0.9815 | +3.00 | 79,877 |
-| DF + All Symbolic (effi) | 93.2% | 0.9817 | +2.18 | 78,119 |
-| BoK + Qwen Solver (effi) | 93.8% | 0.9808 | +2.94 | 50,284 |
-| **BoK + CC Solver (effi)** | **93.9%** | **0.9810** | **+2.94** | **45,277** |
-| **BoK + All Symbolic (effi)** | **93.9%** | **0.9810** | **+2.19** | **43,113** |
+| System | Pass% | Mean reward | Edit Sim | Complexity Δ | Avg tokens/task |
+|---|---:|---:|---:|---:|---:|
+| gpt-oss-120b, single attempt † | 62.5% | — | 69.9 | −0.67 | — |
+| GPT-5, single attempt † | 72.4% | — | 76.5 | −1.02 | — |
+| **CC Solver** | **80.4%** | **0.9438** | **93.7** | **+3.00** | **0** |
+| **Qwen Solver (best run)** | **65.7%** | **0.9022** | **87.4** | **+3.01** | **0** |
+| **CC + Qwen Solvers (union)** | **84.6%** | **0.9607** | **94.9** | **+2.16** | **0** |
+| DF-32 (gpt-oss-120b) | 92.4% | 0.9796 | 97.3 | +2.11 | 110,267 |
+| BoK-32 (gpt-oss-120b) | 93.8% | 0.9808 | 97.8 | +2.19 | 67,480 |
+| DF + Qwen Solver (effi) | 92.9% | 0.9810 | 97.5 | +2.89 | 89,493 |
+| DF + CC Solver (effi) | 93.1% | 0.9815 | 97.6 | +3.00 | 79,877 |
+| DF + All Symbolic (effi) | 93.2% | 0.9817 | 97.6 | +2.18 | 78,119 |
+| BoK + Qwen Solver (effi) | 93.8% | 0.9808 | 97.8 | +2.94 | 50,284 |
+| **BoK + CC Solver (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.94** | **45,277** |
+| **BoK + All Symbolic (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.19** | **43,113** |
 
 † Reported scores from PBEBench paper (`figures/pbebench_lite_reported_metrics.png`); not re-run by us. Single attempt, Pass@1, 8192 CoT tokens — no test-time scaling.
 
