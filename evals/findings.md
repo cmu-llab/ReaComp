@@ -379,6 +379,33 @@ Uses beam search with adaptive parameters (beam width and max programs scale wit
 
 **Summary pattern:** CoT traces enable the agent to learn structural insights about the DSL (edit regions, feeding interactions, program ordering). Without CoT it defaults to brute-force beam search. With CoT but too few examples (12), it produces a competent but under-informed search. The best solvers share a common trait: an explicit mechanism for handling program-order interactions (permutation reorder, 2-step lookahead, or split-candidate pairs).
 
+---
+
+### Claude Code PBE solver analysis
+
+No trajectory is available (induced in an interactive Claude Code session), but the SOLVER_ALGORITHM.md documents the approach.
+
+**CC PBE solver — "Two-phase safe/unrestricted beam search with difflib candidate extraction"** (`claude_code/Thu_Apr_23_807_PM`):
+Runs two sequential beam searches. Phase 1 (beam=150) enforces a safety constraint: candidates are restricted to patterns that do not appear as substrings in any already-correct input, preventing collateral damage. Phase 2 (beam=75) drops the constraint to handle the rare edge case where the only correct program matches a character that also appears in an unchanged string. Candidates are generated dynamically using `difflib.SequenceMatcher` on the intermediate state at each beam depth — crucially, at depth 2 the candidates are computed from the strings produced *after* depth-1 programs, enabling discovery of feed/bleed ordering. Context-extended patterns (extending the diff region by 1–2 surrounding characters) help find more specific replacements that avoid hitting unintended positions. Ranked by safety, direct fixes, partial applicability penalty, and pattern length. The two-phase design is the most technically sophisticated of all runs, and the resulting solver achieves the highest pass rate of any single solver on both Lite (80.4%) and Hard (69.7%).
+
+---
+
+### Qwen SLR solver analysis
+
+| Run | Pass% | Mean score | Algorithm (short) |
+|----:|------:|-----------:|-------------------|
+| 1 (`Sat_Apr_25_643_AM`) | *(old Qwen — eval pending)* | — | layered hypothesis generation + early exit |
+| 2 (`Sun_Apr_26_131_PM`) | 60.7% | 0.607 | in-Python filter + budget-limited verification |
+
+**Qwen SLR run 1 — "Layered hypothesis generation with early exit"** (`Sat_Apr_25_643_AM`):
+Builds a feature space by parsing all predicates and their argument value domains. Classifies predicates as car-level or train-level, then generates candidate body literals accordingly. Searches in layers of ascending complexity (1 literal, then 2, then 3), enumerating all combinations within each layer. Uses early exit: the moment a perfect rule (score=1.0) is found in a layer, the search stops without evaluating deeper layers. This guarantees returning the simplest correct rule. Rule candidates are purely conjunctive (`has_car(T,C), pred(C,val), ...`); no negation or disjunction. Final selection ranks by score then complexity. Relies directly on the HuggingFace judge for every candidate evaluation.
+
+**Qwen SLR run 2 — "In-Python filter + budget-limited verification"** (`Sun_Apr_26_131_PM`):
+The key architectural change vs run 1 is moving the filtering almost entirely into Python to avoid the ~27-second SWI-Prolog verifier cost per rule. Generates candidates across four stages: (1a) direct separating properties — exact (pred, value) pairs that appear in all eastbound and no westbound trains; (1b) integer predicate arithmetic rules (`N > 0` style); (1c) negation-as-failure rules (`X \= excluded`); (1d) universal negation (`\+ has_car...`). Gathers candidates from both positive *and* negative examples (the key insight: the distinguishing value may only appear in negatives). If no single-property rule passes, escalates to 2- then 3-property conjunctions, capped at 50,000 combinations. Only the top-K simplest in-Python candidates are sent to the verifier (budget: 5 calls). Despite this more sophisticated design, run 2 achieved lower pass rate (60.7%) than run 1 — the budget of 5 verifier calls is too tight for medium/hard tasks, and the in-Python emulation may reject candidates the verifier would accept. The low mean score (0.607) vs run 1's higher score suggests more complete failures rather than near-misses.
+
+**CC SLR solver — "Ascending-complexity search with local Python evaluator"** (`claude_code/Sat_Apr_25_251_AM`):
+Parses each facts string into a normalised car model (cars re-indexed as c1, c2, … by car_num, train-id agnostic) enabling train-agnostic pattern matching. Discovers predicates dynamically, handling any DSL extension. Generates candidates in ascending rule complexity order: complexity-1 (single property on one car), complexity-2 (two properties, or car_num + property, or two-car rules), complexity-3 and complexity-4 with corresponding multi-car shapes. Local Python evaluation emulates Prolog's existential semantics (rule fires if *any* car satisfies all conditions for single-car rules; any *two distinct cars* for two-car rules). Ranks by accuracy then complexity, returning the simplest perfect rule. Optionally re-scores top-K against the official SWI-Prolog verifier when available. The normalised car model and dynamic predicate discovery are the key design choices — they make the solver robust to train numbering and vocabulary variation. Achieves 68.4% overall (100% basic, 78.4% easy, ~48% medium/hard), with mean score 0.9669 — near-misses dominate failures, consistent with a systematic search that finds almost-correct rules.
+
 ### Key findings
 
 **1. LLM CoT reasoning traces are critical for solver induction.** Removing CoT from the 100-example demos (keeping only final programs) causes a −11.3pp drop on Lite (53.4% → 42.1%) and a catastrophic −34.1pp drop on Hard (58.9% → 24.8%). Without the reasoning traces the coding agent can only observe what programs were produced, not how. The Hard cliff is particularly striking: the solver without CoT barely learns to handle longer cascades at all.
