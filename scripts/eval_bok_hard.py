@@ -189,6 +189,41 @@ def compare_cl(systems: dict[str, dict[int, dict]]) -> None:
     print()
 
 
+def convert_bok_to_jsonl(bok: dict[int, dict], out_path: str,
+                          tok_json: str | None = None) -> None:
+    """Write BoK results as quick_eval-compatible JSONL.
+
+    Token usage is loaded from tok_json (metrics/bok_hard_tokens_cluster.json) if
+    provided; otherwise set to zero (pass rate / reward still correct).
+    """
+    avg_tokens = {"input": 0, "output": 0, "reasoning": 0}
+    if tok_json:
+        try:
+            with open(tok_json) as f:
+                tj = json.load(f)
+            avg_tokens = {
+                "input":     round(tj["input"]["avg"]),
+                "output":    round(tj["output"]["avg"]),
+                "reasoning": round(tj["reasoning"]["avg"]),
+            }
+        except Exception as e:
+            print(f"Warning: could not load token json {tok_json}: {e}")
+
+    with open(out_path, "w") as f:
+        for tid in sorted(bok.keys()):
+            rec = bok[tid]
+            f.write(json.dumps({
+                "task_index":    tid,
+                "solved":        rec["solved"],
+                "answer":        rec.get("best_program", ""),
+                "best_reward":   rec["best_score"],
+                "reward_history": [{"iteration": 0, "reward": rec["best_score"]}],
+                "cost_summary":  {"k": rec.get("n_candidates", 32)},
+                "token_usage":   avg_tokens,
+            }) + "\n")
+    print(f"Wrote {len(bok)} records to {out_path}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bok", default="outputs/gpt_oss_120b_pbebench_outputs.jsonl")
@@ -196,6 +231,10 @@ def main():
     parser.add_argument("--solver-cc", default="evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl")
     parser.add_argument("--solver-qw", default="evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/hard.jsonl")
     parser.add_argument("--metrics-json", default=None)
+    parser.add_argument("--out-jsonl", default=None,
+                        help="Write BoK results as quick_eval-compatible JSONL")
+    parser.add_argument("--token-json", default="metrics/bok_hard_tokens_cluster.json",
+                        help="Path to bok_hard_tokens_cluster.json for per-task avg token counts")
     args = parser.parse_args()
 
     print(f"Loading BoK outputs: {args.bok}")
@@ -222,6 +261,9 @@ def main():
 
     if len(systems) > 1:
         compare_cl(systems)
+
+    if args.out_jsonl:
+        convert_bok_to_jsonl(bok, args.out_jsonl, args.token_json)
 
     if args.metrics_json:
         out = {}

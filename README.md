@@ -159,30 +159,50 @@ Both scripts checkpoint after every task — safe to kill and relaunch.
 
 ### 4. Ensembling, eval, and plots
 
-Run the full pipeline (ensembles → quick_eval → figures) for each benchmark:
-
+**PBEBench-Lite** (BoK and DF outputs must be pulled from cluster and stripped first):
 ```bash
-bash scripts/run_all_pbebench_lite_evals.sh   # → metrics/pbebench_lite_all.json
-bash scripts/run_all_pbebench_hard_evals.sh   # → metrics/pbebench_hard_all.json
-bash scripts/run_all_slr_evals.sh             # → metrics/slr_all.json
+# Strip agent_messages from large cluster output files before pulling locally
+python scripts/strip_agent_messages.py outputs/lite_tasks_full_og_best_of_k.jsonl
+python scripts/strip_agent_messages.py outputs/lite_tasks_full_og_direct_feedback.jsonl
+
+# Build effi ensembles (solver = CC, Qwen run2, or union)
+CC=evals/solver_results/claude_code/Thu_Apr_23_807_PM/lite.jsonl
+QWEN=evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/lite.jsonl
+BOK=outputs/lite_tasks_full_og_best_of_k_stripped.jsonl
+DF=outputs/lite_tasks_full_og_direct_feedback_stripped.jsonl
+
+python scripts/ensemble_outputs.py --sources $CC $QWEN --out outputs/lite_union_solvers.jsonl
+python scripts/ensemble_outputs.py --effi --symbolic $CC --sources $BOK --out outputs/lite_effi_bok_cc.jsonl
+python scripts/ensemble_outputs.py --effi --symbolic $QWEN --sources $BOK --out outputs/lite_effi_bok_qwen_run2.jsonl
+python scripts/ensemble_outputs.py --effi --symbolic outputs/lite_union_solvers.jsonl --sources $BOK --out outputs/lite_effi_bok_all_solvers.jsonl
+python scripts/ensemble_outputs.py --effi --symbolic $CC --sources $DF --out outputs/lite_effi_df_cc.jsonl
+python scripts/ensemble_outputs.py --effi --symbolic $QWEN --sources $DF --out outputs/lite_effi_df_qwen_run2.jsonl
+python scripts/ensemble_outputs.py --effi --symbolic outputs/lite_union_solvers.jsonl --sources $DF --out outputs/lite_effi_df_all_solvers.jsonl
 ```
 
-Or run individual steps:
-
+**PBEBench-Hard** (BoK raw format; token costs from `metrics/bok_hard_tokens_cluster.json`):
 ```bash
-# Build a single ensemble
-python scripts/ensemble_outputs.py \
-    --sources outputs/lite_tasks_full_og_best_of_k.jsonl \
-              evals/solver_results/claude_code/<timestamp>/lite.jsonl \
-    --out outputs/my_ensemble.jsonl
+# Convert raw BoK format to quick_eval-compatible JSONL (injects cluster token costs)
+python scripts/eval_bok_hard.py \
+    --bok outputs/gpt_oss_120b_pbebench_hard_outputs.jsonl \
+    --out-jsonl outputs/hard_bok_converted.jsonl \
+    --token-json metrics/bok_hard_tokens_cluster.json
 
-# Effi mode (solver takes priority when reward=1.0; zero LLM tokens counted for those tasks)
-python scripts/ensemble_outputs.py --effi \
-    --symbolic evals/solver_results/claude_code/<timestamp>/lite.jsonl \
-    --sources  outputs/lite_tasks_full_og_best_of_k.jsonl \
-    --out outputs/my_ensemble_effi.jsonl
+# Build union ensembles
+CC=evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl
+QWEN=evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/hard.jsonl
+BOK=outputs/hard_bok_converted.jsonl
 
-# Quick eval on any JSONL output
+python scripts/ensemble_outputs.py --sources $CC $QWEN --out outputs/hard_union_cc_qwen_run2.jsonl
+python scripts/ensemble_outputs.py --sources $BOK $CC --out outputs/hard_union_bok_cc.jsonl
+python scripts/ensemble_outputs.py --sources $BOK $QWEN --out outputs/hard_union_bok_qwen_run2.jsonl
+python scripts/ensemble_outputs.py --sources $BOK $CC $QWEN --out outputs/hard_union_bok_cc_qwen_run2.jsonl
+python scripts/ensemble_outputs.py --sources $BOK $CC $QWEN outputs/hard_ensemble_all_solvers.jsonl \
+    --out outputs/hard_union_bok_all_solvers.jsonl
+```
+
+**Quick eval on any output:**
+```bash
 python scripts/quick_eval.py outputs/my_ensemble.jsonl \
     --tasks-file data/pbebench/lite_tasks_full_og.jsonl \
     --metrics-json metrics/my_ensemble.json
