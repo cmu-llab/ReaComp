@@ -343,7 +343,8 @@ The **BoK-32 gpt-oss-120b results are taken directly from the PBEBench paper's p
 | Demos | Run | Lite Pass% | Hard Pass% | Algorithm (short) |
 |-------|----:|----------:|----------:|-------------------|
 | 100 examples + CoT | 1 | 53.4% | 58.9% | greedy + multi-pass residual fixing |
-| 100 examples + CoT | 2 | **65.7%** | **74.7%** | safety-first greedy + 2-step lookahead |
+| 100 examples + CoT | 2 | 65.7% | 74.7% | safety-first greedy + 2-step lookahead |
+| 100 examples + CoT | **3** | **79.2%** | 51.8% | unique-op permutations + greedy + 2-op sequences |
 | 100 examples, **no CoT** | 1 | 42.1% | 24.8% | beam search + heuristic scoring |
 | 48 examples + CoT | 1 | 55.7% | 76.2% | multi-start greedy + permutation reorder |
 | 12 examples + CoT | 1 | 47.7% | 50.4% | adaptive beam search |
@@ -354,6 +355,7 @@ The **BoK-32 gpt-oss-120b results are taken directly from the PBEBench paper's p
 |-------|----:|------:|---------------:|---------------:|--------------:|
 | 100 examples + CoT | 1 | 76 | 191,331 | 4,377,628 | 109,681 |
 | 100 examples + CoT | 2 | 72 | 215,839 | 4,698,253 | 125,419 |
+| 100 examples + CoT | 3 | 80 | 264,495 | 6,050,386 | 151,423 |
 | 100 examples, no CoT | 1 | 102 | 227,002 | 7,670,723 | 135,686 |
 | 48 examples + CoT | 1 | 82 | 176,868 | 4,126,622 | 101,435 |
 | 12 examples + CoT | 1 | 49 | 106,526 | 1,638,817 | 63,418 |
@@ -364,6 +366,9 @@ Each OpenHands run produced a different solver algorithm despite identical input
 
 **100 examples + CoT, run 1 — "Greedy + multi-pass residual fixing"** (`Fri_Apr_24_200_AM`):
 Extracts edit regions between input and output (longest-common-prefix/suffix anchoring), then generates candidates via three strategies: direct substitution, split candidates (splitting a complex edit into two simpler replaces), and context extension (extending the edit boundary to capture adjacent characters). Greedy selection uses a score of `n_fix − 2×n_break`. After greedy construction, a two-phase residual pass tries single programs then pairs to fix remaining examples. Produces correct but sometimes overly complex cascades. The split-candidate strategy is the most distinctive insight, directly capturing multi-step edits as pairs.
+
+**100 examples + CoT, run 3 — "Unique-op permutations + greedy + 2-op sequences"** (`Sun_Apr_26_440_PM`):
+Classifies candidates as **unique** (exactly one complete single-replace candidate exists for a changed pair — it must be in the solution) vs **optional** (multiple candidates). Strategy 1 tries all permutations of the forced unique operations. Strategy 2 adds further programs greedily from the optional pool. Strategy 3 enumerates Cartesian products of optional choices (capped at 3000 combinations). Strategy 4 handles "hard pairs" — examples where no single replace suffices — by explicitly searching 2-operation sequences (enumerate all A1/B1, compute intermediate, find A2/B2 that reaches output). Post-search, all permutations of the best program are tried for ordering optimisation. The unique-candidate forcing is the key structural insight: it dramatically prunes the search space by treating forced operations as constraints rather than candidates. This produced the best Lite result of any Qwen run (79.2%, nearly matching the CC solver's 80.4%) but underperformed on Hard (51.8%) — likely because Hard's longer cascades mean fewer unique-forced operations, leaving more of the burden on greedy/optional search which degrades at higher cascade lengths.
 
 **100 examples + CoT, run 2 — "Safety-first greedy + 2-step lookahead"** (`Sun_Apr_26_402_PM`):
 Separates examples into "changed" (providing signal) and "unchanged" (providing safety constraints). Candidates are pre-filtered to discard any that modify unchanged pairs — a hard safety gate applied before scoring, not as a penalty. Generates both direct candidates and 2-step lookahead candidates (enumerate A1/B1 pairs, check if the intermediate can reach output in one more step). Greedy selection picks by improvement count, with a fallback to best-overall if no candidate improves. The safety-first design results in a tighter search space and the 2-step lookahead explicitly handles feeding interactions. This approach achieved the highest Lite pass rate (65.7%) of any Qwen run.
@@ -410,7 +415,7 @@ Parses each facts string into a normalised car model (cars re-indexed as c1, c2,
 
 **1. LLM CoT reasoning traces are critical for solver induction.** Removing CoT from the 100-example demos (keeping only final programs) causes a −11.3pp drop on Lite (53.4% → 42.1%) and a catastrophic −34.1pp drop on Hard (58.9% → 24.8%). Without the reasoning traces the coding agent can only observe what programs were produced, not how. The Hard cliff is particularly striking: the solver without CoT barely learns to handle longer cascades at all.
 
-**2. Run-to-run variance dominates example-count effects.** The 100-example CoT solver varied from 53.4% → 65.7% Lite and 58.9% → 74.7% Hard across two runs with identical demos — a swing of +12.3pp and +15.8pp respectively. The 48-example CoT solver (55.7% / 76.2%) sits within this variance range. This means the apparent advantage of 48 examples over 100 in run 1 was likely a fluke of the first 100-example run underperforming, not a genuine difference in example quality.
+**2. Run-to-run variance is massive and dominates example-count effects.** Three runs of the 100-example CoT solver span 53.4%→79.2% Lite (25.8pp range) and 51.8%→74.7% Hard (22.9pp range). No two runs invented the same algorithm. The 48-example CoT solver (55.7% / 76.2%) sits entirely within this variance range. The apparent advantage of 48 examples over 100 (run 1) was a fluke. Run 3 on 100 examples nearly matches the CC solver on Lite (79.2% vs 80.4%) while failing on Hard (51.8%) — showing the Lite/Hard trade-off depends strongly on which algorithm the agent invented, not on the demos file.
 
 **3. 12 examples + CoT is clearly insufficient.** Hard drops to 50.4% even when CoT is present, well below the variance range of the 100-example runs (58.9–74.7%). This suggests a genuine floor: too few examples limits example diversity enough to hurt solver quality.
 
@@ -424,6 +429,7 @@ Parses each facts string into a normalised car model (cars re-indexed as c1, c2,
 |---|---|
 | `evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/` | 100 examples + CoT (run 1) |
 | `evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/` | 100 examples + CoT (run 2) |
+| `evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_440_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/` | 100 examples + CoT (run 3) |
 | `evals/solver_results/qwen3.6_35b_a3b/Sat_Apr_25_819_PM_DEMOS_PBEBENCH_seed_42_100_examples/` | 100 examples, no CoT |
 | `evals/solver_results/qwen3.6_35b_a3b/Sat_Apr_25_1104_PM_DEMOS_PBEBENCH_seed_42_48_examples_with_CoT/` | 48 examples + CoT |
 | `evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_120_AM_DEMOS_PBEBENCH_seed_42_12_examples_with_CoT/` | 12 examples + CoT |
