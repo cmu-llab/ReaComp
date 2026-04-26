@@ -4,10 +4,6 @@ import random
 # main
 if __name__ == "__main__":
     data = json.load(open("demos/DEMOS_PBEBENCH_seed_42_100_examples_with_CoT.json", "r"))
-    for rec in data:
-        rec.pop("cot", None)
-    json.dump(data, open("demos/DEMOS_PBEBENCH_seed_42_100_examples.json", "w"))
-    
     hard_success = [rec for rec in data if rec["difficulty"] == "hard" and rec["success"] == True]
     hard_failure = [rec for rec in data if rec["difficulty"] == "hard" and rec["success"] == False]
     easy_success = [rec for rec in data if rec["difficulty"] == "easy" and rec["success"] == True]
@@ -19,3 +15,7 @@ if __name__ == "__main__":
 
     json.dump(examples_48_set, open("demos/DEMOS_PBEBENCH_seed_42_48_examples.json", "w"))
     json.dump(examples_12_set, open("demos/DEMOS_PBEBENCH_seed_42_12_examples.json", "w"))
+    
+    for rec in data:
+        rec.pop("cot", None)
+    json.dump(data, open("demos/DEMOS_PBEBENCH_seed_42_100_examples.json", "w"))
