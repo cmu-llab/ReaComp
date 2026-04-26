@@ -111,6 +111,8 @@ CC solver collapses at CL=5 (50%) — at the 5-program limit there is little sla
 
 Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**.
 
+Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**. Effi ensembles: solver used at zero cost when reward = 1.0; BoK tokens counted only for tasks the solver fails. Note: BoK runs all 32 samples regardless of solver result (no early exit by design) — effi savings reflect *reported* cost, not actual compute.
+
 | System | Pass% | Mean reward | Edit Sim | Complexity Δ | Avg tokens/task |
 |---|---:|---:|---:|---:|---:|
 | **CC Solver** | **69.7%** | **0.9873** | **97.2** | **+8.06** | **0** |
@@ -118,12 +120,10 @@ Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutio
 | **CC + Qwen Solvers (union)** | **81.2%** | **0.9905** | **98.3** | **+5.35** | **0** |
 | **All Symbolic Solvers (union)** | **84.7%** | **0.9920** | **98.6** | **+4.56** | **0** |
 | BoK-32 (gpt-oss-120b) | 68.4% | 0.9428 | 89.9 | — | 273,143 |
-| BoK + Qwen Solver | 80.7% | 0.9876 | 97.8 | +3.68 | 273,143 |
-| BoK + CC Solver | 79.4% | 0.9901 | 98.2 | +4.90 | 273,143 |
-| BoK + CC + Qwen Solver | 83.5% | 0.9915 | 98.5 | +3.81 | 273,143 |
-| **BoK + All Symbolic Solvers** | **85.8%** | **0.9927** | **98.7** | **+3.54** | **273,143** |
-
-BoK Complexity Δ not reported (computed over all instances in paper, not comparable to our correct-only metric). Avg tokens/task for BoK ensembles = full BoK cost (all 32 samples always run regardless of solver coverage).
+| BoK + Qwen Solver (effi) | 80.7% | 0.9496 | 91.3 | +5.48 | 8,217 |
+| BoK + CC Solver (effi) | 79.4% | 0.9508 | 91.4 | +7.82 | 9,844 |
+| BoK + CC + Qwen Solver (effi) | 83.5% | 0.9531 | 91.9 | +5.48 | 6,083 |
+| **BoK + All Symbolic Solvers (effi)** | **85.8%** | **0.9570** | **92.7** | **+4.64** | **4,962** |
 
 ### Symbolic solver breakdown by cascade length
 
@@ -206,7 +206,7 @@ All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no t
 
 **5. All-four-BFCC is the hardest category.** 40.2% pass rate for CC, making up 22% of the dataset. Dense mutual ordering interactions the beam search cannot fully resolve.
 
-**6. CoT reasoning dominates BoK token cost.** Reasoning accounts for 88% of total tokens (240,704/273,143 avg/task). Since all 32 samples always run (no early exit), BoK ensemble cost equals standalone BoK cost regardless of solver coverage.
+**6. Effi mode cuts reported token cost by ~98%.** BoK + All Symbolic effi: 4,962 avg tokens/task vs 273,143 standalone BoK — a 98.2% reduction. Since the All Symbolic union solves 84.7% of tasks perfectly, only 15.3% of tasks incur BoK cost. Note: BoK still runs all 32 samples for all tasks by design (no early exit); effi savings reflect *reported* cost used for amortisation calculations, not actual GPU compute.
 
 **7. Best trade-off points:**
 - Best pass rate (zero cost): All Symbolic union (84.7%, 0 tokens)
