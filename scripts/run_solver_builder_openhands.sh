@@ -24,18 +24,27 @@ SOLVER_TYPE="${SOLVER_TYPE:-slr}"   # pbe or slr
 
 if [[ "${SOLVER_TYPE}" == "slr" ]]; then
     BUILDING_PROMPT=building_prompts/SOLVER_BUILDING_PROMPT_SLR.md
-    DEMOS_PATH=DEMOS_SLRBENCH.json
+    DEMOS_PATH="${DEMOS_PATH:-DEMOS_SLRBENCH.json}"
 else
     BUILDING_PROMPT=building_prompts/SOLVER_BUILDING_PROMPT_PBE.md
-    DEMOS_PATH=DEMOS_PBEBENCH.json
+    DEMOS_PATH="${DEMOS_PATH:-DEMOS_PBEBENCH.json}"
 fi
 
 REWARDS_DIR=rewards
 
 # Timestamped output dir matching the claude_code naming convention (e.g. Thu_Apr_23_807_PM)
+# DEMOS_TAG encodes the demos variant (basename without extension) for non-default files.
 TIMESTAMP=$(date +"%a_%b_%-d_%-I%M_%p")
-OUTPUT_DIR=built_solvers/qwen3.6_35b_a3b/${TIMESTAMP}
-DEBUG_DIR=debug_oh_solver_builder/${TIMESTAMP}
+_DEFAULT_DEMOS_PBE=DEMOS_PBEBENCH.json
+_DEFAULT_DEMOS_SLR=DEMOS_SLRBENCH.json
+_DEFAULT_DEMOS=$([ "${SOLVER_TYPE}" == "slr" ] && echo "${_DEFAULT_DEMOS_SLR}" || echo "${_DEFAULT_DEMOS_PBE}")
+if [[ "${DEMOS_PATH}" != "${_DEFAULT_DEMOS}" ]]; then
+    DEMOS_TAG="_$(basename "${DEMOS_PATH}" .json)"
+else
+    DEMOS_TAG=""
+fi
+OUTPUT_DIR=built_solvers/qwen3.6_35b_a3b/${TIMESTAMP}${DEMOS_TAG}
+DEBUG_DIR=debug_oh_solver_builder/${TIMESTAMP}${DEMOS_TAG}
 
 MAX_STEPS=500
 MAX_TOKENS=32768

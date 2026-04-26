@@ -36,6 +36,30 @@ A coding agent reads LLM reasoning traces and induces a reusable symbolic solver
 
 ---
 
+## Solver Construction Ablations
+
+To study the effect of the demos file on solver quality, we ablate over the number of examples and the presence of chain-of-thought (CoT) reasoning traces. All ablations use the Qwen solver (cost reasons) and are run via `run_solver_builder_openhands.sh` with the `DEMOS_PATH` env var.
+
+| Ablation | `DEMOS_PATH` |
+|----------|-------------|
+| 100 examples, no CoT *(main)* | `demos/DEMOS_PBEBENCH_seed_42_100_examples.json` |
+| 100 examples, with CoT | `demos/DEMOS_PBEBENCH_seed_42_100_examples_with_CoT.json` |
+| 48 examples, no CoT | `demos/DEMOS_PBEBENCH_seed_42_48_examples.json` |
+| 12 examples, no CoT | `demos/DEMOS_PBEBENCH_seed_42_12_examples.json` |
+
+All demo files use the same seed (42) and are balanced across success/failure × easy/hard quadrants.
+
+To run an ablation:
+
+```bash
+SOLVER_TYPE=pbe DEMOS_PATH=demos/DEMOS_PBEBENCH_seed_42_48_examples.json \
+    bash scripts/run_solver_builder_openhands.sh <PORT>
+```
+
+The output directory is automatically tagged with the demos filename (e.g. `built_solvers/qwen3.6_35b_a3b/<TIMESTAMP>_DEMOS_PBEBENCH_seed_42_48_examples/`), so runs with different demo files never collide. Evaluate each resulting `SOLVER.py` with `scripts/eval_solver.py --dataset lite`.
+
+---
+
 ## Results
 
 See `evals/findings.md` for the full results table and `figures/` for comparison plots.
@@ -90,7 +114,10 @@ Full step-by-step commands for all experiments are in **[COMMANDS.md](COMMANDS.m
 │   ├── SOLVER_BUILDING_PROMPT_PBE.md   # spec given to coding agent for PBEBench solver
 │   └── SOLVER_BUILDING_PROMPT_SLR.md   # spec given to coding agent for SLR-Bench solver
 ├── demos/
-│   ├── DEMOS_PBEBENCH_seed_42_100_examples_with_CoT.json   # 100 PBEBench reasoning traces
+│   ├── DEMOS_PBEBENCH_seed_42_100_examples.json            # 100 PBEBench traces (no CoT) — main
+│   ├── DEMOS_PBEBENCH_seed_42_100_examples_with_CoT.json   # 100 PBEBench traces + CoT
+│   ├── DEMOS_PBEBENCH_seed_42_48_examples.json             # 48 examples (ablation)
+│   ├── DEMOS_PBEBENCH_seed_42_12_examples.json             # 12 examples (ablation)
 │   └── DEMOS_SLRBENCH_seed_42_92_examples_with_CoT.json    # 92 SLR-Bench reasoning traces
 ├── built_solvers/
 │   ├── claude_code/          # solvers induced by Claude Code
