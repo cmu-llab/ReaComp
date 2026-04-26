@@ -49,6 +49,10 @@ The rule must be a Prolog clause of the form `eastbound(T) :- Body.` where Body 
 
 Prefer rules with the fewest body literals (use `rule_complexity()` from `rewards/slr_bench.py` to measure this).
 
+## Performance
+
+Each call to the verifier (`judge.compute`) invokes SWI-Prolog as a subprocess and costs ~300ms. Hard tasks can have hundreds of thousands of candidate rules. Minimize the number of verifier calls — use the examples to prune the candidate space in Python before invoking the verifier.
+
 ## Behavior
 
 The solver should:
