@@ -92,28 +92,32 @@ def compute(path: str, count) -> tuple[dict, dict]:
             except StopIteration:
                 pass
 
-    # Reconstruct token counts with KV caching.
-    # Turn 0 pays for the full context (system prompt); each subsequent turn
-    # pays only for the new tokens added since the previous turn (previous
-    # output + observation), since the prior context is cached.
     counted_indices = {id(r): i for i, r in enumerate(action_events)}
-    total_input = total_output = 0
-    new_tokens_this_turn = sp_toks  # first turn pays for system prompt
 
+    # KV-cache mode: turn 0 pays for system prompt; each subsequent turn pays
+    # only for the new tokens added since the previous turn (output + observation).
+    kv_input = kv_output = 0
+    new_tokens_this_turn = sp_toks
     for r in counted_turns:
         i = counted_indices[id(r)]
         out_toks = count(_thought_text(r) + _action_text(r))
-        total_input  += new_tokens_this_turn
-        total_output += out_toks
-        # next turn only pays for this turn's output + its observation
+        kv_input  += new_tokens_this_turn
+        kv_output += out_toks
         new_tokens_this_turn = out_toks + obs_map.get(i, 0)
 
-    # Final context window = full accumulated context
+    # No-cache mode: each turn pays for the full accumulated context so far.
+    nc_input = nc_output = 0
     context = sp_toks
     for r in counted_turns:
         i = counted_indices[id(r)]
         out_toks = count(_thought_text(r) + _action_text(r))
-        context += out_toks + obs_map.get(i, 0)
+        nc_input  += context
+        nc_output += out_toks
+        context   += out_toks + obs_map.get(i, 0)
+
+    # final context window = context after all turns (same value as nc loop end)
+    total_input  = kv_input
+    total_output = kv_output
 
     # Session metadata
     timestamps = sorted(r["timestamp"] for r in traj if r.get("timestamp"))
@@ -130,15 +134,27 @@ def compute(path: str, count) -> tuple[dict, dict]:
     from collections import Counter
     per_event["tool_counts"] = dict(Counter(r.get("tool_name") for r in real_turns))
 
+    n = max(len(counted_turns), 1)
     summary = {
         "trajectory": str(path),
         "session_start": start,
         "session_end": end,
         "turns_counted": len(counted_turns),
         "turns_ignored_finish_retries": len(finish_turns) - len(first_finish),
-        "input_tokens":  {"total": total_input,  "avg_per_turn": round(total_input  / max(len(counted_turns), 1), 1)},
-        "output_tokens": {"total": total_output, "avg_per_turn": round(total_output / max(len(counted_turns), 1), 1)},
-        "total_tokens":  total_input + total_output,
+        "kv_cache": {
+            "input_tokens":  {"total": kv_input,  "avg_per_turn": round(kv_input  / n, 1)},
+            "output_tokens": {"total": kv_output, "avg_per_turn": round(kv_output / n, 1)},
+            "total_tokens":  kv_input + kv_output,
+        },
+        "no_cache": {
+            "input_tokens":  {"total": nc_input,  "avg_per_turn": round(nc_input  / n, 1)},
+            "output_tokens": {"total": nc_output, "avg_per_turn": round(nc_output / n, 1)},
+            "total_tokens":  nc_input + nc_output,
+        },
+        # legacy keys kept for backwards compatibility
+        "input_tokens":  {"total": kv_input,  "avg_per_turn": round(kv_input  / n, 1)},
+        "output_tokens": {"total": kv_output, "avg_per_turn": round(kv_output / n, 1)},
+        "total_tokens":  kv_input + kv_output,
         "final_context_window": context,
         "detail": per_event,
     }
@@ -159,9 +175,12 @@ def print_summary(summary: dict, token_method: str) -> None:
     print(f"  Finish retries ignored: {summary['turns_ignored_finish_retries']}")
     print(f"  System prompt   : {d['system_prompt_tokens']:,} tokens")
     print(f"  Final context   : {summary['final_context_window']:,} tokens")
-    print(f"\n  Input tokens    : {summary['input_tokens']['total']:>12,}  (avg {summary['input_tokens']['avg_per_turn']:>8,.1f}/turn)")
-    print(f"  Output tokens   : {summary['output_tokens']['total']:>12,}  (avg {summary['output_tokens']['avg_per_turn']:>8,.1f}/turn)")
-    print(f"  Total           : {summary['total_tokens']:>12,}")
+    kv = summary["kv_cache"]
+    nc = summary["no_cache"]
+    print(f"\n  {'':30s}  {'KV-cache':>12}  {'No-cache':>12}")
+    print(f"  {'Input tokens':30s}  {kv['input_tokens']['total']:>12,}  {nc['input_tokens']['total']:>12,}")
+    print(f"  {'Output tokens':30s}  {kv['output_tokens']['total']:>12,}  {nc['output_tokens']['total']:>12,}")
+    print(f"  {'Total tokens':30s}  {kv['total_tokens']:>12,}  {nc['total_tokens']:>12,}")
     print()
 
 

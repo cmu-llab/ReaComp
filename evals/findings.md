@@ -340,41 +340,42 @@ The **BoK-32 gpt-oss-120b results are taken directly from the PBEBench paper's p
 
 ### Performance
 
-| Demos | Lite Pass% | Hard Pass% | Solver path |
-|-------|----------:|----------:|-------------|
-| 100 examples + CoT *(original)* | 53.4% | 58.9% | `qwen3.6_35b_a3b/Fri_Apr_24_200_AM/` |
-| 100 examples, **no CoT** | 42.1% | 24.8% | `qwen3.6_35b_a3b/Sat_Apr_25_819_PM_DEMOS_PBEBENCH_seed_42_100_examples/` |
-| **48 examples + CoT** | **55.7%** | **76.2%** | `qwen3.6_35b_a3b/Sat_Apr_25_1104_PM_DEMOS_PBEBENCH_seed_42_48_examples_with_CoT/` |
-| 12 examples + CoT | 47.7% | 50.4% | `qwen3.6_35b_a3b/Sun_Apr_26_120_AM_DEMOS_PBEBENCH_seed_42_12_examples_with_CoT/` |
+| Demos | Run | Lite Pass% | Hard Pass% | Solver path |
+|-------|----:|----------:|----------:|-------------|
+| 100 examples + CoT | 1 | 53.4% | 58.9% | `qwen3.6_35b_a3b/Fri_Apr_24_200_AM/` |
+| 100 examples + CoT | **2** | **65.7%** | **74.7%** | `qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/` |
+| 100 examples, **no CoT** | 1 | 42.1% | 24.8% | `qwen3.6_35b_a3b/Sat_Apr_25_819_PM_DEMOS_PBEBENCH_seed_42_100_examples/` |
+| 48 examples + CoT | 1 | 55.7% | 76.2% | `qwen3.6_35b_a3b/Sat_Apr_25_1104_PM_DEMOS_PBEBENCH_seed_42_48_examples_with_CoT/` |
+| 12 examples + CoT | 1 | 47.7% | 50.4% | `qwen3.6_35b_a3b/Sun_Apr_26_120_AM_DEMOS_PBEBENCH_seed_42_12_examples_with_CoT/` |
 
 ### Solver construction token cost
 
-| Demos | Turns | KV-cache total | No-cache total | Final context |
-|-------|------:|---------------:|---------------:|--------------:|
-| 100 examples + CoT *(original)* | 76 | 191,331 | 4,377,628 | 109,681 |
-| 100 examples, no CoT | 102 | 227,002 | 7,670,723 | 135,686 |
-| **48 examples + CoT** | **82** | **176,868** | **4,126,622** | **101,435** |
-| 12 examples + CoT | 49 | 106,526 | 1,638,817 | 63,418 |
+| Demos | Run | Turns | KV-cache total | No-cache total | Final context |
+|-------|----:|------:|---------------:|---------------:|--------------:|
+| 100 examples + CoT | 1 | 76 | 191,331 | 4,377,628 | 109,681 |
+| 100 examples + CoT | 2 | 72 | 215,839 | 4,698,253 | 125,419 |
+| 100 examples, no CoT | 1 | 102 | 227,002 | 7,670,723 | 135,686 |
+| 48 examples + CoT | 1 | 82 | 176,868 | 4,126,622 | 101,435 |
+| 12 examples + CoT | 1 | 49 | 106,526 | 1,638,817 | 63,418 |
 
 ### Key findings
 
 **1. LLM CoT reasoning traces are critical for solver induction.** Removing CoT from the 100-example demos (keeping only final programs) causes a −11.3pp drop on Lite (53.4% → 42.1%) and a catastrophic −34.1pp drop on Hard (58.9% → 24.8%). Without the reasoning traces the coding agent can only observe what programs were produced, not how. The Hard cliff is particularly striking: the solver without CoT barely learns to handle longer cascades at all.
 
-**2. 48 examples + CoT is the best configuration.** It outperforms the 100-example baseline on both splits (+2.3pp Lite, +17.3pp Hard) and costs slightly fewer construction tokens (177K vs 191K with KV caching). Fewer, higher-signal examples appear to produce a better-focused solver.
+**2. Run-to-run variance dominates example-count effects.** The 100-example CoT solver varied from 53.4% → 65.7% Lite and 58.9% → 74.7% Hard across two runs with identical demos — a swing of +12.3pp and +15.8pp respectively. The 48-example CoT solver (55.7% / 76.2%) sits within this variance range. This means the apparent advantage of 48 examples over 100 in run 1 was likely a fluke of the first 100-example run underperforming, not a genuine difference in example quality.
 
-**3. 12 examples + CoT underperforms despite having CoT.** Hard drops back to 50.4% vs 76.2% for 48-example — likely insufficient example diversity to cover the full range of cascade interactions. This also cuts construction cost in half (107K tokens), suggesting a quality-cost trade-off around 48 examples.
+**3. 12 examples + CoT is clearly insufficient.** Hard drops to 50.4% even when CoT is present, well below the variance range of the 100-example runs (58.9–74.7%). This suggests a genuine floor: too few examples limits example diversity enough to hurt solver quality.
 
 **4. No-CoT solver used more turns.** 102 turns vs 76 for the same 100-example CoT run, suggesting the agent spent more effort probing the dataset trying to infer patterns that the CoT would have made explicit.
 
-**5. KV caching saves ~98% of input tokens.** No-cache totals are 20–34× higher than KV-cache totals (e.g. 4.4M vs 191K for the original run). All construction cost figures in the paper use the KV-cache estimate as the realistic lower bound.
-
-**6. TODO — solver variance ablation (same demos, multiple runs).** The four ablations above each use a different demos file, so solver quality differences could reflect either example composition or run-to-run stochasticity in the OpenHands agent. To isolate these, re-run the Qwen solver 2–3 times on the default PBE demos (`demos/DEMOS_PBEBENCH_seed_42_100_examples_with_CoT.json`) and compare pass rates across runs. This would bound the noise floor and determine whether the 48-example result (+17pp on Hard) is reproducibly better or within variance.
+**5. KV caching saves ~98% of input tokens.** No-cache totals are 20–34× higher than KV-cache totals (e.g. 4.4M vs 191K). All construction cost figures in the paper use the KV-cache estimate as the realistic lower bound.
 
 ### Output files
 
 | File | Description |
 |---|---|
-| `evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/` | 100 examples + CoT (original) |
+| `evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/` | 100 examples + CoT (run 1) |
+| `evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/` | 100 examples + CoT (run 2) |
 | `evals/solver_results/qwen3.6_35b_a3b/Sat_Apr_25_819_PM_DEMOS_PBEBENCH_seed_42_100_examples/` | 100 examples, no CoT |
 | `evals/solver_results/qwen3.6_35b_a3b/Sat_Apr_25_1104_PM_DEMOS_PBEBENCH_seed_42_48_examples_with_CoT/` | 48 examples + CoT |
 | `evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_120_AM_DEMOS_PBEBENCH_seed_42_12_examples_with_CoT/` | 12 examples + CoT |
