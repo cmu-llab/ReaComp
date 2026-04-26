@@ -284,14 +284,14 @@ The **BoK-32 gpt-oss-120b results are taken directly from the PBEBench paper's p
 
 ### Performance
 
-| Demos | Run | Lite Pass% | Hard Pass% | Algorithm (short) |
-|-------|----:|----------:|----------:|-------------------|
-| 100 examples + CoT | 1 | 53.4% | 58.9% | greedy + multi-pass residual fixing |
-| 100 examples + CoT | 2 | 65.7% | 74.7% | safety-first greedy + 2-step lookahead |
-| 100 examples + CoT | **3** | **79.2%** | 51.8% | unique-op permutations + greedy + 2-op sequences |
-| 100 examples, **no CoT** | 1 | 42.1% | 24.8% | beam search + heuristic scoring |
-| 48 examples + CoT | 1 | 55.7% | 76.2% | multi-start greedy + permutation reorder |
-| 12 examples + CoT | 1 | 47.7% | 50.4% | adaptive beam search |
+| Demos | Run | Lite Pass% | Lite Edit Sim | Hard Pass% | Hard Edit Sim | Algorithm (short) |
+|-------|----:|----------:|--------------:|----------:|--------------:|-------------------|
+| 100 examples + CoT | 1 | 53.4% | 78.6 | 58.9% | 94.5 | greedy + multi-pass residual fixing |
+| 100 examples + CoT | 2 | 65.7% | 87.4 | 74.7% | 96.8 | safety-first greedy + 2-step lookahead |
+| 100 examples + CoT | **3** | **79.2%** | **96.7** | 51.8% | 90.0 | unique-op permutations + greedy + 2-op sequences |
+| 100 examples, **no CoT** | 1 | 42.1% | 67.6 | 24.8% | 82.9 | beam search + heuristic scoring |
+| 48 examples + CoT | 1 | 55.7% | 78.6 | 76.2% | 96.5 | multi-start greedy + permutation reorder |
+| 12 examples + CoT | 1 | 47.7% | 80.2 | 50.4% | 94.3 | adaptive beam search |
 
 ### Solver construction token cost
 
