@@ -26,9 +26,12 @@ _FORMAT_OVERRIDE_DEFAULT = (
     "Your answer is whatever gets printed to stdout when the Solution code runs."
 )
 
-# PBEBench prompts model the desired format directly via the few-shot example,
-# so no override string is needed.
-_FORMAT_OVERRIDE_PBEBENCH = ""
+_FORMAT_OVERRIDE_PBEBENCH = (
+    "\nIMPORTANT: For PBEBench, the answer printed by the **Solution** block "
+    "must be a Python list of replace() call strings, such as "
+    "[\"replace('a', 'b')\", \"replace('cd', 'ef')\"]. Do not print the "
+    "transformed output strings."
+)
 
 
 def _format_override(task_family: str) -> str:
@@ -136,8 +139,9 @@ _IMPORT_WITH_TOOLS_INSTRUCTION_PBEBENCH = (
     "You task is to produce a list of replace() calls that transforms each "
     "input into its expected output for a Programming-by-Example task.\n"
     "You have a set of helper functions available as tools. Call any of them "
-    "to test ideas or compute intermediate results; the final answer must be "
-    "produced as a Python program in the **Solution** block."
+    "to test ideas or compute intermediate results; the final **Solution** "
+    "block must print the program sequence as a Python list of replace() call "
+    "strings, not the transformed outputs."
 )
 
 _IMPORT_WITH_TOOLS_EXAMPLE_DEFAULT = """\
@@ -167,8 +171,8 @@ candidate sequence, the assistant produces:)
 
 **Solution**
 ```python
-result = find_replace_chain("hello world", [(" ", "_"), ("h", "H"), ("e", "E"), ("l", "L"), ("o", "O"), ("w", "W"), ("r", "R"), ("d", "D")])
-print(result)
+programs = ["replace(' ', '_')", "replace('h', 'H')", "replace('e', 'E')", "replace('l', 'L')", "replace('o', 'O')", "replace('w', 'W')", "replace('r', 'R')", "replace('d', 'D')"]
+print(programs)
 ```"""
 
 _IMPORT_WITH_TOOLS_TASK_TEMPLATE = """\
@@ -245,8 +249,8 @@ Produce a sequence of replace() calls that transforms "hello world" into
 
 **Solution**
 ```python
-result = find_replace_chain("hello world", [(" ", "_"), ("h", "H"), ("e", "E"), ("l", "L"), ("o", "O"), ("w", "W"), ("r", "R"), ("d", "D")])
-print(result)
+programs = ["replace(' ', '_')", "replace('h', 'H')", "replace('e', 'E')", "replace('l', 'L')", "replace('o', 'O')", "replace('w', 'W')", "replace('r', 'R')", "replace('d', 'D')"]
+print(programs)
 ```
 **Tools**
 ```python
@@ -311,16 +315,8 @@ Produce a sequence of replace() calls that transforms "hello world" into
 
 **Solution**
 ```python
-s = "hello world"
-s = s.replace(" ", "_")
-s = s.replace("h", "H")
-s = s.replace("e", "E")
-s = s.replace("l", "L")
-s = s.replace("o", "O")
-s = s.replace("w", "W")
-s = s.replace("r", "R")
-s = s.replace("d", "D")
-print(s)
+programs = ["replace(' ', '_')", "replace('h', 'H')", "replace('e', 'E')", "replace('l', 'L')", "replace('o', 'O')", "replace('w', 'W')", "replace('r', 'R')", "replace('d', 'D')"]
+print(programs)
 ```
 **Tools**
 ```python
