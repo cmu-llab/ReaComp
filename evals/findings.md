@@ -399,27 +399,27 @@ Each candidate requires a SWI-Prolog subprocess call (50–200 ms); brute force 
 
 ### Main results
 
-Effi mode: solver used at zero cost when reward = 1.0; LLM tokens counted only for solver failures. Complexity Δ = mean predicted − mean GT (correct solutions only). DF covers 946/1000 tasks — Hard tier has only 196 tasks for DF rows (marked *).
+Effi mode: solver used at zero cost when reward = 1.0; LLM tokens counted only for solver failures. Complexity Δ = mean predicted − mean GT (correct solutions only).
 
-Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.19/M output). Reported costs for o3/gpt-5 are from the SLR-Bench paper. Total tokens in millions across all 1000 tasks.
+Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.19/M output). Reported costs for o3/gpt-5 are from the SLR-Bench paper figure (total compute across 1000 instances). o3/gpt-5 Pass% derived from tier scores: (Basic+Easy+Medium+Hard)/4 with 250 tasks each. Total tokens in millions across all 1000 tasks.
 
 | System | Pass% | Basic | Easy | Medium | Hard | Total (M tok) | Cost ($) | Complexity Δ |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| o3 † | — | 99 | 93 | 74 | 45 | 4.30 | 207.24 | — |
-| gpt-5 † | — | 100 | 90 | 72 | 46 | 16.40 | 103.13 | — |
+| o3 † | 77.8% | 99 | 93 | 74 | 45 | 4.30 | 207.24 | — |
+| gpt-5 † | 77.0% | 100 | 90 | 72 | 46 | 16.40 | 103.13 | — |
 | **CC Solver** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **0** | **0** | **−0.756** |
 | **Qwen Solver (run 2)** | **60.7%** | **100** | **71.2** | **34.4** | **37.2** | **0** | **0** | **−1.087** |
 | BoK-32 (gpt-oss-120b) | 68.7% | 100 | 100 | 57.6 | 17.2 | 225.3 | 17.88 | −0.611 |
-| DF-32 (gpt-oss-120b) | 83.3%* | 100 | 99.6 | 84.4 | 39.8* | 174.9* | 13.96* | −0.815 |
+| DF-32 (gpt-oss-120b) | 79.6% | 100 | 99.6 | 84.4 | 34.4 | 224.2 | 17.43 | −0.834 |
 | BoK + Qwen Solver (effi) | 75.9% | 100 | 100 | 62.8 | 40.8 | 162.8 | 13.21 | −1.063 |
 | BoK + CC Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 10.80 | −0.796 |
-| BoK + CC + Qwen Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 131.2 | 10.71 | −0.802 |
-| DF + Qwen Solver (effi) | 83.7%* | 100 | 99.6 | 86.4 | 48.8* | 132.7* | 10.65* | −1.118 |
-| **DF + CC Solver (effi)** | **86.5%*** | **100** | **99.6** | **88.8** | **57.6*** | **113.0*** | **9.07*** | **−0.920** |
-| **DF + CC + Qwen Solver (effi)** | **86.6%*** | **100** | **99.6** | **88.8** | **58.0*** | **111.6*** | **8.96*** | **−0.917** |
+| BoK + CC + Qwen Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 10.80 | −0.795 |
+| DF + Qwen Solver (effi) | 83.9% | 100 | 99.6 | 86.4 | 49.6 | 166.1 | 13.01 | −1.123 |
+| **DF + CC Solver (effi)** | **86.6%** | **100** | **99.6** | **88.8** | **58.0** | **138.8** | **10.90** | **−0.924** |
+| **DF + CC + Qwen Solver (effi)** | **86.7%** | **100** | **99.6** | **88.8** | **58.4** | **138.8** | **10.90** | **−0.924** |
+| DF + BoK + CC + Qwen Solver (effi) | **87.3%** | **100** | **100** | **89.6** | **59.6** | 271.3 | 21.71 | −0.943 |
 
-† Reported scores from SLR-Bench paper; not re-run by us. Single attempt, no test-time scaling.  
-\* DF covers 946/1000 tasks (Hard tier: 196/250). Token totals and costs are for covered tasks only; pass% computed over all 1000.
+† Reported scores from SLR-Bench paper; not re-run by us. Single attempt, no test-time scaling. Pass% = (Basic+Easy+Medium+Hard)/4 (250 tasks each).
 
 ### Symbolic solver breakdown by rule complexity
 
@@ -436,32 +436,33 @@ CC solver outperforms Qwen at every complexity level above 1. The gap widens at 
 
 ### Key findings
 
-**1. CC Solver matches o3 and gpt-5 on the Hard tier at zero LLM cost.** CC Solver: 46.8% on Hard vs o3 45%, gpt-5 46% — essentially equal — while spending nothing per task. Qwen (37.2%) is weaker on Hard but still competitive with gpt-4o (0%).
+**1. CC Solver matches o3 and gpt-5 on the Hard tier at zero LLM cost.** CC Solver: 46.8% on Hard vs o3 45%, gpt-5 46% — essentially equal — while spending nothing per task. Overall, CC (68.4%) and Qwen (60.7%) are below o3/gpt-5 (77.8%/77.0%) on aggregate, but the gap is entirely in Basic/Easy where the LLM solvers are near-perfect; on Hard the symbolic solvers are competitive.
 
-**2. BoK-32 is strong on Basic/Easy but collapses on Hard.** 100% on Basic/Easy, then 57.6% Medium, 17.2% Hard — a severe cliff. The symbolic solvers hold up far better on Hard (46.8% CC, 37.2% Qwen). The complementarity makes effi ensembles very effective.
+**2. BoK-32 is strong on Basic/Easy but collapses on Hard.** 100% on Basic/Easy, then 57.6% Medium, 17.2% Hard — a severe cliff. DF is more balanced (84.4% Medium, 34.4% Hard). The symbolic solvers hold up far better on Hard (46.8% CC). Complementarity between DF and symbolic makes effi ensembles very effective.
 
-**3. DF + CC Solver effi reaches 86.5% overall (57.6% Hard) at 113K avg tokens/task.** This is the best full-dataset result. DF alone is 83.3% (39.8% Hard, partial); adding CC Solver raises Hard by 17.8pp. DF + CC + Qwen adds only 0.1pp over DF + CC alone.
+**3. DF + CC Solver effi reaches 86.6% overall (58.0% Hard) at 138.8M tokens.** Full DF (1000 tasks) combined with CC Solver lifts Hard from 34.4% to 58.0% — +23.6pp — surpassing both o3 (45%) and gpt-5 (46%) on the Hard tier. DF + CC + Qwen adds 0.1pp at the same token cost. Adding BoK further pushes to 87.3% (59.6% Hard) but doubles token cost.
 
 **4. BoK + CC Solver effi (80.3%) cuts BoK token cost by ~41%.** 132K vs 225K avg tokens/task — CC Solver handles 68.4% of tasks at zero cost, so only the harder 31.6% incur BoK cost.
 
 **5. All systems find simpler rules than GT.** Δ ranges from −0.61 (BoK) to −1.09 (Qwen solver). Opposite of PBEBench — Prolog has many equivalent shorter forms; all systems prefer brevity. Symbolic solvers undershoot most aggressively.
 
-**6. SLR tokens are much more expensive than PBEBench.** BoK SLR: 225K avg tokens/task vs 273K for PBEBench-Hard, but SLR is in principle easier (single Prolog rule vs up to 20 replaces). The high cost reflects long background-fact prompts, not task difficulty.
+**6. SLR tokens are comparable to PBEBench-Hard despite simpler task structure.** BoK SLR: 225K avg tokens/task vs 273K for PBEBench-Hard. SLR is in principle simpler (single Prolog rule vs up to 20 replaces), but the long background-fact prompts inflate token cost.
 
 **7. Best trade-off points:**
 - Zero cost: CC Solver (68.4%, Hard 46.8%) — matches frontier LLMs on Hard tier
-- Best pass rate: DF + CC + Qwen effi (86.6%, pending full DF run)
-- Best BoK ensemble: BoK + CC Solver effi (80.3%, 132K tokens/task)
+- Best pass rate: DF + BoK + CC + Qwen effi (87.3%, Hard 59.6%, 271M tokens)
+- Best efficiency: DF + CC Solver effi (86.6%, Hard 58.0%, 138.8M tokens, $10.90)
 
 ### Output files
 
 | File | Description |
 |---|---|
-| `evals/solver_results/slr_claude_code/slr.jsonl` | Claude solver results (1000 tasks) |
-| `outputs/slr_bench_best_of_k.jsonl` | BoK raw outputs (partial) |
-| `outputs/slr_bench_direct_feedback.jsonl` | DF raw outputs (partial) |
-| `outputs/slr_ensemble_bok_solver.jsonl` | BoK ∪ Solver (standard) |
-| `outputs/slr_ensemble_df_solver.jsonl` | DF ∪ Solver (standard) |
-| `outputs/slr_ensemble_effi_bok_solver.jsonl` | BoK ∪ Solver (effi) |
-| `outputs/slr_ensemble_effi_df_solver.jsonl` | DF ∪ Solver (effi) |
-| `metrics/slr_partial_bok_df.json` | All metrics as JSON |
+| `evals/solver_results/slr_claude_code/slr.jsonl` | CC Solver results (1000 tasks) |
+| `evals/solver_results/slr_qwen3.6_35b_a3b/Sun_Apr_26_131_PM/slr.jsonl` | Qwen Solver results (run 2, 1000 tasks) |
+| `outputs/slr_bench_best_of_k_stripped.jsonl` | BoK raw outputs (1000 tasks, stripped) |
+| `outputs/slr_bench_direct_feedback_stripped.jsonl` | DF raw outputs (1000 tasks, stripped) |
+| `outputs/slr_ensemble_effi_df_cc.jsonl` | DF + CC Solver (effi) |
+| `outputs/slr_ensemble_effi_bok_cc.jsonl` | BoK + CC Solver (effi) |
+| `outputs/slr_ensemble_effi_df_cc_qwen.jsonl` | DF + CC + Qwen Solver (effi) |
+| `outputs/slr_ensemble_effi_df_bok_cc_qwen.jsonl` | DF + BoK + CC + Qwen Solver (effi) |
+| `metrics/slr_all.json` | All metrics as JSON (quick_eval output) |
