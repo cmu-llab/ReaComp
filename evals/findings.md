@@ -23,6 +23,18 @@ Datasets, DSL constraints, and baseline configurations are documented in `evals/
 **Symbolic solvers:** CC Solver = induced by claude-sonnet-4-6 (Claude Code session); Qwen Solver = induced by Qwen3.6-35B-A3B via OpenHands (best single run: run 2, 100 examples + CoT). Zero per-task LLM cost.  
 **Ensembles:** effi mode — use solver output unconditionally when reward = 1.0 (zero LLM tokens); fall back to LLM otherwise. Complexity Δ = mean predicted − mean GT (solved tasks only).
 
+### Search space
+
+Each program is a `replace(A, B)` where A (predicate) has length 1–3 and B (replacement) has length 0–3 over alphabet V, giving `(V + V² + V³) × (1 + V + V² + V³)` choices per program. A cascade solution of length k requires searching (per-program space)ᵏ candidates.
+
+| Setting | V | Per-program choices | Worst cascade length | Worst-case search space |
+|---|---|---|---|---|
+| Lite (per-task avg, V=13) | 13 | 5,662,020 | 5 | **≈ 5.8 × 10³³** |
+| Lite (global vocab, V=17) | 17 | 27,243,180 | 5 | **≈ 1.5 × 10³⁷** |
+| Hard (global vocab, V=52) | 52 | 20,553,379,860 | 20 | **≈ 1.8 × 10²⁰⁶** |
+
+Even at 10⁹ program evaluations per second, exhausting the Lite space would take ~10²⁴ years; Hard is cosmologically larger (~10²⁰⁶). The symbolic solvers escape this by inferring pattern A directly from input/output diffs rather than enumerating all patterns, pruning replacement B to a small candidate set, and applying greedy or beam search over the cascade — evaluating hundreds to thousands of candidates per task rather than quintillions.
+
 ### Main results
 
 Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**. Not reported for † baselines (not re-run by us).  
@@ -107,6 +119,10 @@ CC solver collapses at CL=5 (50%) — at the 5-program limit there is little sla
 **LLM baseline:** gpt-oss-120b, BoK-32 only (K=32, max 16,384 tokens/sample, no early exit — all 32 always run). No DF on Hard due to sequential cost and lock-in risk at long cascades. Token cost from `metrics/bok_hard_tokens_cluster.json` (measured on cluster with model tokenizer): avg 273,143/task total (28,750 input + 3,690 output + 240,704 CoT reasoning). CoT dominates at 88%.  
 **Symbolic solvers:** CC Solver and Qwen Solver (run 2, 100 examples + CoT). Zero per-task LLM cost.  
 **Ensembles:** effi mode — solver used at zero cost when reward = 1.0; BoK tokens counted only for tasks the solver fails. Note: BoK runs all 32 samples regardless of solver result (no early exit by design) — effi savings reflect *reported* token cost, not actual GPU compute. Complexity Δ = mean predicted − mean GT (correct solutions only).
+
+### Search space
+
+Hard uses the global alphabet V=52 (uppercase, lowercase, digits) with cascades up to length 20. The per-program search space is 20.6B choices; a length-20 cascade has ≈1.8×10²⁰⁶ candidates — far beyond any enumeration budget. See the Lite section above for details on how solvers reduce this to tractable search.
 
 ### Main results
 
@@ -365,6 +381,21 @@ Ensembling multiple Qwen runs (same demos, different algorithms) recovers most o
 **Reward:** `partial_score` (0–1) from `AIML-TUDA/VerifiableRewardsForScalableLogicalReasoning` via HuggingFace evaluate; 1.0 = perfectly correct rule  
 **Metric:** `rule_complexity` = number of top-level body literals excluding `has_car/2`  
 **Data file:** `data/slr_bench/v1_All_full.jsonl`
+
+### Search space
+
+SLR-Bench requires inducing a Prolog rule `eastbound(T) :- has_car(T,C), lit₁, lit₂, ...` with up to 4 body literals drawn from L ground literals per task. The candidate count is C(L,1)+C(L,2)+C(L,3)+C(L,4), where L grows with curriculum level:
+
+| Curriculum level | Ground literals L | Candidates (up to 4-body) | Wall-clock @ 50 ms/eval | Wall-clock @ 200 ms/eval |
+|---|---|---|---|---|
+| 1  |  5 |         30 | < 1 s     | < 1 s     |
+| 5  | 11 |        561 | < 1 s     | < 1 s     |
+| 10 | 19 |      5,035 | ~4 min    | ~17 min   |
+| 15 | 33 |     46,937 | ~39 min   | ~2.6 hr   |
+| 20 | 50 |    251,175 | ~3.5 hr   | ~14 hr    |
+| Theoretical max (L=120) | 120 | ~8.5 × 10⁶ | ~5 days | ~20 days |
+
+Each candidate requires a SWI-Prolog subprocess call (50–200 ms); brute force is infeasible at levels 15–20. The symbolic solvers address this by (1) extracting only task-relevant literals from the full feature space, reducing L to 5–50; (2) searching layer by layer (1-body first, stopping at the first layer with a perfect rule); and (3) sorting/pruning candidates by syntactic features before evaluation.
 
 ### Main results
 

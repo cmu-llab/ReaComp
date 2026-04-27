@@ -74,6 +74,15 @@ DATASETS = {
         "label": "SLR-Bench",
         "kind": "slr",
     },
+    "real": {
+        "path": os.path.join(REPO_ROOT, "data", "real_forward_reconstruction.jsonl"),
+        "label": "RealFR",
+        "kind": "pbe",
+        # max_programs is intentionally left unset here; use --max-programs to override.
+        "max_programs": 20,
+        "max_pred_len": 3,
+        "max_transform_len": 3,
+    },
 }
 
 
@@ -141,8 +150,8 @@ def _run_task(args):
 # Evaluate
 # ---------------------------------------------------------------------------
 
-def evaluate(dataset_key, solver_path, output_dir=None, limit=None, workers=1, task_timeout=None):
-    cfg = DATASETS[dataset_key]
+def evaluate(dataset_key, solver_path, output_dir=None, limit=None, workers=1, task_timeout=None, cfg_override=None):
+    cfg = cfg_override if cfg_override is not None else DATASETS[dataset_key]
     with open(cfg["path"]) as fh:
         records = [json.loads(line) for line in fh]
 
@@ -158,7 +167,13 @@ def evaluate(dataset_key, solver_path, output_dir=None, limit=None, workers=1, t
     out_fh = None
     if output_dir is not None:
         os.makedirs(output_dir, exist_ok=True)
-        out_path = os.path.join(output_dir, f"{dataset_key}.jsonl")
+        # For real-data runs, embed max_programs in filename to avoid collisions
+        # across the three cascade-length settings (20/50/100).
+        if dataset_key == "real" and cfg.get("max_programs"):
+            stem = f"real_k{cfg['max_programs']}"
+        else:
+            stem = dataset_key
+        out_path = os.path.join(output_dir, f"{stem}.jsonl")
         if os.path.isfile(out_path):
             with open(out_path) as fh:
                 for line in fh:
@@ -269,7 +284,7 @@ def evaluate(dataset_key, solver_path, output_dir=None, limit=None, workers=1, t
     }
 
     if output_dir is not None:
-        summary_path = os.path.join(output_dir, f"{dataset_key}_summary.json")
+        summary_path = os.path.join(output_dir, f"{stem}_summary.json")
         with open(summary_path, "w") as fh:
             json.dump({**summary, "solver": solver_path}, fh, indent=2)
         print(f"  Summary written to:  {summary_path}")
@@ -289,8 +304,12 @@ def main():
         help=f"Path to SOLVER.py to evaluate (default: {default_solver_rel})",
     )
     parser.add_argument(
-        "--dataset", choices=["lite", "hard", "both", "slr"], default="both",
+        "--dataset", choices=["lite", "hard", "both", "slr", "real"], default="both",
         help="Which dataset to evaluate (default: both PBEBench splits)",
+    )
+    parser.add_argument(
+        "--max-programs", type=int, default=None,
+        help="Override max cascade length for PBE datasets (default: dataset-specific)",
     )
     parser.add_argument(
         "--limit", type=int, default=None,
@@ -320,7 +339,9 @@ def main():
     summaries = []
 
     for key in keys:
-        cfg = DATASETS[key]
+        cfg = DATASETS[key].copy()
+        if args.max_programs is not None and cfg.get("kind") == "pbe":
+            cfg["max_programs"] = args.max_programs
         print(f"\n{'='*60}")
         print(f"Solver  : {solver_path}")
         print(f"Dataset : {cfg['label']}")
@@ -344,6 +365,7 @@ def main():
             limit=args.limit,
             workers=args.workers,
             task_timeout=args.task_timeout,
+            cfg_override=cfg,
         )
         summaries.append(summary)
 
