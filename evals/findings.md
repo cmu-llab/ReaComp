@@ -365,6 +365,7 @@ Ensembling multiple Qwen runs (same demos, different algorithms) recovers most o
 | System | n | Pass% | Mean reward | Avg tokens | Mean rule complexity | Δ GT |
 |---|---:|---:|---:|---:|---:|---:|
 | Symbolic Solver (Claude Code) | 1000 | 68.4% | 0.9669 | 0 | 1.624 | −0.756 |
+| Symbolic Solver (Qwen, run 2) | 1000 | 60.7% | 0.6070 | 0 | 1.026 | −1.087 |
 | Best-of-K (BoK) | 565 | 100.0% | 1.0000 | 5,564 | 1.211 | −0.299 |
 | Direct Feedback (DF) | 577 | 100.0% | 1.0000 | 5,665 | 1.191 | −0.367 |
 
@@ -372,23 +373,25 @@ Ensembling multiple Qwen runs (same demos, different algorithms) recovers most o
 
 ### Symbolic solver breakdown by curriculum tier
 
-| Tier | N | Pass% | Mean reward |
-|---|---:|---:|---:|
-| basic (levels 1–5) | 250 | 100.0% | 1.0000 |
-| easy (levels 6–10) | 250 | 78.4% | 0.9699 |
-| medium (levels 11–15) | 250 | 48.4% | 0.9449 |
-| hard (levels 16–20) | 250 | 46.8% | 0.9526 |
+| Tier | N | Pass% (CC) | Mean reward (CC) | Pass% (Qwen) | Mean reward (Qwen) |
+|---|---:|---:|---:|---:|---:|
+| basic (levels 1–5) | 250 | 100.0% | 1.0000 | 100.0% | 1.0000 |
+| easy (levels 6–10) | 250 | 78.4% | 0.9699 | 71.2% | 0.7120 |
+| medium (levels 11–15) | 250 | 48.4% | 0.9449 | 34.4% | 0.3440 |
+| hard (levels 16–20) | 250 | 46.8% | 0.9526 | 37.2% | 0.3720 |
+
+CC solver outperforms Qwen at every tier except basic. The gap widens at medium/hard — CC maintains high partial scores (0.94+) while Qwen's mean reward collapses (0.34–0.37), reflecting more complete failures rather than near-misses.
 
 ### Symbolic solver breakdown by rule complexity
 
-| Rule complexity | N | Pass% | Mean reward |
-|---|---:|---:|---:|
-| 1 | 50 | 100.0% | 1.0000 |
-| 1–2 | 350 | 93.1% | 0.9890 |
-| 2–3 | 150 | 67.3% | 0.9612 |
-| 3–4 | 100 | 47.0% | 0.9435 |
-| 4–5 | 250 | 44.4% | 0.9462 |
-| 5 | 100 | 49.0% | 0.9563 |
+| Rule complexity | N | Pass% (CC) | Mean reward (CC) | Pass% (Qwen) | Mean reward (Qwen) |
+|---|---:|---:|---:|---:|---:|
+| 1 | 50 | 100.0% | 1.0000 | 100.0% | 1.0000 |
+| 1–2 | 350 | 93.1% | 0.9890 | 94.3% | 0.9429 |
+| 2–3 | 150 | 67.3% | 0.9612 | 50.7% | 0.5067 |
+| 3–4 | 100 | 47.0% | 0.9435 | 33.0% | 0.3300 |
+| 4–5 | 250 | 44.4% | 0.9462 | 31.6% | 0.3160 |
+| 5 | 100 | 49.0% | 0.9563 | 39.0% | 0.3900 |
 
 ### Ensemble results
 
@@ -441,7 +444,7 @@ Source: Table 3, SLR-Bench paper (`figures/slr_bench_reported_metrics.png`). Rep
 | o3 † | — | 99 | 93 | 74 | 45 | — | reported |
 | gpt-5 † | — | 100 | 90 | 72 | 46 | — | reported |
 | **CC Solver (ours)** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **0** | zero LLM tokens |
-| **OH Qwen Solver (ours)** | — | — | — | — | — | **0** | TODO: complete run |
+| **OH Qwen Solver (ours, run 2)** | **60.7%** | **100** | **71.2** | **34.4** | **37.2** | **0** | zero LLM tokens |
 | BoK-32, gpt-oss-120b (ours, partial) | 100%* | — | — | — | — | 5,564* | *on 565/1000 tasks |
 | DF-32, gpt-oss-120b (ours, partial) | 100%* | — | — | — | — | 5,665* | *on 577/1000 tasks |
 | BoK-32 + CC Solver (ours, partial) | 76.0% | — | — | — | — | 3,144 | partial ensemble |
@@ -451,7 +454,7 @@ Source: Table 3, SLR-Bench paper (`figures/slr_bench_reported_metrics.png`). Rep
 
 **Key takeaway (partial):** On the **Hard tier the CC Solver (46.8%) matches o3 (45%) and gpt-5 (46%)** — the top leaderboard models — at zero per-task LLM cost. The solver is weakest on Easy (78.4% vs 90–93% frontier) where rule variety exceeds inductive coverage. All unsolved tasks have `best_reward > 0` — no syntax errors, every produced rule is valid Prolog.
 
-**TODO:** Fill ensemble columns (Qwen solver, full BoK/DF, BoK/DF + both solvers) and per-tier breakdown for LLM baselines once full 1000-task results are in.
+**TODO:** Fill ensemble columns (BoK/DF + both solvers) and per-tier breakdown for LLM baselines once full 1000-task BoK/DF results are in.
 
 ### Output files
 

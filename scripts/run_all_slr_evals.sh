@@ -27,7 +27,7 @@ done
 BOK=outputs/slr_bench_best_of_k.jsonl
 DF=outputs/slr_bench_direct_feedback.jsonl
 CC=evals/solver_results/slr_claude_code/slr.jsonl
-QWEN=evals/solver_results/slr_qwen3.6_35b_a3b/Sat_Apr_25_643_AM/slr.jsonl
+QWEN=evals/solver_results/slr_qwen3.6_35b_a3b/Sun_Apr_26_131_PM/slr.jsonl
 TASKS=data/slr_bench/v1_All_full.jsonl
 OUT=outputs
 
