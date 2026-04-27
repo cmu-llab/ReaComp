@@ -78,7 +78,7 @@ CC solver collapses at CL=5 (50%) — at the 5-program limit there is little sla
 - Best pass rate + token efficiency: BoK + All Symbolic effi (93.9%, 43K avg tokens/task)
 - Best pass rate regardless of cost: BoK + CC Solver effi or BoK + All Symbolic effi (93.9%)
 
-**8. Solver construction cost is negligible when amortised.** The Qwen run 2 solver was built in a single OpenHands session costing ~216K tokens (KV-cache). Effi mode saves ~22K tokens/task over BoK standalone — build cost recoups at 10 tasks and is <1% overhead across 1008 tasks. See ablations section for full token cost breakdown.
+**8. Solver construction cost is negligible when amortised.** The Qwen run 2 solver was built in a single OpenHands session costing ~216K tokens (KV-cache). Effi mode saves ~24K tokens/task over BoK standalone (67,480 → 43,113, −36%) — build cost recoups at 9 tasks and is <1% overhead across 1008 tasks. See ablations section for full token cost breakdown.
 
 ### Output files
 
@@ -105,13 +105,11 @@ CC solver collapses at CL=5 (50%) — at the 5-program limit there is little sla
 **Max programs:** 20  
 **LLM baseline:** gpt-oss-120b, BoK-32 only (K=32, max 16,384 tokens/sample, no early exit — all 32 always run). No DF on Hard due to sequential cost and lock-in risk at long cascades. Token cost from `metrics/bok_hard_tokens_cluster.json` (measured on cluster with model tokenizer): avg 273,143/task total (28,750 input + 3,690 output + 240,704 CoT reasoning). CoT dominates at 88%.  
 **Symbolic solvers:** CC Solver and Qwen Solver (run 2, 100 examples + CoT). Zero per-task LLM cost.  
-**Ensembles:** standard union (best reward, min complexity tiebreak). Complexity Δ = mean predicted − mean GT (correct solutions only).
+**Ensembles:** effi mode — solver used at zero cost when reward = 1.0; BoK tokens counted only for tasks the solver fails. Note: BoK runs all 32 samples regardless of solver result (no early exit by design) — effi savings reflect *reported* token cost, not actual GPU compute. Complexity Δ = mean predicted − mean GT (correct solutions only).
 
 ### Main results
 
 Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**.
-
-Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**. Effi ensembles: solver used at zero cost when reward = 1.0; BoK tokens counted only for tasks the solver fails. Note: BoK runs all 32 samples regardless of solver result (no early exit by design) — effi savings reflect *reported* cost, not actual compute.
 
 | System | Pass% | Mean reward | Edit Sim | Complexity Δ | Avg tokens/task |
 |---|---:|---:|---:|---:|---:|
@@ -119,11 +117,11 @@ Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutio
 | **Qwen Solver (run 2)** | **74.7%** | **0.9836** | **96.8** | **+5.26** | **0** |
 | **CC + Qwen Solvers (union)** | **81.2%** | **0.9905** | **98.3** | **+5.35** | **0** |
 | **All Symbolic Solvers (union)** | **84.7%** | **0.9920** | **98.6** | **+4.56** | **0** |
-| BoK-32 (gpt-oss-120b) | 68.4% | 0.9428 | 89.9 | — | 273,143 |
-| BoK + Qwen Solver (effi) | 80.7% | 0.9496 | 91.3 | +5.48 | 8,217 |
-| BoK + CC Solver (effi) | 79.4% | 0.9508 | 91.4 | +7.82 | 9,844 |
-| BoK + CC + Qwen Solver (effi) | 83.5% | 0.9531 | 91.9 | +5.48 | 6,083 |
-| **BoK + All Symbolic Solvers (effi)** | **85.8%** | **0.9570** | **92.7** | **+4.64** | **4,962** |
+| BoK-32 (gpt-oss-120b) | 68.4% | 0.9428 | 89.9 | +5.14 | 273,143 |
+| BoK + CC Solver (effi) | 79.4% | 0.9508 | 91.4 | +7.82 | 106,896 |
+| BoK + Qwen Solver (effi) | 80.7% | 0.9496 | 91.3 | +5.48 | 94,160 |
+| BoK + CC + Qwen Solver (effi) | 83.5% | 0.9531 | 91.9 | +5.48 | 72,003 |
+| **BoK + All Symbolic Solvers (effi)** | **85.8%** | **0.9570** | **92.7** | **+4.64** | **58,847** |
 
 ### Symbolic solver breakdown by cascade length
 
@@ -206,11 +204,11 @@ All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no t
 
 **5. All-four-BFCC is the hardest category.** 40.2% pass rate for CC, making up 22% of the dataset. Dense mutual ordering interactions the beam search cannot fully resolve.
 
-**6. Effi mode cuts reported token cost by ~98%.** BoK + All Symbolic effi: 4,962 avg tokens/task vs 273,143 standalone BoK — a 98.2% reduction. Since the All Symbolic union solves 84.7% of tasks perfectly, only 15.3% of tasks incur BoK cost. Note: BoK still runs all 32 samples for all tasks by design (no early exit); effi savings reflect *reported* cost used for amortisation calculations, not actual GPU compute.
+**6. Effi mode cuts reported token cost by ~78%.** BoK + All Symbolic effi: 58,847 avg tokens/task vs 273,143 standalone BoK — a 78.4% reduction. The 14.2% of tasks not solved by any symbolic solver fall back to BoK (avg 273K tokens each), while the solved 85.8% incur zero LLM cost. Note: BoK still runs all 32 samples for all tasks by design (no early exit); effi savings reflect *reported* cost used for amortisation calculations, not actual GPU compute.
 
 **7. Best trade-off points:**
 - Best pass rate (zero cost): All Symbolic union (84.7%, 0 tokens)
-- Best pass rate overall: BoK + All Symbolic effi (85.8%, ~5K avg tokens/task)
+- Best pass rate overall: BoK + All Symbolic effi (85.8%, ~59K avg tokens/task)
 - Best symbolic-only: All Symbolic union beats BoK-32 standalone by +16.3pp at zero cost
 
 ### Output files
@@ -218,16 +216,17 @@ All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no t
 | File | Description |
 |---|---|
 | `outputs/gpt_oss_120b_pbebench_hard_outputs.jsonl` | BoK-32 raw outputs (PBEBench paper release) |
-| `outputs/hard_bok_converted.jsonl` | BoK-32 converted to quick_eval format (with cluster token costs) |
+| `outputs/hard_bok_converted.jsonl` | BoK-32 converted to quick_eval format (per-task token costs) |
 | `evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl` | CC Solver results |
 | `evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_.../hard.jsonl` | Qwen Solver results (run 2) |
 | `outputs/hard_union_cc_qwen_run2.jsonl` | CC + Qwen run 2 union |
-| `outputs/hard_ensemble_all_solvers.jsonl` | All Symbolic union (CC + all 6 Qwen runs) |
-| `outputs/hard_union_bok_cc.jsonl` | BoK + CC union |
-| `outputs/hard_union_bok_qwen_run2.jsonl` | BoK + Qwen run 2 union |
-| `outputs/hard_union_bok_cc_qwen_run2.jsonl` | BoK + CC + Qwen run 2 union |
-| `outputs/hard_union_bok_all_solvers.jsonl` | BoK + All Symbolic union |
-| `metrics/bok_hard_tokens_cluster.json` | BoK token usage breakdown (with CoT, measured on cluster) |
+| `outputs/hard_union_all_solvers.jsonl` | All Symbolic union (CC + all Qwen runs) |
+| `outputs/hard_effi_bok_cc.jsonl` | BoK + CC Solver (effi) |
+| `outputs/hard_effi_bok_qwen_run2.jsonl` | BoK + Qwen Solver (effi) |
+| `outputs/hard_effi_bok_cc_qwen_run2.jsonl` | BoK + CC + Qwen run 2 (effi) |
+| `outputs/hard_effi_bok_all_solvers.jsonl` | BoK + All Symbolic (effi) |
+| `metrics/bok_hard_tokens_cluster.json` | BoK aggregate token stats (with CoT, measured on cluster) |
+| `metrics/bok_hard_tokens_per_task.jsonl` | Per-task token counts from cluster (input/output/reasoning) |
 
 ---
 
