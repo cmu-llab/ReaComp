@@ -364,23 +364,25 @@ Ensembling multiple Qwen runs (same demos, different algorithms) recovers most o
 
 Effi mode: solver used at zero cost when reward = 1.0; LLM tokens counted only for solver failures. Complexity Δ = mean predicted − mean GT (correct solutions only). DF covers 946/1000 tasks — Hard tier has only 196 tasks for DF rows (marked *).
 
-| System | Pass% | Basic | Easy | Medium | Hard | Avg tokens/task | Complexity Δ |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| o3 † | — | 99 | 93 | 74 | 45 | — | — |
-| gpt-5 † | — | 100 | 90 | 72 | 46 | — | — |
-| **CC Solver** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **0** | **−0.756** |
-| **Qwen Solver (run 2)** | **60.7%** | **100** | **71.2** | **34.4** | **37.2** | **0** | **−1.087** |
-| BoK-32 (gpt-oss-120b) | 68.7% | 100 | 100 | 57.6 | 17.2 | 225,265 | −0.611 |
-| DF-32 (gpt-oss-120b) | 83.3%* | 100 | 99.6 | 84.4 | 39.8* | 184,876* | −0.815 |
-| BoK + Qwen Solver (effi) | 75.9% | 100 | 100 | 62.8 | 40.8 | 162,764 | −1.063 |
-| BoK + CC Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132,438 | −0.796 |
-| BoK + CC + Qwen Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 131,217 | −0.802 |
-| DF + Qwen Solver (effi) | 83.7%* | 100 | 99.6 | 86.4 | 48.8* | 132,733* | −1.118 |
-| **DF + CC Solver (effi)** | **86.5%*** | **100** | **99.6** | **88.8** | **57.6*** | **113,003*** | **−0.920** |
-| **DF + CC + Qwen Solver (effi)** | **86.6%*** | **100** | **99.6** | **88.8** | **58.0*** | **111,575*** | **−0.917** |
+Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.19/M output). Reported costs for o3/gpt-5 are from the SLR-Bench paper. Total tokens in millions across all 1000 tasks.
+
+| System | Pass% | Basic | Easy | Medium | Hard | Total (M tok) | Cost ($) | Complexity Δ |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| o3 † | — | 99 | 93 | 74 | 45 | 4.30 | 207.24 | — |
+| gpt-5 † | — | 100 | 90 | 72 | 46 | 16.40 | 103.13 | — |
+| **CC Solver** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **0** | **0** | **−0.756** |
+| **Qwen Solver (run 2)** | **60.7%** | **100** | **71.2** | **34.4** | **37.2** | **0** | **0** | **−1.087** |
+| BoK-32 (gpt-oss-120b) | 68.7% | 100 | 100 | 57.6 | 17.2 | 225.3 | 17.88 | −0.611 |
+| DF-32 (gpt-oss-120b) | 83.3%* | 100 | 99.6 | 84.4 | 39.8* | 174.9* | 13.96* | −0.815 |
+| BoK + Qwen Solver (effi) | 75.9% | 100 | 100 | 62.8 | 40.8 | 162.8 | 13.21 | −1.063 |
+| BoK + CC Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 10.80 | −0.796 |
+| BoK + CC + Qwen Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 131.2 | 10.71 | −0.802 |
+| DF + Qwen Solver (effi) | 83.7%* | 100 | 99.6 | 86.4 | 48.8* | 132.7* | 10.65* | −1.118 |
+| **DF + CC Solver (effi)** | **86.5%*** | **100** | **99.6** | **88.8** | **57.6*** | **113.0*** | **9.07*** | **−0.920** |
+| **DF + CC + Qwen Solver (effi)** | **86.6%*** | **100** | **99.6** | **88.8** | **58.0*** | **111.6*** | **8.96*** | **−0.917** |
 
 † Reported scores from SLR-Bench paper; not re-run by us. Single attempt, no test-time scaling.  
-\* DF covers 946/1000 tasks (Hard tier: 196/250). Pass% computed over 1000 tasks (unseen tasks = unsolved).
+\* DF covers 946/1000 tasks (Hard tier: 196/250). Token totals and costs are for covered tasks only; pass% computed over all 1000.
 
 ### Symbolic solver breakdown by rule complexity
 
