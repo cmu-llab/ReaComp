@@ -254,8 +254,8 @@ def evaluate(dataset_key, solver_path, output_dir=None, limit=None, workers=1, t
             out_fh.close()
 
     # Merge prior rows into final totals for summary
-    all_solved = solved + sum(int(r["success"]) for r in completed_rows.values())
-    all_score = total_score + sum(r["score"] for r in completed_rows.values())
+    all_solved = solved + sum(int(r.get("success", r.get("solved", False))) for r in completed_rows.values())
+    all_score = total_score + sum(r.get("score", r.get("best_reward", 0.0)) for r in completed_rows.values())
 
     elapsed = time.time() - t0
     summary = {
