@@ -355,7 +355,7 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
         total_in    = sum((r.get("token_usage") or {}).get("input",     0) or 0 for r in records)
         total_out   = sum((r.get("token_usage") or {}).get("output",    0) or 0 for r in records)
         total_reas  = sum((r.get("token_usage") or {}).get("reasoning", 0) or 0 for r in records)
-        total_toks  = total_in + total_out
+        total_toks  = total_in + total_out + total_reas
         print(f"\n  Token usage  ({n_with_tokens}/{n} tasks have data)")
         print(f"    Input     : {total_in:>12,}  (avg {total_in/n_with_tokens:>8,.1f}/task)")
         print(f"    Output    : {total_out:>12,}  (avg {total_out/n_with_tokens:>8,.1f}/task)")
