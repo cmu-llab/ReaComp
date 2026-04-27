@@ -78,7 +78,7 @@ CC solver collapses at CL=5 (50%) — at the 5-program limit there is little sla
 - Best pass rate + token efficiency: BoK + All Symbolic effi (93.9%, 43K avg tokens/task)
 - Best pass rate regardless of cost: BoK + CC Solver effi or BoK + All Symbolic effi (93.9%)
 
-**8. Solver construction cost is negligible when amortised.** The Qwen run 2 solver was built in a single OpenHands session costing ~216K tokens (KV-cache). Effi mode saves ~22K tokens/task over BoK standalone — build cost recoups at 10 tasks and is <1% overhead across 1008 tasks. See ablations section for full token cost breakdown.
+**8. Solver construction cost is negligible when amortised.** The Qwen run 2 solver was built in a single OpenHands session costing ~216K tokens (KV-cache). Effi mode saves ~24K tokens/task over BoK standalone (67,480 → 43,113, −36%) — build cost recoups at 9 tasks and is <1% overhead across 1008 tasks. See ablations section for full token cost breakdown.
 
 ### Output files
 
