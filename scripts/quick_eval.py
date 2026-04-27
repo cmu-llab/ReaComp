@@ -578,6 +578,15 @@ def summarise(records: list[dict], label: str, task_meta: dict[int, dict] | None
                 }
 
     # SLR-Bench breakdowns — triggered by presence of curriculum_level / curriculum_tier fields
+    # If fields are missing from output records (e.g. BoK/DF), inject from task_meta
+    if task_meta and any((task_meta.get(r.get("task_index")) or {}).get("curriculum_tier") for r in records):
+        for r in records:
+            if r.get("curriculum_tier") is None:
+                m = task_meta.get(r.get("task_index")) or {}
+                if m.get("curriculum_tier"):
+                    r["curriculum_tier"] = m["curriculum_tier"]
+                if m.get("curriculum_level") is not None:
+                    r["curriculum_level"] = m["curriculum_level"]
     slr_breakdown_tier: list[dict] = []
     slr_breakdown_level: list[dict] = []
     slr_breakdown_complexity: list[dict] = []
