@@ -25,28 +25,29 @@ Datasets, DSL constraints, and baseline configurations are documented in `evals/
 
 ### Main results
 
-Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**. Not reported for † baselines (not re-run by us).
+Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**. Not reported for † baselines (not re-run by us).  
+Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M output). Total tokens in millions across all 1008 tasks.
 
-| System | Pass% | Mean reward | Edit Sim | Complexity Δ | Avg tokens/task |
-|---|---:|---:|---:|---:|---:|
-| gpt-oss-120b, single attempt † | 62.5% | — | 69.9 | — | — |
-| GPT-5, single attempt † | 72.4% | — | 76.5 | — | — |
-| **CC Solver** | **80.4%** | **0.9438** | **93.7** | **+3.00** | **0** |
-| **Qwen Solver (best run)** | **65.7%** | **0.9022** | **87.4** | **+3.01** | **0** |
-| **CC + Qwen Solvers (union)** | **84.6%** | **0.9607** | **94.9** | **+2.16** | **0** |
-| **All Symbolic Solvers (union)** | **91.3%** | **0.9772** | **96.6** | **+1.88** | **0** |
-| DF-32 (gpt-oss-120b) | 92.4% | 0.9796 | 97.3 | +2.11 | 110,267 |
-| BoK-32 (gpt-oss-120b) | 93.8% | 0.9808 | 97.8 | +2.19 | 67,480 |
-| DF + Qwen Solver (effi) | 92.9% | 0.9810 | 97.5 | +2.89 | 89,493 |
-| DF + CC Solver (effi) | 93.1% | 0.9815 | 97.6 | +3.00 | 79,877 |
-| DF + All Symbolic (effi) | 93.2% | 0.9817 | 97.6 | +2.18 | 78,119 |
-| BoK + Qwen Solver (effi) | 93.8% | 0.9808 | 97.8 | +2.94 | 50,284 |
-| **BoK + CC Solver (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.94** | **45,277** |
-| **BoK + All Symbolic (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.19** | **43,113** |
+| System | Pass% | Mean reward | Edit Sim | Complexity Δ | Total (M tok) | Cost ($) |
+|---|---:|---:|---:|---:|---:|---:|
+| gpt-oss-120b, single attempt † | 62.5% | — | 69.9 | — | — | — |
+| GPT-5, single attempt † | 72.4% | — | 76.5 | — | — | — |
+| **CC Solver** | **80.4%** | **0.9438** | **93.7** | **+3.00** | **0** | **0** |
+| **Qwen Solver (best run)** | **65.7%** | **0.9022** | **87.4** | **+3.01** | **0** | **0** |
+| **CC + Qwen Solvers (union)** | **84.6%** | **0.9607** | **94.9** | **+2.16** | **0** | **0** |
+| **All Symbolic Solvers (union)** | **91.3%** | **0.9772** | **96.6** | **+1.88** | **0** | **0** |
+| DF-32 (gpt-oss-120b) | 92.4% | 0.9796 | 97.3 | +2.11 | 111.1 | 16.74 |
+| BoK-32 (gpt-oss-120b) | 93.8% | 0.9808 | 97.8 | +2.19 | 68.0 | 12.20 |
+| DF + Qwen Solver (effi) | 92.9% | 0.9810 | 97.5 | +2.89 | 90.2 | 13.50 |
+| DF + CC Solver (effi) | 93.1% | 0.9815 | 97.6 | +3.00 | 80.5 | 11.97 |
+| DF + All Symbolic (effi) | 93.2% | 0.9817 | 97.6 | +2.18 | 78.7 | 11.69 |
+| BoK + Qwen Solver (effi) | 93.8% | 0.9808 | 97.8 | +2.94 | 50.7 | 9.12 |
+| **BoK + CC Solver (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.94** | **45.6** | **8.22** |
+| **BoK + All Symbolic (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.19** | **43.5** | **7.83** |
 
 † Reported scores from PBEBench paper (`figures/pbebench_lite_reported_metrics.png`); not re-run by us. Single attempt, Pass@1, 8192 CoT tokens — no test-time scaling. Edit Sim from the same paper figure.
 
-> **Model note:** LLM baselines use **gpt-oss-120b** served via vLLM. Symbolic solvers are induced by a separate coding agent (CC by claude-sonnet-4-6; Qwen by Qwen3.6-35B-A3B inside OpenHands) — distinct from the inference LLM. Effi token savings reflect replacing gpt-oss-120b inference with zero-cost symbolic execution; solver build cost (~216K tokens KV-cache, one-time) is negligible at any realistic eval scale (see Finding 8).
+> **Model note:** LLM baselines use **gpt-oss-120b** served via vLLM. Symbolic solvers are induced by a separate coding agent (CC by claude-sonnet-4-6; Qwen by Qwen3.6-35B-A3B inside OpenHands) — distinct from the inference LLM. Effi token savings reflect replacing gpt-oss-120b inference with zero-cost symbolic execution; solver build cost (under $1 one-time, see ablations) is negligible at any realistic eval scale.
 
 ### Symbolic solver breakdown by cascade length
 
@@ -109,19 +110,20 @@ CC solver collapses at CL=5 (50%) — at the 5-program limit there is little sla
 
 ### Main results
 
-Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**.
+Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**.  
+Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M output; reasoning billed as output). Total tokens in millions across all 1216 tasks.
 
-| System | Pass% | Mean reward | Edit Sim | Complexity Δ | Avg tokens/task |
-|---|---:|---:|---:|---:|---:|
-| **CC Solver** | **69.7%** | **0.9873** | **97.2** | **+8.06** | **0** |
-| **Qwen Solver (run 2)** | **74.7%** | **0.9836** | **96.8** | **+5.26** | **0** |
-| **CC + Qwen Solvers (union)** | **81.2%** | **0.9905** | **98.3** | **+5.35** | **0** |
-| **All Symbolic Solvers (union)** | **84.7%** | **0.9920** | **98.6** | **+4.56** | **0** |
-| BoK-32 (gpt-oss-120b) | 68.4% | 0.9428 | 89.9 | +5.14 | 273,143 |
-| BoK + CC Solver (effi) | 79.4% | 0.9508 | 91.4 | +7.82 | 106,896 |
-| BoK + Qwen Solver (effi) | 80.7% | 0.9496 | 91.3 | +5.48 | 94,160 |
-| BoK + CC + Qwen Solver (effi) | 83.5% | 0.9531 | 91.9 | +5.48 | 72,003 |
-| **BoK + All Symbolic Solvers (effi)** | **85.8%** | **0.9570** | **92.7** | **+4.64** | **58,847** |
+| System | Pass% | Mean reward | Edit Sim | Complexity Δ | Total (M tok) | Cost ($) |
+|---|---:|---:|---:|---:|---:|---:|
+| **CC Solver** | **69.7%** | **0.9873** | **97.2** | **+8.06** | **0** | **0** |
+| **Qwen Solver (run 2)** | **74.7%** | **0.9836** | **96.8** | **+5.26** | **0** | **0** |
+| **CC + Qwen Solvers (union)** | **81.2%** | **0.9905** | **98.3** | **+5.35** | **0** | **0** |
+| **All Symbolic Solvers (union)** | **84.7%** | **0.9920** | **98.6** | **+4.56** | **0** | **0** |
+| BoK-32 (gpt-oss-120b) | 68.4% | 0.9428 | 89.9 | +5.14 | 332.1 | 57.83 |
+| BoK + CC Solver (effi) | 79.4% | 0.9508 | 91.4 | +7.82 | 130.0 | 23.08 |
+| BoK + Qwen Solver (effi) | 80.7% | 0.9496 | 91.3 | +5.48 | 114.5 | 20.41 |
+| BoK + CC + Qwen Solver (effi) | 83.5% | 0.9531 | 91.9 | +5.48 | 87.6 | 15.63 |
+| **BoK + All Symbolic Solvers (effi)** | **85.8%** | **0.9570** | **92.7** | **+4.64** | **71.6** | **12.78** |
 
 ### Symbolic solver breakdown by cascade length
 
@@ -249,14 +251,18 @@ All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no t
 
 ### Solver construction token cost
 
-| Demos | Run | Turns | KV-cache total | No-cache total | Final context |
-|-------|----:|------:|---------------:|---------------:|--------------:|
-| 100 examples + CoT | 1 | 76 | 191,331 | 4,377,628 | 109,681 |
-| 100 examples + CoT | 2 | 72 | 215,839 | 4,698,253 | 125,419 |
-| 100 examples + CoT | 3 | 80 | 264,495 | 6,050,386 | 151,423 |
-| 100 examples, no CoT | 1 | 102 | 227,002 | 7,670,723 | 135,686 |
-| 48 examples + CoT | 1 | 82 | 176,868 | 4,126,622 | 101,435 |
-| 12 examples + CoT | 1 | 49 | 106,526 | 1,638,817 | 63,418 |
+Token costs at AtlasCloud pricing for Qwen3.6-35B-A3B ($0.1612/M input, $0.9653/M output). APIs are stateless — no KV-cache reuse across turns; no-cache total is the realistic cost estimate.
+
+| Demos | Run | Turns | No-cache total | Cost ($) | KV-cache total | KV-cache cost ($) |
+|-------|----:|------:|---------------:|---------:|---------------:|------------------:|
+| 100 examples + CoT | 1 | 76 | 4,377,628 | 0.77 | 191,331 | 0.10 |
+| 100 examples + CoT | 2 | 72 | 4,698,253 | 0.83 | 215,839 | 0.11 |
+| 100 examples + CoT | 3 | 80 | 6,163,579 | 1.08 | 264,495 | 0.13 |
+| 100 examples, no CoT | 1 | 102 | 7,670,723 | 1.31 | 227,002 | 0.11 |
+| 48 examples + CoT | 1 | 82 | 4,126,622 | 0.73 | 176,868 | 0.09 |
+| 12 examples + CoT | 1 | 49 | 1,638,817 | 0.30 | 106,526 | 0.05 |
+| SLR, run 1 | 68 | — | 2,905,414 | 0.50 | 116,097 | 0.05 |
+| SLR, run 2 | 84 | — | 7,318,727 | 1.25 | 249,074 | 0.11 |
 
 ### Qualitative trajectory analysis
 
