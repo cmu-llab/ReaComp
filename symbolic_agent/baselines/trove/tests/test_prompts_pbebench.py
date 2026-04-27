@@ -23,6 +23,20 @@ def test_pbebench_create_prompt_models_replace_program_list_stdout():
     assert "**Tools**" in prompt
 
 
+def test_pbebench_create_prompt_uses_pbebench_specific_helpers():
+    prompt = build_create_prompt("Task", task_family="pbebench")
+
+    assert "def parse_replace_call" in prompt
+    assert "def score_programs" in prompt
+    assert "def find_replace_chain" not in prompt
+
+
+def test_pbebench_create_prompt_warns_against_duplicating_existing_tools():
+    prompt = build_create_prompt("Task", task_family="pbebench")
+
+    assert "already exists" in prompt or "duplicate" in prompt.lower()
+
+
 def test_pbebench_skip_prompt_models_replace_program_list_stdout():
     prompt = build_skip_prompt("Task", task_family="pbebench")
 

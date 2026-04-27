@@ -219,7 +219,12 @@ _CREATE_INSTRUCTION_PBEBENCH = (
     "In CREATE mode, you must define at least one reusable helper function "
     "inside a **Tools** code block. The **Solution** block should use or "
     "accompany that helper as appropriate, but the printed answer must remain "
-    "a Python list of replace() call strings."
+    "a Python list of replace() call strings.\n"
+    "Prefer general helpers that any PBEBench task could reuse (e.g. parsing a "
+    "replace() call string, applying a candidate program list to inputs, or "
+    "scoring a program list against input/output pairs). If a helper that "
+    "already exists in the toolbox would solve this question, reuse it via "
+    "IMPORT mode instead of defining a near-duplicate here."
 )
 
 _CREATE_EXAMPLE_DEFAULT = """\
@@ -262,11 +267,26 @@ print(programs)
 ```
 **Tools**
 ```python
-def find_replace_chain(s, pairs):
-    \"\"\"Apply a chain of (old, new) replacements to a string.\"\"\"
-    for old, new in pairs:
-        s = s.replace(old, new)
-    return s
+import ast
+
+def parse_replace_call(call_str):
+    \"\"\"Parse a 'replace(old, new)' string into an (old, new) tuple of literals.\"\"\"
+    expr = ast.parse(call_str.strip(), mode="eval").body
+    old = ast.literal_eval(expr.args[0])
+    new = ast.literal_eval(expr.args[1])
+    return old, new
+
+def score_programs(programs, examples):
+    \"\"\"Return the fraction of (input, output) examples that `programs` reproduces.\"\"\"
+    pairs = [parse_replace_call(p) for p in programs]
+    correct = 0
+    for inp, expected in examples:
+        s = inp
+        for old, new in pairs:
+            s = s.replace(old, new)
+        if s == expected:
+            correct += 1
+    return correct / len(examples) if examples else 0.0
 ```"""
 
 _CREATE_TASK_TEMPLATE = """\
