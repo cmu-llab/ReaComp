@@ -104,7 +104,12 @@ def compute(path: str, count, solver_rewards: dict | None = None) -> tuple[list[
         prompt = inp.get("prompt") or ""
         outputs = rec.get("outputs") or []
         cots = rec.get("chains_of_thought") or []
-        task_index = inp.get("index", i)
+        raw_index = inp.get("index", str(i))
+        # index is "<task_id>_<j>" — extract integer task_id
+        try:
+            task_index = int(str(raw_index).split("_")[0])
+        except (ValueError, IndexError):
+            task_index = i
 
         prompt_toks = count(prompt)
         K = len(outputs)

@@ -180,25 +180,39 @@ python scripts/ensemble_outputs.py --effi --symbolic $QWEN --sources $DF --out o
 python scripts/ensemble_outputs.py --effi --symbolic outputs/lite_union_solvers.jsonl --sources $DF --out outputs/lite_effi_df_all_solvers.jsonl
 ```
 
-**PBEBench-Hard** (BoK raw format; token costs from `metrics/bok_hard_tokens_cluster.json`):
+**PBEBench-Hard** (BoK raw format; per-task token costs computed from cluster file with CoT):
 ```bash
-# Convert raw BoK format to quick_eval-compatible JSONL (injects cluster token costs)
+# Step 1: compute per-task token counts from the cluster BoK file (needs chains_of_thought)
+# Run this on the cluster where the CoT file lives, then pull metrics/bok_hard_tokens_per_task.jsonl
+python scripts/compute_bok_tokens.py \
+    outputs/gpt_oss_120b_pbebench_hard_outputs_with_CoT.jsonl \
+    --tokenizer openai/gpt-oss-120b \
+    --out metrics/bok_hard_tokens_per_task.jsonl \
+    --metrics-json metrics/bok_hard_tokens_cluster.json
+
+# Step 2: convert raw BoK format to quick_eval-compatible JSONL with per-task token costs
+# --token-jsonl (preferred, per-task) takes precedence over --token-json (uniform avg fallback)
 python scripts/eval_bok_hard.py \
     --bok outputs/gpt_oss_120b_pbebench_hard_outputs.jsonl \
     --out-jsonl outputs/hard_bok_converted.jsonl \
+    --token-jsonl metrics/bok_hard_tokens_per_task.jsonl \
     --token-json metrics/bok_hard_tokens_cluster.json
 
-# Build union ensembles
+# Step 3: build effi ensembles (effi = solver at zero cost, BoK fallback only when solver fails)
 CC=evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl
 QWEN=evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/hard.jsonl
 BOK=outputs/hard_bok_converted.jsonl
 
 python scripts/ensemble_outputs.py --sources $CC $QWEN --out outputs/hard_union_cc_qwen_run2.jsonl
-python scripts/ensemble_outputs.py --sources $BOK $CC --out outputs/hard_union_bok_cc.jsonl
-python scripts/ensemble_outputs.py --sources $BOK $QWEN --out outputs/hard_union_bok_qwen_run2.jsonl
-python scripts/ensemble_outputs.py --sources $BOK $CC $QWEN --out outputs/hard_union_bok_cc_qwen_run2.jsonl
-python scripts/ensemble_outputs.py --sources $BOK $CC $QWEN outputs/hard_ensemble_all_solvers.jsonl \
-    --out outputs/hard_union_bok_all_solvers.jsonl
+python scripts/ensemble_outputs.py --effi --symbolic $CC --sources $BOK --out outputs/hard_effi_bok_cc.jsonl
+python scripts/ensemble_outputs.py --effi --symbolic $QWEN --sources $BOK --out outputs/hard_effi_bok_qwen_run2.jsonl
+python scripts/ensemble_outputs.py --effi --symbolic outputs/hard_union_cc_qwen_run2.jsonl --sources $BOK \
+    --out outputs/hard_effi_bok_cc_qwen_run2.jsonl
+# All solvers union = CC + all Qwen PBE runs
+python scripts/ensemble_outputs.py --sources $CC $QWEN \
+    evals/solver_results/qwen3.6_35b_a3b/*/hard.jsonl --out outputs/hard_union_all_solvers.jsonl
+python scripts/ensemble_outputs.py --effi --symbolic outputs/hard_union_all_solvers.jsonl --sources $BOK \
+    --out outputs/hard_effi_bok_all_solvers.jsonl
 ```
 
 **Quick eval on any output:**

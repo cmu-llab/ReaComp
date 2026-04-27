@@ -189,15 +189,44 @@ def compare_cl(systems: dict[str, dict[int, dict]]) -> None:
     print()
 
 
+def load_per_task_tokens(tok_jsonl: str) -> dict[int, dict]:
+    """Load per-task token counts from compute_bok_tokens.py --out output."""
+    per_task = {}
+    with open(tok_jsonl) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            tid = r.get("task_index")
+            if tid is not None:
+                per_task[int(tid)] = {
+                    "input":     r.get("input_tokens", 0),
+                    "output":    r.get("output_tokens", 0),
+                    "reasoning": r.get("reasoning_tokens", 0),
+                }
+    return per_task
+
+
 def convert_bok_to_jsonl(bok: dict[int, dict], out_path: str,
-                          tok_json: str | None = None) -> None:
+                          tok_json: str | None = None,
+                          tok_jsonl: str | None = None) -> None:
     """Write BoK results as quick_eval-compatible JSONL.
 
-    Token usage is loaded from tok_json (metrics/bok_hard_tokens_cluster.json) if
-    provided; otherwise set to zero (pass rate / reward still correct).
+    Per-task token usage is loaded from tok_jsonl (preferred, keyed by task_id)
+    or falls back to uniform averages from tok_json aggregate summary.
     """
+    per_task_tokens: dict[int, dict] = {}
     avg_tokens = {"input": 0, "output": 0, "reasoning": 0}
-    if tok_json:
+
+    if tok_jsonl:
+        try:
+            per_task_tokens = load_per_task_tokens(tok_jsonl)
+            print(f"Loaded per-task tokens for {len(per_task_tokens)} tasks from {tok_jsonl}")
+        except Exception as e:
+            print(f"Warning: could not load per-task token jsonl {tok_jsonl}: {e}")
+
+    if not per_task_tokens and tok_json:
         try:
             with open(tok_json) as f:
                 tj = json.load(f)
@@ -206,12 +235,14 @@ def convert_bok_to_jsonl(bok: dict[int, dict], out_path: str,
                 "output":    round(tj["output"]["avg"]),
                 "reasoning": round(tj["reasoning"]["avg"]),
             }
+            print(f"Using uniform avg tokens from {tok_json}: {avg_tokens}")
         except Exception as e:
             print(f"Warning: could not load token json {tok_json}: {e}")
 
     with open(out_path, "w") as f:
         for tid in sorted(bok.keys()):
             rec = bok[tid]
+            token_usage = per_task_tokens.get(tid, avg_tokens)
             f.write(json.dumps({
                 "task_index":    tid,
                 "solved":        rec["solved"],
@@ -219,7 +250,7 @@ def convert_bok_to_jsonl(bok: dict[int, dict], out_path: str,
                 "best_reward":   rec["best_score"],
                 "reward_history": [{"iteration": 0, "reward": rec["best_score"]}],
                 "cost_summary":  {"k": rec.get("n_candidates", 32)},
-                "token_usage":   avg_tokens,
+                "token_usage":   token_usage,
             }) + "\n")
     print(f"Wrote {len(bok)} records to {out_path}")
 
@@ -234,7 +265,9 @@ def main():
     parser.add_argument("--out-jsonl", default=None,
                         help="Write BoK results as quick_eval-compatible JSONL")
     parser.add_argument("--token-json", default="metrics/bok_hard_tokens_cluster.json",
-                        help="Path to bok_hard_tokens_cluster.json for per-task avg token counts")
+                        help="Path to bok_hard_tokens_cluster.json for uniform avg token counts (fallback)")
+    parser.add_argument("--token-jsonl", default=None,
+                        help="Path to per-task token JSONL from compute_bok_tokens.py --out (preferred over --token-json)")
     args = parser.parse_args()
 
     print(f"Loading BoK outputs: {args.bok}")
@@ -263,7 +296,7 @@ def main():
         compare_cl(systems)
 
     if args.out_jsonl:
-        convert_bok_to_jsonl(bok, args.out_jsonl, args.token_json)
+        convert_bok_to_jsonl(bok, args.out_jsonl, args.token_json, args.token_jsonl)
 
     if args.metrics_json:
         out = {}
