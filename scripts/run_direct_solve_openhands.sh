@@ -13,6 +13,7 @@ set -euo pipefail
 # ── Config ────────────────────────────────────────────────────────────────────
 DATASET=${DATASET:-data/pbebench/lite_tasks_full_og.jsonl}
 OUTPUT=${OUTPUT:-outputs/lite_direct_solve_openhands.jsonl}
+REWARD=${REWARD:-pbebench}
 
 PORT=${PORT:-8000}
 GPU_NODE=localhost

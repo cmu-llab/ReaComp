@@ -353,6 +353,7 @@ def run_direct_solve(args, records, reward_fn, sandbox, ckpt_path):
         api_key=args.api_key,
         max_steps=args.max_steps,
         max_tokens=args.max_tokens,
+        task_type=getattr(args, "task_type", "auto"),
     )
 
     ckpt = _load_checkpoint(ckpt_path)
@@ -374,22 +375,22 @@ def run_direct_solve(args, records, reward_fn, sandbox, ckpt_path):
 
     def _solve_one(i: int, rec: dict) -> None:
         task_id = rec.get("task_id", i)
-        result = controller.solve(rec, reward_fn)
+        result = controller.solve(rec, reward_fn, reward_name=args.default_reward)
         trajectory = result.pop("_trajectory", [])
         result["task_id"] = task_id
         result["task_index"] = rec.get("task_index", i)
-        result["dataset"] = rec.get("dataset", "PBEBench-Lite")
+        result["dataset"] = rec.get("dataset", "")
         result["cascade_length"] = rec.get("cascade_length")
         # token_usage is populated by the controller from llm.metrics
         writer.write(result)
         if args.debug_dir:
             _write_debug(args.debug_dir, task_id, {
                 "task_id": task_id,
-                "inputs": rec.get("inputs"),
-                "outputs": rec.get("outputs"),
+                "task_record": {k: v for k, v in rec.items() if k not in ("task_id", "task_index", "dataset")},
                 "answer": result.get("answer"),
                 "best_reward": result.get("best_reward"),
                 "steps_used": result.get("steps_used"),
+                "token_usage": result.get("token_usage"),
                 "trajectory": trajectory,
             })
         logger.info("[%d/%d] task_id=%s reward=%.3f steps=%d",
@@ -482,6 +483,8 @@ def main():
     # Framework-specific
     parser.add_argument("--rewards-dir", default="rewards",
                         help="direct_solve: path to rewards/ package directory (default: rewards/)")
+    parser.add_argument("--task-type", default="auto", choices=["auto", "pbe", "slr"],
+                        help="direct_solve: task type override (default: auto-infer from record)")
     parser.add_argument("--library-path", default="",
                         help="static_library: path to built_libraries/... directory containing LIBRARY.py and PROMPTING_GUIDE.md")
     parser.add_argument("--k", type=int, default=5, help="K per mode (trove) or K samples (best_of_k)")

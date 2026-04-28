@@ -1,14 +1,8 @@
 """
-DirectSolve controller — one OpenHands conversation per PBEBench task.
+DirectSolve controller — one OpenHands conversation per task.
 
-The agent receives:
-  - The task (inputs/outputs) as the user message
-  - execute_code: Python sandbox with rewards/pbebench.py importable
-  - submit_answer: submits the final list of replace(A,B) programs
-
-It can do anything it wants in up to max_steps steps: enumerate candidates,
-write search code, test partial programs, etc. The only constraint is the
-PBEBench DSL (replace sequences, max 5 programs for Lite).
+Supports both PBEBench (replace-program synthesis) and SLR-Bench (Prolog rule induction).
+Task type is inferred from the record fields or passed explicitly via task_type=.
 """
 
 import json
@@ -25,7 +19,11 @@ from .tools import DSExecuteCodeTool, DSSubmitAnswerTool
 logger = logging.getLogger(__name__)
 
 
-_SYSTEM_PROMPT = """\
+# ──────────────────────────────────────────────────────────────────────────────
+# System prompts
+# ──────────────────────────────────────────────────────────────────────────────
+
+_SYSTEM_PROMPT_PBE = """\
 You are an expert programmer solving Programming-by-Example (PBE) tasks.
 
 Each task gives you a set of (input, output) string pairs. Your goal is to find
@@ -53,7 +51,7 @@ You have two tools:
           where task_record = {"inputs": [...], "outputs": [...]}
 
       IMPORTANT: The sandbox only has rewards/pbebench.py available.
-      Do NOT try to read any files (no datasets, no DEMOS.json, no other paths exist).
+      Do NOT try to read any files — no datasets, no DEMOS.json, nothing else exists.
       All task information is in this message — use it directly in your code.
 
   submit_answer(programs)
@@ -63,22 +61,72 @@ You have two tools:
       before you run out of steps.
 
 Strategy tips:
-  - Start by examining what characters change between input and output.
+  - Examine what characters change between input and output.
   - Enumerate single-replace candidates that fix the most examples.
   - Greedily extend with additional replaces for remaining errors.
   - The reward function gives partial credit and feedback — use it iteratively.
   - Always submit something before your steps run out.
 
 Constraints:
-  - Do NOT attempt to read files or access the filesystem. No dataset files,
-    no DEMOS.json, no external paths exist in the sandbox. All task information
-    is provided directly in the user message.
+  - Do NOT attempt to read files or access the filesystem.
   - Only rewards/pbebench.py is available to import.
 """
 
+_SYSTEM_PROMPT_SLR = """\
+You are an expert at symbolic rule induction for SLR-Bench (Symbolic Logic Rules).
 
-def _build_task_message(record: dict) -> str:
-    """Format a task record as a user message for the agent."""
+Each task gives you a set of labelled train descriptions. Your goal is to find a
+Prolog rule that correctly classifies all trains as eastbound or westbound.
+
+Rule format:
+  eastbound(T) :- has_car(T, C), lit1, lit2, ...
+where each literal is a ground atom over predicates like car_len/2, car_color/2,
+car_shape/2, load_shape/2, load_num/2, has_load/2, closed/1.
+
+You have two tools:
+
+  execute_code(code)
+      Run any Python code in a sandbox. Use this to:
+        - Parse and analyse the train descriptions
+        - Test candidate rules using the reward function:
+              import sys; sys.path.insert(0, '/workspace')
+              from rewards.slr_bench import reward, parse_prompt_examples
+              examples = parse_prompt_examples(prompt_text)
+              result = reward("eastbound(T) :- has_car(T,C), car_len(C,short).", True, task_record)
+              print(result['value'], result.get('feedback',''))
+          where task_record = {"prompt": "...the full prompt text..."}
+        - Enumerate candidate predicates and conjunctions
+        - Implement systematic search over rule bodies
+
+      IMPORTANT: The sandbox only has rewards/slr_bench.py available.
+      Do NOT try to read any files — no datasets, no DEMOS.json, nothing else exists.
+      All task information is in this message — use it directly in your code.
+
+  submit_answer(programs)
+      Submit your final answer as a single-element list containing the Prolog rule string, e.g.:
+          ["eastbound(T) :- has_car(T, C), car_len(C, short)."]
+      You will receive the reward score immediately (1.0 = correct, 0.0 = wrong).
+      Submit as soon as you reach reward=1.0, or submit your best attempt
+      before you run out of steps.
+
+Strategy tips:
+  - Parse the prompt to extract eastbound/westbound train descriptions.
+  - Look for predicates that appear in all eastbound trains but no westbound trains.
+  - Start with single-literal rules, then try conjunctions of 2-3 literals.
+  - Use execute_code to systematically enumerate and score candidates.
+  - Always submit something before your steps run out.
+
+Constraints:
+  - Do NOT attempt to read files or access the filesystem.
+  - Only rewards/slr_bench.py is available to import.
+"""
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Task message formatters
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _build_task_message_pbe(record: dict) -> str:
     inputs = record.get("inputs", [])
     outputs = record.get("outputs", [])
     lines = ["Solve this PBE task. Find a sequence of replace(A,B) programs that transforms each input to its output.\n"]
@@ -90,21 +138,41 @@ def _build_task_message(record: dict) -> str:
     return "\n".join(lines)
 
 
+def _build_task_message_slr(record: dict) -> str:
+    prompt = record.get("prompt", "")
+    lines = [
+        "Solve this SLR-Bench task. Find a Prolog rule that classifies all trains correctly.\n",
+        "Task prompt:",
+        "---",
+        prompt,
+        "---",
+        "\nUse execute_code to test candidate rules, then submit_answer with your best rule as a single-element list.",
+    ]
+    return "\n".join(lines)
+
+
+def _infer_task_type(record: dict, reward_name: str) -> str:
+    """Infer 'pbe' or 'slr' from the record or reward name."""
+    if reward_name and "slr" in reward_name.lower():
+        return "slr"
+    if "prompt" in record and "inputs" not in record:
+        return "slr"
+    return "pbe"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Controller
+# ──────────────────────────────────────────────────────────────────────────────
+
 class DirectSolveController:
     """
-    Runs one OpenHands conversation per task to directly solve a PBEBench instance.
+    Runs one OpenHands conversation per task.
 
     Parameters
     ----------
-    base_url : str
-    model : str
-    sandbox : ApptainerSandbox
-    rewards_dir : str
-        Host path to the rewards/ package directory.
-    api_key : str
-    max_steps : int
-        Max agent steps per task conversation (default 100).
-    max_tokens : int
+    base_url, model, sandbox, rewards_dir, api_key, max_steps, max_tokens : as before
+    task_type : "pbe" | "slr" | "auto"
+        Controls system prompt and task message format. "auto" infers from the record.
     """
 
     def __init__(
@@ -116,6 +184,7 @@ class DirectSolveController:
         api_key: str = "EMPTY",
         max_steps: int = 100,
         max_tokens: int = 16384,
+        task_type: str = "auto",
     ):
         self.base_url = base_url
         self.model = model
@@ -124,8 +193,8 @@ class DirectSolveController:
         self.rewards_dir = os.path.abspath(rewards_dir)
         self.max_steps = max_steps
         self.max_tokens = max_tokens
+        self.task_type = task_type
 
-        # _llm is a template — we create a fresh instance per task so metrics are per-task
         self._llm_kwargs = dict(
             model=model,
             base_url=base_url,
@@ -133,25 +202,26 @@ class DirectSolveController:
             max_tokens=max_tokens,
         )
 
-        fd, self._system_prompt_file = tempfile.mkstemp(suffix=".j2", prefix="ds_system_prompt_")
-        with os.fdopen(fd, "w") as f:
-            f.write(_SYSTEM_PROMPT)
+        # Pre-build both system prompt temp files
+        self._system_prompt_files = {}
+        for ttype, prompt in [("pbe", _SYSTEM_PROMPT_PBE), ("slr", _SYSTEM_PROMPT_SLR)]:
+            fd, path = tempfile.mkstemp(suffix=".j2", prefix=f"ds_system_{ttype}_")
+            with os.fdopen(fd, "w") as f:
+                f.write(prompt)
+            self._system_prompt_files[ttype] = path
 
     def _extra_binds(self) -> list:
         return [(self.rewards_dir, "/workspace/rewards", "ro")]
 
-    def solve(self, record: dict, reward_fn) -> dict:
-        """
-        Run one agent conversation to solve a single task.
+    def solve(self, record: dict, reward_fn, reward_name: str = "") -> dict:
+        """Run one agent conversation to solve a single task."""
+        task_type = self.task_type
+        if task_type == "auto":
+            task_type = _infer_task_type(record, reward_name)
 
-        Returns
-        -------
-        dict with keys: solved, answer, best_reward, steps_used, _trajectory
-        """
         task_dir = tempfile.mkdtemp(prefix="oh_ds_task_")
         done_path = os.path.join(task_dir, "done.json")
 
-        # Fresh LLM instance per task so accumulated_token_usage is task-scoped
         llm = LLM(**self._llm_kwargs)
 
         tool_instances = [
@@ -163,7 +233,7 @@ class DirectSolveController:
             llm=llm,
             tools=[],
             include_default_tools=[],
-            system_prompt_filename=self._system_prompt_file,
+            system_prompt_filename=self._system_prompt_files[task_type],
         )
         agent.__pydantic_private__["_tools"] = {t.name: t for t in tool_instances}
         agent.__pydantic_private__["_initialized"] = True
@@ -174,7 +244,11 @@ class DirectSolveController:
             max_iteration_per_run=self.max_steps,
         )
 
-        user_message = _build_task_message(record)
+        if task_type == "slr":
+            user_message = _build_task_message_slr(record)
+        else:
+            user_message = _build_task_message_pbe(record)
+
         conversation.send_message(user_message)
 
         trajectory = []
@@ -188,7 +262,6 @@ class DirectSolveController:
             import traceback
             logger.warning("direct_solve conversation error: %s\n%s", exc, traceback.format_exc())
 
-        # Read submitted answer from done file
         answer = None
         reward_value = 0.0
         if os.path.exists(done_path):
