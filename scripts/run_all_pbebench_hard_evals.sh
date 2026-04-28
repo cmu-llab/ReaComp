@@ -31,9 +31,9 @@ for arg in "$@"; do
 done
 
 # --- Input files ---
-BOK=outputs/gpt_oss_120b_pbebench_hard_outputs.jsonl
+BOK=outputs/hard_bok_converted.jsonl
 CC=evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl
-QWEN=evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/hard.jsonl
+QWEN=evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/hard.jsonl
 TASKS=data/pbebench/tasks_full_og.jsonl
 OUT=outputs
 

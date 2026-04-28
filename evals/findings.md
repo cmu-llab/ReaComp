@@ -39,28 +39,31 @@ Even at 10⁹ program evaluations per second, exhausting the Lite space would ta
 ### Main results
 
 Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**. Not reported for † baselines (not re-run by us).  
-Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M output). Total tokens in millions across all 1008 tasks.
+Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M output). Qwen3.6-35B-A3B (OpenHands) at AtlasCloud pricing ($0.1612/M input, $0.9653/M output). Total tokens in millions across all 1008 tasks. § Symbolic solver rows show one-time build tokens/cost (zero per-task inference); effi cost includes inference + solver build. Qwen build costs exact (native tokenizer); CC build cost estimated (~$10 for PBE).
 
 | System | Pass% | Mean reward | Edit Sim | Complexity Δ | Total (M tok) | Cost ($) |
 |---|---:|---:|---:|---:|---:|---:|
+| *— LLM-only methods —* | | | | | | |
 | gpt-oss-120b, single attempt † | 62.5% | — | 69.9 | — | — | — |
 | GPT-5, single attempt † | 72.4% | — | 76.5 | — | — | — |
-| **CC Solver** | **80.4%** | **0.9438** | **93.7** | **+3.00** | **0** | **0** |
-| **Qwen Solver (best run)** | **65.7%** | **0.9022** | **87.4** | **+3.01** | **0** | **0** |
-| **CC + Qwen Solvers (union)** | **84.6%** | **0.9607** | **94.9** | **+2.16** | **0** | **0** |
-| **All Symbolic Solvers (union)** | **91.3%** | **0.9772** | **96.6** | **+1.88** | **0** | **0** |
 | DF-32 (gpt-oss-120b) | 92.4% | 0.9796 | 97.3 | +2.11 | 111.1 | 16.74 |
 | BoK-32 (gpt-oss-120b) | 93.8% | 0.9808 | 97.8 | +2.19 | 68.0 | 12.20 |
-| DF + Qwen Solver (effi) | 92.9% | 0.9810 | 97.5 | +2.89 | 90.2 | 13.50 |
-| DF + CC Solver (effi) | 93.1% | 0.9815 | 97.6 | +3.00 | 80.5 | 11.97 |
-| DF + All Symbolic (effi) | 93.2% | 0.9817 | 97.6 | +2.18 | 78.7 | 11.69 |
-| BoK + Qwen Solver (effi) | 93.8% | 0.9808 | 97.8 | +2.94 | 50.7 | 9.12 |
-| **BoK + CC Solver (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.94** | **45.6** | **8.22** |
-| **BoK + All Symbolic (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.19** | **43.5** | **7.83** |
-| DirectSolve (Qwen3.6, partial ‡) | 88.1%\* | 0.9602\* | 96.1\* | +1.48\* | 0.078\* | ~$77\* |
+| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 88.3%\* | 0.9587\* | 96.0\* | +1.54\* | 100.7\* | ~$80\* |
+| *— Coding-agent-induced symbolic solvers (build cost §) —* | | | | | | |
+| **CC Solver** | **80.4%** | **0.9438** | **93.7** | **+3.00** | **— §** | **~$10 §** |
+| **Qwen Solver (best run)** | **65.7%** | **0.9022** | **87.4** | **+3.01** | **4.82 §** | **$0.85 §** |
+| **CC + Qwen Solvers (union)** | **84.6%** | **0.9607** | **94.9** | **+2.16** | **— §** | **~$10.85 §** |
+| **All Symbolic Solvers (union)** | **91.3%** | **0.9772** | **96.6** | **+1.88** | **— §** | **~$15.11 §** |
+| *— Hybrid: symbolic solver + LLM fallback (effi, inference + build §) —* | | | | | | |
+| DF + Qwen Solver (effi) | 92.9% | 0.9810 | 97.5 | +2.89 | 90.2 | 14.35 |
+| DF + CC Solver (effi) | 93.1% | 0.9815 | 97.6 | +3.00 | 80.5 | 21.97 |
+| DF + All Symbolic (effi) | 93.2% | 0.9817 | 97.6 | +2.18 | 78.7 | 26.80 |
+| BoK + Qwen Solver (effi) | 93.8% | 0.9808 | 97.8 | +2.94 | 50.7 | 9.97 |
+| **BoK + CC Solver (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.94** | **45.6** | **18.22** |
+| **BoK + All Symbolic (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.19** | **43.5** | **22.94** |
 
 † Reported scores from PBEBench paper  
-‡ Partial run (226/1008 tasks, early tasks skew easy). Pass rate and cost will worsen as harder tasks are processed — CL=5 already at 66% in this partial. Complexity Δ+1.48 is notably tighter than symbolic solvers (+3.0) or BoK (+2.19). Avg 345K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$77 at current avg. (`figures/pbebench_lite_reported_metrics.png`); not re-run by us. Single attempt, Pass@1, 8192 CoT tokens — no test-time scaling. Edit Sim from the same paper figure.
+‡ Partial run (281/1008 tasks, early tasks skew easy). Pass rate and cost will worsen as harder tasks are processed — CL=5 already at 72.1% in this partial. Complexity Δ+1.54 is notably tighter than symbolic solvers (+3.0) or BoK (+2.19). Avg 358K tokens/task. Projected total ~$80 at current avg.
 
 > **Model note:** LLM baselines use **gpt-oss-120b** served via vLLM. Symbolic solvers are induced by a separate coding agent (CC by claude-sonnet-4-6; Qwen by Qwen3.6-35B-A3B inside OpenHands) — distinct from the inference LLM. Effi token savings reflect replacing gpt-oss-120b inference with zero-cost symbolic execution; solver build cost (under $1 one-time, see ablations) is negligible at any realistic eval scale.
 
@@ -94,7 +97,7 @@ CC solver collapses at CL=5 (50%) — at the 5-program limit there is little sla
 - Best pass rate + token efficiency: BoK + All Symbolic effi (93.9%, 43K avg tokens/task)
 - Best pass rate regardless of cost: BoK + CC Solver effi or BoK + All Symbolic effi (93.9%)
 
-**8. Solver construction cost is negligible when amortised.** The Qwen run 2 solver was built in a single OpenHands session costing ~216K tokens (KV-cache). Effi mode saves ~24K tokens/task over BoK standalone (67,480 → 43,113, −36%) — build cost recoups at 9 tasks and is <1% overhead across 1008 tasks. See ablations section for full token cost breakdown.
+**8. Solver construction cost is negligible when amortised.** The Qwen run 2 solver cost $0.85 to build (4.8M total tokens across 72 turns). Effi mode saves ~24K tokens/task over BoK standalone (67,480 → 43,113, −36%) — build cost recoups at 9 tasks and is <1% overhead across 1008 tasks. See ablations section for full token cost breakdown.
 
 ### Output files
 
@@ -130,19 +133,26 @@ Hard uses the global alphabet V=52 (uppercase, lowercase, digits) with cascades 
 ### Main results
 
 Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**.  
-Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M output; reasoning billed as output). Total tokens in millions across all 1216 tasks.
+Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M output; reasoning billed as output). Total tokens in millions across all 1216 tasks. § Symbolic solver rows show one-time build tokens/cost; effi cost includes inference + solver build. Qwen build costs exact; CC build cost estimated (~$10 for PBE).
 
 | System | Pass% | Mean reward | Edit Sim | Complexity Δ | Total (M tok) | Cost ($) |
 |---|---:|---:|---:|---:|---:|---:|
-| **CC Solver** | **69.7%** | **0.9873** | **97.2** | **+8.06** | **0** | **0** |
-| **Qwen Solver (run 2)** | **74.7%** | **0.9836** | **96.8** | **+5.26** | **0** | **0** |
-| **CC + Qwen Solvers (union)** | **81.2%** | **0.9905** | **98.3** | **+5.35** | **0** | **0** |
-| **All Symbolic Solvers (union)** | **84.7%** | **0.9920** | **98.6** | **+4.56** | **0** | **0** |
+| *— LLM-only methods —* | | | | | | |
 | BoK-32 (gpt-oss-120b) | 68.4% | 0.9428 | 89.9 | +5.14 | 332.1 | 57.83 |
-| BoK + CC Solver (effi) | 79.4% | 0.9508 | 91.4 | +7.82 | 130.0 | 23.08 |
-| BoK + Qwen Solver (effi) | 80.7% | 0.9496 | 91.3 | +5.48 | 114.5 | 20.41 |
-| BoK + CC + Qwen Solver (effi) | 83.5% | 0.9531 | 91.9 | +5.48 | 87.6 | 15.63 |
-| **BoK + All Symbolic Solvers (effi)** | **85.8%** | **0.9570** | **92.7** | **+4.64** | **71.6** | **12.78** |
+| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 20.0%\* | 0.6800\* | 60.9\* | +1.50\* | 17.9\* | ~$436\* |
+| *— Coding-agent-induced symbolic solvers (build cost §) —* | | | | | | |
+| **CC Solver** | **69.7%** | **0.9873** | **97.2** | **+8.06** | **— §** | **~$10 §** |
+| **Qwen Solver (run 2)** | **74.7%** | **0.9836** | **96.8** | **+5.26** | **4.82 §** | **$0.85 §** |
+| **CC + Qwen Solvers (union)** | **81.2%** | **0.9905** | **98.3** | **+5.35** | **— §** | **~$10.85 §** |
+| **All Symbolic Solvers (union)** | **84.7%** | **0.9920** | **98.6** | **+4.56** | **— §** | **~$15.11 §** |
+| *— Hybrid: symbolic solver + LLM fallback (effi, inference + build §) —* | | | | | | |
+| BoK + CC Solver (effi) | 79.4% | 0.9508 | 91.4 | +7.82 | 130.0 | 33.08 |
+| BoK + Qwen Solver (effi) | 80.7% | 0.9496 | 91.3 | +5.48 | 114.5 | 21.26 |
+| BoK + CC + Qwen Solver (effi) | 83.5% | 0.9531 | 91.9 | +5.48 | 87.6 | 26.48 |
+| **BoK + All Symbolic Solvers (effi)** | **85.8%** | **0.9570** | **92.7** | **+4.64** | **71.6** | **27.89** |
+
+† Reported scores from leaderboard  
+‡ Partial run (10/1216 tasks — extremely early, not representative). All 10 tasks are CL=20 (max difficulty); pass rate and cost will improve substantially as easier tasks are processed. Avg 1.79M tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$436 at current avg (will decrease significantly as easier tasks dominate).
 
 ### Symbolic solver breakdown by cascade length
 
@@ -255,7 +265,7 @@ All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no t
 
 **Question:** How does the composition of the demos file (number of examples, presence of LLM CoT reasoning traces) affect solver quality?
 
-**Setup:** Four Qwen solvers induced via OpenHands, varying demos only. All other settings identical (same building prompt, same verifier, same seed-42 balanced sampling across success/failure × easy/hard quadrants). Token costs measured with `scripts/compute_trajectory_tokens.py` using tiktoken (cl100k_base).
+**Setup:** Four Qwen solvers induced via OpenHands, varying demos only. All other settings identical (same building prompt, same verifier, same seed-42 balanced sampling across success/failure × easy/hard quadrants). Token costs measured with `scripts/compute_trajectory_tokens.py --tokenizer Qwen/Qwen3.6-35B-A3B` using the native tokenizer.
 
 ### Performance
 
@@ -270,18 +280,18 @@ All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no t
 
 ### Solver construction token cost
 
-Token costs at AtlasCloud pricing for **Qwen3.6-35B-A3B** ($0.1612/M input, $0.9653/M output). APIs are stateless — no KV-cache reuse across turns; no-cache total is the realistic cost estimate. Note: DirectSolve baselines also use Qwen3.6-35B-A3B but served on own cluster — no external API cost applies there; token counts are tracked for reference only.
+Token costs at AtlasCloud pricing for **Qwen3.6-35B-A3B** ($0.1612/M input, $0.9653/M output). Token counts use the native Qwen3.6-35B-A3B tokenizer (via `transformers.AutoTokenizer`); sb_finish retry bloat is excluded by the script. Each turn accumulates the full context as input (stateless API). Note: DirectSolve baselines also use Qwen3.6-35B-A3B but served on own cluster — no external API cost applies there; token counts are tracked for reference only.
 
-| Demos | Run | Turns | No-cache total | Cost ($) | KV-cache total | KV-cache cost ($) |
-|-------|----:|------:|---------------:|---------:|---------------:|------------------:|
-| 100 examples + CoT | 1 | 76 | 4,377,628 | 0.77 | 191,331 | 0.10 |
-| 100 examples + CoT | 2 | 72 | 4,698,253 | 0.83 | 215,839 | 0.11 |
-| 100 examples + CoT | 3 | 80 | 6,163,579 | 1.08 | 264,495 | 0.13 |
-| 100 examples, no CoT | 1 | 102 | 7,670,723 | 1.31 | 227,002 | 0.11 |
-| 48 examples + CoT | 1 | 82 | 4,126,622 | 0.73 | 176,868 | 0.09 |
-| 12 examples + CoT | 1 | 49 | 1,638,817 | 0.30 | 106,526 | 0.05 |
-| SLR, run 1 | 68 | — | 2,905,414 | 0.50 | 116,097 | 0.05 |
-| SLR, run 2 | 84 | — | 7,318,727 | 1.25 | 249,074 | 0.11 |
+| Demos | Run | Turns | Input tokens | Output tokens | Total tokens | Cost ($) |
+|-------|----:|------:|-------------:|--------------:|-------------:|---------:|
+| 100 examples + CoT | 1 | 76 | 4,379,412 | 82,982 | 4,462,394 | 0.79 |
+| 100 examples + CoT | 2 | 72 | 4,725,111 | 93,839 | 4,818,950 | 0.85 |
+| 100 examples + CoT | 3 | 80 | 6,122,331 | 114,529 | 6,236,860 | 1.10 |
+| 100 examples, no CoT | 1 | 102 | 7,721,064 | 93,617 | 7,814,681 | 1.34 |
+| 48 examples + CoT | 1 | 82 | 4,103,766 | 76,919 | 4,180,685 | 0.74 |
+| 12 examples + CoT | 1 | 49 | 1,607,936 | 43,796 | 1,651,732 | 0.30 |
+| SLR, run 1 | 68 | — | 2,888,522 | 42,666 | 2,931,188 | 0.51 |
+| SLR, run 2 | 84 | — | 7,404,083 | 90,826 | 7,494,909 | 1.28 |
 
 ### Qualitative trajectory analysis
 
@@ -344,7 +354,7 @@ Parses each facts string into a normalised car model (cars re-indexed as c1, c2,
 
 **4. No-CoT solver used more turns.** 102 turns vs 76 for the same 100-example CoT run, suggesting the agent spent more effort probing the dataset trying to infer patterns that the CoT would have made explicit.
 
-**5. KV caching saves ~98% of input tokens.** No-cache totals are 20–34× higher than KV-cache totals (e.g. 4.4M vs 191K). All construction cost figures in the paper use the KV-cache estimate as the realistic lower bound.
+**5. Solver construction is cheap relative to inference.** Run 2 (100ex+CoT) cost $0.85 total; the cheapest run (12ex+CoT) cost $0.30. Even the most expensive single run (100ex no-CoT, $1.34) is recouped within a handful of tasks saved by the solver.
 
 ### Solver ensemble results (symbolic-only, no LLM)
 
@@ -404,27 +414,30 @@ Each candidate requires a SWI-Prolog subprocess call (50–200 ms); brute force 
 
 Effi mode: solver used at zero cost when reward = 1.0; LLM tokens counted only for solver failures. Complexity Δ = mean predicted − mean GT (correct solutions only).
 
-Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.19/M output). Reported costs for o3/gpt-5 are from the SLR-Bench paper figure (total compute across 1000 instances). o3/gpt-5 Pass% derived from tier scores: (Basic+Easy+Medium+Hard)/4 with 250 tasks each. Total tokens in millions across all 1000 tasks.
+Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.19/M output). Reported costs for o3/gpt-5 are from the SLR-Bench paper figure (total compute across 1000 instances). o3/gpt-5 Pass% derived from tier scores: (Basic+Easy+Medium+Hard)/4 with 250 tasks each. Total tokens in millions across all 1000 tasks. § Symbolic solver rows show one-time build tokens/cost; effi cost includes inference + solver build. Qwen build costs exact; CC build cost estimated (~$24 for SLR).
 
 | System | Pass% | Basic | Easy | Medium | Hard | Total (M tok) | Cost ($) | Complexity Δ |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
+| *— LLM-only methods —* | | | | | | | | |
 | o3 † | 77.8% | 99 | 93 | 74 | 45 | 4.30 | 207.24 | — |
 | gpt-5 † | 77.0% | 100 | 90 | 72 | 46 | 16.40 | 103.13 | — |
-| **CC Solver** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **0** | **0** | **−0.756** |
-| **Qwen Solver (run 2)** | **60.7%** | **100** | **71.2** | **34.4** | **37.2** | **0** | **0** | **−1.087** |
 | BoK-32 (gpt-oss-120b) | 68.7% | 100 | 100 | 57.6 | 17.2 | 225.3 | 17.88 | −0.611 |
 | DF-32 (gpt-oss-120b) | 79.6% | 100 | 99.6 | 84.4 | 34.4 | 224.2 | 17.43 | −0.834 |
-| BoK + Qwen Solver (effi) | 75.9% | 100 | 100 | 62.8 | 40.8 | 162.8 | 13.21 | −1.063 |
-| BoK + CC Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 10.80 | −0.796 |
-| BoK + CC + Qwen Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 10.80 | −0.795 |
-| DF + Qwen Solver (effi) | 83.9% | 100 | 99.6 | 86.4 | 49.6 | 166.1 | 13.01 | −1.123 |
-| **DF + CC Solver (effi)** | **86.6%** | **100** | **99.6** | **88.8** | **58.0** | **138.8** | **10.90** | **−0.924** |
-| **DF + CC + Qwen Solver (effi)** | **86.7%** | **100** | **99.6** | **88.8** | **58.4** | **138.8** | **10.90** | **−0.924** |
-| DF + BoK + CC + Qwen Solver (effi) | **87.3%** | **100** | **100** | **89.6** | **59.6** | 271.3 | 21.71 | −0.943 |
-| DirectSolve (Qwen3.6, partial ‡) | 98.6%\* | 100\* | 95.3\* | —\* | —\* | 0.028\* | ~$8\* | −0.114\* |
+| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 97.7%\* | 100\* | 93.3\* | —\* | —\* | 16.2\* | ~$12\* | −0.099\* |
+| *— Coding-agent-induced symbolic solvers (build cost §) —* | | | | | | | | |
+| **CC Solver** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **— §** | **~$24 §** | **−0.756** |
+| **Qwen Solver (run 2)** | **60.7%** | **100** | **71.2** | **34.4** | **37.2** | **7.49 §** | **$1.28 §** | **−1.087** |
+| *— Hybrid: symbolic solver + LLM fallback (effi, inference + build §) —* | | | | | | | | |
+| BoK + Qwen Solver (effi) | 75.9% | 100 | 100 | 62.8 | 40.8 | 162.8 | 14.49 | −1.063 |
+| BoK + CC Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 34.80 | −0.796 |
+| BoK + CC + Qwen Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 36.08 | −0.795 |
+| DF + Qwen Solver (effi) | 83.9% | 100 | 99.6 | 86.4 | 49.6 | 166.1 | 14.29 | −1.123 |
+| **DF + CC Solver (effi)** | **86.6%** | **100** | **99.6** | **88.8** | **58.0** | **138.8** | **34.90** | **−0.924** |
+| **DF + CC + Qwen Solver (effi)** | **86.7%** | **100** | **99.6** | **88.8** | **58.4** | **138.8** | **36.18** | **−0.924** |
+| DF + BoK + CC + Qwen Solver (effi) | **87.3%** | **100** | **100** | **89.6** | **59.6** | 271.3 | 46.99 | −0.943 |
 
 † Reported scores from SLR-Bench paper  
-‡ Partial run (357/1000 tasks, basic+easy only — tasks 500–999 not yet processed). Pass rate will drop substantially for medium/hard. Complexity Δ−0.114 on solved tasks — very close to GT. Avg 27.6K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$8 at current avg — likely higher once medium/hard tasks are reached.; not re-run by us. Single attempt, no test-time scaling. Pass% = (Basic+Easy+Medium+Hard)/4 (250 tasks each).
+‡ Partial run (384/1000 tasks, basic+easy only — tasks 500–999 not yet processed). Pass rate will drop substantially for medium/hard. Complexity Δ−0.099 on solved tasks — very close to GT. Avg 42K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$12 at current avg — likely higher once medium/hard tasks are reached. Single attempt, no test-time scaling. Pass% = (Basic+Easy+Medium+Hard)/4 (250 tasks each).
 
 ### Symbolic solver breakdown by rule complexity
 

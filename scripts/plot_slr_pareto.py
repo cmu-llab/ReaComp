@@ -27,7 +27,7 @@ INPUT_PRICE  = 0.039 / 1e6   # gpt-oss-120b @ DeepInfra
 OUTPUT_PRICE = 0.19  / 1e6
 
 CC_SLR_BUILD   = 24.00   # estimated (see findings.md)
-QWEN_SLR_BUILD =  1.25   # measured from trajectory
+QWEN_SLR_BUILD =  1.28   # exact from trajectory (native Qwen3.6-35B-A3B tokenizer)
 
 
 def infer_cost(d):

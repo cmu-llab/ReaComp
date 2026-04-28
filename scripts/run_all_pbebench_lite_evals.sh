@@ -30,10 +30,10 @@ for arg in "$@"; do
 done
 
 # --- Input files ---
-DF=outputs/lite_tasks_full_og_direct_feedback.jsonl
-BOK=outputs/lite_tasks_full_og_best_of_k.jsonl
+DF=outputs/lite_tasks_full_og_direct_feedback_stripped.jsonl
+BOK=outputs/lite_tasks_full_og_best_of_k_stripped.jsonl
 CC=evals/solver_results/claude_code/Thu_Apr_23_807_PM/lite.jsonl
-QWEN=evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/lite.jsonl
+QWEN=evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/lite.jsonl
 TASKS=data/pbebench/lite_tasks_full_og.jsonl
 OUT=outputs
 

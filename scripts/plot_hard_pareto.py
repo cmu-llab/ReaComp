@@ -28,10 +28,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 INPUT_PRICE  = 0.039 / 1e6
 OUTPUT_PRICE = 0.19  / 1e6
 
-# Solver build costs (no-cache, tiktoken estimate)
+# Solver build costs (native Qwen3.6-35B-A3B tokenizer, AtlasCloud pricing)
 CC_BUILD        = 10.00   # Claude Code PBE session (estimated)
-QWEN_R2_BUILD   =  0.26   # Qwen run 2 (Sun_Apr_26_402, proxy from Sun_Apr_26_440)
-QWEN_ALL_BUILD  =  1.25   # All 6 Qwen runs combined
+QWEN_R2_BUILD   =  0.85   # Qwen run 2 (Sun_Apr_26_402, exact from trajectory)
+QWEN_ALL_BUILD  =  5.11   # All 6 Qwen runs combined (exact from trajectories)
 
 
 def infer_cost(path):
