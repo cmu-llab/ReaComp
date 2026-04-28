@@ -52,6 +52,10 @@ You have two tools:
               print(result['value'], result['feedback'])
           where task_record = {"inputs": [...], "outputs": [...]}
 
+      IMPORTANT: The sandbox only has rewards/pbebench.py available.
+      Do NOT try to read any files (no datasets, no DEMOS.json, no other paths exist).
+      All task information is in this message — use it directly in your code.
+
   submit_answer(programs)
       Submit your final answer as a list of replace(A,B) strings.
       You will receive the reward score immediately.
@@ -64,6 +68,12 @@ Strategy tips:
   - Greedily extend with additional replaces for remaining errors.
   - The reward function gives partial credit and feedback — use it iteratively.
   - Always submit something before your steps run out.
+
+Constraints:
+  - Do NOT attempt to read files or access the filesystem. No dataset files,
+    no DEMOS.json, no external paths exist in the sandbox. All task information
+    is provided directly in the user message.
+  - Only rewards/pbebench.py is available to import.
 """
 
 
