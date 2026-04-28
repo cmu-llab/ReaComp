@@ -380,7 +380,7 @@ def run_direct_solve(args, records, reward_fn, sandbox, ckpt_path):
         result["task_index"] = rec.get("task_index", i)
         result["dataset"] = rec.get("dataset", "PBEBench-Lite")
         result["cascade_length"] = rec.get("cascade_length")
-        result["token_usage"] = {"input": 0, "output": 0, "reasoning": 0}
+        # token_usage is populated by the controller from llm.metrics
         writer.write(result)
         if args.debug_dir:
             _write_debug(args.debug_dir, task_id, {

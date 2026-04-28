@@ -115,7 +115,8 @@ class DirectSolveController:
         self.max_steps = max_steps
         self.max_tokens = max_tokens
 
-        self._llm = LLM(
+        # _llm is a template — we create a fresh instance per task so metrics are per-task
+        self._llm_kwargs = dict(
             model=model,
             base_url=base_url,
             api_key=SecretStr(api_key),
@@ -140,13 +141,16 @@ class DirectSolveController:
         task_dir = tempfile.mkdtemp(prefix="oh_ds_task_")
         done_path = os.path.join(task_dir, "done.json")
 
+        # Fresh LLM instance per task so accumulated_token_usage is task-scoped
+        llm = LLM(**self._llm_kwargs)
+
         tool_instances = [
             *DSExecuteCodeTool.create(self.sandbox, self._extra_binds()),
             *DSSubmitAnswerTool.create(record, done_path, reward_fn),
         ]
 
         agent = Agent(
-            llm=self._llm,
+            llm=llm,
             tools=[],
             include_default_tools=[],
             system_prompt_filename=self._system_prompt_file,
@@ -187,10 +191,18 @@ class DirectSolveController:
 
         steps_used = len([e for e in trajectory if e.get("kind") == "ActionEvent"])
 
+        usage = llm.metrics.accumulated_token_usage
+        token_usage = {
+            "input":     usage.prompt_tokens,
+            "output":    usage.completion_tokens,
+            "reasoning": usage.reasoning_tokens,
+        }
+
         return {
             "solved": reward_value >= 1.0,
             "answer": answer,
             "best_reward": reward_value,
             "steps_used": steps_used,
+            "token_usage": token_usage,
             "_trajectory": trajectory,
         }
