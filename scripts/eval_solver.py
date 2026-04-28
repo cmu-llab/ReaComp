@@ -105,7 +105,13 @@ def _solve_in_child(solver_path, cfg, rec, queue):
         else:
             examples = list(zip(rec["inputs"], rec["outputs"]))
             sig_params = set(inspect.signature(solve_fn).parameters)
-            kwargs = {"max_programs": cfg["max_programs"]}
+            # Dynamic per-task max_programs via ratio: max(2, ceil(n_examples / ratio))
+            max_programs = cfg["max_programs"]
+            ratio = cfg.get("max_programs_ratio")
+            if ratio is not None:
+                import math
+                max_programs = max(2, math.ceil(len(examples) / ratio))
+            kwargs = {"max_programs": max_programs}
             if "max_pred_len" in sig_params:
                 kwargs["max_pred_len"] = cfg["max_pred_len"]
             if "max_transform_len" in sig_params:
@@ -169,7 +175,10 @@ def evaluate(dataset_key, solver_path, output_dir=None, limit=None, workers=1, t
         os.makedirs(output_dir, exist_ok=True)
         # For real-data runs, embed max_programs in filename to avoid collisions
         # across the three cascade-length settings (20/50/100).
-        if dataset_key == "real" and cfg.get("max_programs"):
+        if cfg.get("max_programs_ratio") is not None:
+            ratio_str = str(cfg["max_programs_ratio"]).replace(".", "p")
+            stem = f"{dataset_key}_ratio{ratio_str}"
+        elif dataset_key == "real" and cfg.get("max_programs"):
             stem = f"real_k{cfg['max_programs']}"
         else:
             stem = dataset_key
@@ -312,6 +321,14 @@ def main():
         help="Override max cascade length for PBE datasets (default: dataset-specific)",
     )
     parser.add_argument(
+        "--max-programs-ratio", type=float, default=None,
+        help=(
+            "Dynamic per-task max_programs = max(2, ceil(n_examples / ratio)). "
+            "E.g. --max-programs-ratio 3 → 4 examples → 2 programs, 12 examples → 4. "
+            "Overrides --max-programs when set. Only applies to PBE datasets."
+        ),
+    )
+    parser.add_argument(
         "--limit", type=int, default=None,
         help="Evaluate only the first N tasks (default: all)",
     )
@@ -342,13 +359,16 @@ def main():
         cfg = DATASETS[key].copy()
         if args.max_programs is not None and cfg.get("kind") == "pbe":
             cfg["max_programs"] = args.max_programs
+        if args.max_programs_ratio is not None and cfg.get("kind") == "pbe":
+            cfg["max_programs_ratio"] = args.max_programs_ratio
         print(f"\n{'='*60}")
         print(f"Solver  : {solver_path}")
         print(f"Dataset : {cfg['label']}")
         print(f"File    : {cfg['path']}")
         if cfg["kind"] == "pbe":
+            mp_str = f"ratio=1/{cfg['max_programs_ratio']:.1f}×n_ex" if cfg.get("max_programs_ratio") else str(cfg['max_programs'])
             print(
-                f"Limits  : max_programs={cfg['max_programs']}  "
+                f"Limits  : max_programs={mp_str}  "
                 f"max_pred_len={cfg['max_pred_len']}  "
                 f"max_transform_len={cfg['max_transform_len']}"
             )
