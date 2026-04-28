@@ -90,11 +90,15 @@ You have two tools:
         - Parse and analyse the train descriptions
         - Test candidate rules using the reward function:
               import sys; sys.path.insert(0, '/workspace')
-              from rewards.slr_bench import reward, parse_prompt_examples
-              examples = parse_prompt_examples(prompt_text)
+              from rewards.slr_bench import reward
+              task_record = {
+                  "prompt": PROMPT_TEXT,
+                  "validation program": VALIDATION_PROGRAM,
+              }
               result = reward("eastbound(T) :- has_car(T,C), car_len(C,short).", True, task_record)
-              print(result['value'], result.get('feedback',''))
-          where task_record = {"prompt": "...the full prompt text..."}
+              print(result['value'], result.get('message',''))
+          IMPORTANT: task_record MUST include BOTH "prompt" and "validation program" keys,
+          otherwise the reward will always return 0.0. Both are provided in this message.
         - Enumerate candidate predicates and conjunctions
         - Implement systematic search over rule bodies
 
@@ -140,11 +144,16 @@ def _build_task_message_pbe(record: dict) -> str:
 
 def _build_task_message_slr(record: dict) -> str:
     prompt = record.get("prompt", "")
+    validation_program = record.get("validation program", "")
     lines = [
         "Solve this SLR-Bench task. Find a Prolog rule that classifies all trains correctly.\n",
         "Task prompt:",
         "---",
         prompt,
+        "---",
+        "\nValidation program (include this as the \"validation program\" key in task_record when calling reward):",
+        "---",
+        validation_program,
         "---",
         "\nUse execute_code to test candidate rules, then submit_answer with your best rule as a single-element list.",
     ]
