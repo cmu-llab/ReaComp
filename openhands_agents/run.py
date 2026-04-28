@@ -354,6 +354,7 @@ def run_direct_solve(args, records, reward_fn, sandbox, ckpt_path):
         max_steps=args.max_steps,
         max_tokens=args.max_tokens,
         task_type=getattr(args, "task_type", "auto"),
+        max_programs=getattr(args, "max_programs", None) or 5,
     )
 
     ckpt = _load_checkpoint(ckpt_path)
@@ -485,6 +486,8 @@ def main():
                         help="direct_solve: path to rewards/ package directory (default: rewards/)")
     parser.add_argument("--task-type", default="auto", choices=["auto", "pbe", "slr"],
                         help="direct_solve: task type override (default: auto-infer from record)")
+    parser.add_argument("--max-programs", type=int, default=None,
+                        help="direct_solve/pbe: max programs passed to reward fn (default: 5 for Lite, use 20 for Hard)")
     parser.add_argument("--library-path", default="",
                         help="static_library: path to built_libraries/... directory containing LIBRARY.py and PROMPTING_GUIDE.md")
     parser.add_argument("--k", type=int, default=5, help="K per mode (trove) or K samples (best_of_k)")
@@ -534,6 +537,9 @@ def main():
     logger.info("Loaded %d records from %s", len(records), args.dataset_path)
 
     reward_fn = _load_reward(args.default_reward)
+    if getattr(args, "max_programs", None) is not None:
+        import functools
+        reward_fn = functools.partial(reward_fn, max_programs=args.max_programs)
 
     from .sandbox import ApptainerSandbox
     sandbox = ApptainerSandbox(sif_path=args.sif_path, timeout=args.sandbox_timeout)

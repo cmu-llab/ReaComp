@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 # System prompts
 # ──────────────────────────────────────────────────────────────────────────────
 
-_SYSTEM_PROMPT_PBE = """\
+def _make_system_prompt_pbe(max_programs: int = 5) -> str:
+    return f"""\
 You are an expert programmer solving Programming-by-Example (PBE) tasks.
 
 Each task gives you a set of (input, output) string pairs. Your goal is to find
@@ -33,7 +34,7 @@ its paired output.
 DSL constraints:
   - Each program has the form: replace('A', 'B')
   - 1 <= len(A) <= 3 characters,  0 <= len(B) <= 3 characters
-  - At most 5 programs in sequence (PBEBench-Lite)
+  - At most {max_programs} programs in sequence
   - Programs are applied left-to-right: output = prog1(prog2(...(progN(input))))
   - Only str.replace() semantics — no regex, no imports
 
@@ -48,7 +49,7 @@ You have two tools:
               from rewards.pbebench import reward
               result = reward(["replace('x','y')"], True, task_record)
               print(result['value'], result['feedback'])
-          where task_record = {"inputs": [...], "outputs": [...]}
+          where task_record = {{"inputs": [...], "outputs": [...]}}
 
       IMPORTANT: The sandbox only has rewards/pbebench.py available.
       Do NOT try to read any files — no datasets, no DEMOS.json, nothing else exists.
@@ -194,6 +195,7 @@ class DirectSolveController:
         max_steps: int = 100,
         max_tokens: int = 16384,
         task_type: str = "auto",
+        max_programs: int = 5,
     ):
         self.base_url = base_url
         self.model = model
@@ -213,7 +215,7 @@ class DirectSolveController:
 
         # Pre-build both system prompt temp files
         self._system_prompt_files = {}
-        for ttype, prompt in [("pbe", _SYSTEM_PROMPT_PBE), ("slr", _SYSTEM_PROMPT_SLR)]:
+        for ttype, prompt in [("pbe", _make_system_prompt_pbe(max_programs)), ("slr", _SYSTEM_PROMPT_SLR)]:
             fd, path = tempfile.mkstemp(suffix=".j2", prefix=f"ds_system_{ttype}_")
             with os.fdopen(fd, "w") as f:
                 f.write(prompt)
