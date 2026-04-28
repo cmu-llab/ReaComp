@@ -14,8 +14,9 @@ set -euo pipefail
 DATASET=data/pbebench/lite_tasks_full_og.jsonl
 OUTPUT=outputs/lite_direct_solve_openhands.jsonl
 
+PORT=${PORT:-8000}
 GPU_NODE=localhost
-BASE_URL=http://${GPU_NODE}:8000/v1
+BASE_URL=http://${GPU_NODE}:${PORT}/v1
 MODEL=openai/Qwen/Qwen3-Coder-30B-A3B-Instruct
 
 SIF_PATH=/scratch/$USER/sif_images/sandbox.sif
@@ -23,7 +24,7 @@ REWARDS_DIR=$(pwd)/rewards
 
 MAX_STEPS=100
 MAX_TOKENS=16384
-WORKERS=1        # tasks run sequentially by default; increase for parallel (one sandbox per worker)
+WORKERS=8        # parallel conversations; each gets its own sandbox subprocess — safe to increase
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Pass through any extra args (e.g. --workers 4)
