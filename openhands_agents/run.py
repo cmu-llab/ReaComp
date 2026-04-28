@@ -342,6 +342,73 @@ def run_static_library(args, records, reward_fn, sandbox, ckpt_path):
                     logger.error("Task %s failed: %s", rec.get("task_id", i), exc)
 
 
+def run_direct_solve(args, records, reward_fn, sandbox, ckpt_path):
+    from .direct_solve.controller import DirectSolveController
+
+    controller = DirectSolveController(
+        base_url=args.base_url,
+        model=args.model,
+        sandbox=sandbox,
+        rewards_dir=args.rewards_dir,
+        api_key=args.api_key,
+        max_steps=args.max_steps,
+        max_tokens=args.max_tokens,
+    )
+
+    ckpt = _load_checkpoint(ckpt_path)
+    completed_ids: set = set(ckpt.get("completed_ids", []))
+
+    writer = _OutputWriter(
+        args.output_path, ckpt_path,
+        controller_fn=lambda: {},
+    )
+    writer._completed_ids = completed_ids
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_path)), exist_ok=True)
+
+    pending = [
+        (i, rec) for i, rec in enumerate(records)
+        if not (args.skip_existing and rec.get("task_id", i) in completed_ids)
+    ]
+    total = len(records)
+
+    def _solve_one(i: int, rec: dict) -> None:
+        task_id = rec.get("task_id", i)
+        result = controller.solve(rec, reward_fn)
+        trajectory = result.pop("_trajectory", [])
+        result["task_id"] = task_id
+        result["task_index"] = rec.get("task_index", i)
+        result["dataset"] = rec.get("dataset", "PBEBench-Lite")
+        result["cascade_length"] = rec.get("cascade_length")
+        result["token_usage"] = {"input": 0, "output": 0, "reasoning": 0}
+        writer.write(result)
+        if args.debug_dir:
+            _write_debug(args.debug_dir, task_id, {
+                "task_id": task_id,
+                "inputs": rec.get("inputs"),
+                "outputs": rec.get("outputs"),
+                "answer": result.get("answer"),
+                "best_reward": result.get("best_reward"),
+                "steps_used": result.get("steps_used"),
+                "trajectory": trajectory,
+            })
+        logger.info("[%d/%d] task_id=%s reward=%.3f steps=%d",
+                    i + 1, total, task_id, result["best_reward"], result.get("steps_used", 0))
+
+    workers = max(1, args.workers)
+    if workers == 1:
+        for i, rec in pending:
+            _solve_one(i, rec)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_solve_one, i, rec): (i, rec) for i, rec in pending}
+            for fut in as_completed(futures):
+                exc = fut.exception()
+                if exc:
+                    i, rec = futures[fut]
+                    logger.error("Task %s failed: %s", rec.get("task_id", i), exc)
+
+
 def run_best_of_k(args, records, reward_fn, sandbox, ckpt_path):
     from .best_of_k.controller import BestOfKController
 
@@ -393,7 +460,7 @@ def run_best_of_k(args, records, reward_fn, sandbox, ckpt_path):
 
 def main():
     parser = argparse.ArgumentParser(description="openhands_agents — sandboxed baselines")
-    parser.add_argument("--framework", required=True, choices=["react_library", "trove", "best_of_k", "static_library"])
+    parser.add_argument("--framework", required=True, choices=["react_library", "trove", "best_of_k", "static_library", "direct_solve"])
     parser.add_argument("--dataset-path", required=True)
     parser.add_argument("--output-path", required=True)
     parser.add_argument("--default-reward", required=True, help="Reward module name (e.g. reasoning_gym)")
@@ -413,6 +480,8 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.8)
 
     # Framework-specific
+    parser.add_argument("--rewards-dir", default="rewards",
+                        help="direct_solve: path to rewards/ package directory (default: rewards/)")
     parser.add_argument("--library-path", default="",
                         help="static_library: path to built_libraries/... directory containing LIBRARY.py and PROMPTING_GUIDE.md")
     parser.add_argument("--k", type=int, default=5, help="K per mode (trove) or K samples (best_of_k)")
@@ -474,6 +543,7 @@ def main():
         "react_library": run_react_library,
         "best_of_k": run_best_of_k,
         "static_library": run_static_library,
+        "direct_solve": run_direct_solve,
     }
     dispatch[args.framework](args, records, reward_fn, sandbox, ckpt_path)
     logger.info("Done. Results → %s", args.output_path)
