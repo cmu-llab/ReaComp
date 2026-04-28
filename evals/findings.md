@@ -57,7 +57,7 @@ Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M outpu
 | BoK + Qwen Solver (effi) | 93.8% | 0.9808 | 97.8 | +2.94 | 50.7 | 9.12 |
 | **BoK + CC Solver (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.94** | **45.6** | **8.22** |
 | **BoK + All Symbolic (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.19** | **43.5** | **7.83** |
-| DirectSolve (Qwen3.6, partial ‡) | 88.1%\* | 0.9602\* | 1.000\* | +1.48\* | 0.078\* | ~$77\* |
+| DirectSolve (Qwen3.6, partial ‡) | 88.1%\* | 0.9602\* | 96.1\* | +1.48\* | 0.078\* | ~$77\* |
 
 † Reported scores from PBEBench paper  
 ‡ Partial run (226/1008 tasks, early tasks skew easy). Pass rate and cost will worsen as harder tasks are processed — CL=5 already at 66% in this partial. Complexity Δ+1.48 is notably tighter than symbolic solvers (+3.0) or BoK (+2.19). Avg 345K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$77 at current avg. (`figures/pbebench_lite_reported_metrics.png`); not re-run by us. Single attempt, Pass@1, 8192 CoT tokens — no test-time scaling. Edit Sim from the same paper figure.
