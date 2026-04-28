@@ -513,6 +513,51 @@ Both solvers operate on Python `str.replace()` and `difflib.SequenceMatcher`, wh
 
 **7. Sparse examples are the main bottleneck.** Median 4 examples per task (vs PBEBench's 5+ by design) gives less signal to identify the correct rule. On tasks with ≥10 examples, both CC and Qwen run 2 are expected to perform substantially better — the fail cases are dominated by ambiguous 1–2-example tasks where multiple distinct rules are consistent with the evidence.
 
+### Compression sweep (Qwen run 2)
+
+To diagnose how much of the 70% pass rate reflects genuine rule discovery vs. per-example patching, we swept `max_programs = max(2, ceil(n_examples / ratio))` over Qwen run 2 on the full Real-FR dataset (`scripts/sweep_real_fr_compression.sh`).
+
+| Setting | Pass% | Avg programs/task |
+|---|---:|---:|
+| Baseline (k=100, unconstrained) | 69.9% | 26.35 |
+| ratio=1.0 (programs ≤ n_examples) | 43.8% | 10.47 |
+| ratio=2.0 (programs ≤ n_examples/2) | 31.9% | 6.49 |
+| ratio=3.0 (programs ≤ n_examples/3) | 30.5% | 4.82 |
+| ratio=5.0 (programs ≤ n_examples/5) | **29.6%** | **3.62** |
+
+The pass rate plateaus around **~30%** for ratio ≥ 2. This is the "genuinely compact-rule" floor — tasks where a short program exists that explains all training examples with high compression. The remaining ~40pp (from 30% to 70%) is tasks where the solver constructs a longer cascade that patches each training example individually rather than capturing a shared underlying rule.
+
+**Key observations from the most aggressive ratio (ratio=5.0, 910 solved tasks):** Inspecting solved tasks qualitatively reveals a clear split by example count:
+
+- **Multi-example tasks (≥3 examples) with 1–2 programs almost always produce linguistically real sound laws.** Examples:
+  - `replace('#b', '#f')` (Proto-Austronesian→Amis): word-initial /b/→/f/ lenition at word boundary. Classic and well-attested.
+  - `replace('ʔ#', 'h#')` + `replace('wi', 'i')` (→Bahasa Indonesia): word-final glottal → /h/ and /wi/→/i/ glide deletion. Both documented Indonesian changes.
+  - `replace('#ʔ', '#h')` + `replace('aw#', 'au#')` (→Banjarese): word-initial /ʔ/→/h/ and diphthong shift. Classic Banjarese.
+  - `replace('ʔ', '')` (→Bidayuh): glottal stop deletion — extremely common cross-linguistically.
+  - `replace('da', 'ra')` + `replace('uʔ', 'oʔ')` (→Atayal Squliq): /d/→/r/ and vowel lowering before glottal. Both real Atayal changes.
+
+- **Single-example tasks remain garbage regardless of ratio.** With 1 example, `ceil(1/5) = 1` program can still encode a coincidental word-level substitution (e.g. `replace('de', 'si')` + `replace('msi', 'mdi')` for `ma-demdem → ma-simdim`). No compression ratio can fix a task with one data point.
+
+### DSL expressivity vs. linguistic validity
+
+The `replace(A,B)` DSL is strictly more expressive than real sound laws. A genuine sound law maps one phoneme (or phoneme class in an environment) to another: /b/→/f/, /ʔ/→∅, /u/→/o/ before glottal. The DSL allows arbitrary string substitutions with no phonological structure: `replace('m', 'ja')` would require a consonant to simultaneously become a vowel sequence, which has no known phonological parallel. Similarly, `replace('msi', 'mdi')` encodes a trigram-specific transformation that cannot correspond to any single rule because it conflates the identity of /m/ with the mutation of the following consonant.
+
+The reward function (training pass rate) cannot distinguish these cases — both score 1.0. This has two consequences:
+1. **False positives on sparse tasks:** With ≤2 examples, almost any short program achieves 1.0 by coincidence.
+2. **Complexity inflation on rich tasks:** With many examples the solver can always improve its score by adding more programs, so the unconstrained solver uses 26 programs on average — far more than any real sound change history.
+
+### Reward function limitations and what would help
+
+The current training-pass-rate reward is appropriate for PBEBench (synthetically generated, compact ground truth exists) but misaligned for Real-FR:
+
+1. **Held-out evaluation:** Split examples into train/test per task. A program that generalises to unseen words in the same language pair is far more likely to capture a real sound law. With median 4 examples this is difficult, but even a 3/1 split would filter many single-word patches.
+
+2. **Explicit complexity penalty:** Penalise program count relative to the number of changed examples, e.g. reward = pass\_rate − λ × (n\_programs / n\_changed\_examples). This directly discourages lookup-table cascades.
+
+3. **Phonological validity filter:** Reject programs whose pattern A or replacement B spans more than one phoneme boundary in a linguistically defined way (e.g. require A and B to each correspond to at most one IPA segment or environment marker). This is domain-specific but would rule out `replace('msi', 'mdi')` style artefacts.
+
+4. **Minimum example threshold:** Exclude tasks with fewer than 3–5 examples from evaluation entirely, or weight them down. The 1-example tasks are almost entirely noise regardless of method.
+
 ### Output files
 
 | File | Description |

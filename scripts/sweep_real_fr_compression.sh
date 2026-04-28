@@ -21,6 +21,7 @@ SOLVER=built_solvers/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_10
 BASE_OUTPUT_DIR=evals/solver_results/real_fr/qwen_run2_compression_sweep
 WORKERS=${1:-8}
 EXTRA_ARGS=("${@:2}")
+set +u  # allow empty EXTRA_ARGS expansion
 
 echo "Solver : $SOLVER"
 echo "Output : $BASE_OUTPUT_DIR"
