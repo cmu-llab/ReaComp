@@ -11,8 +11,8 @@
 set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DATASET=data/pbebench/lite_tasks_full_og.jsonl
-OUTPUT=outputs/lite_direct_solve_openhands.jsonl
+DATASET=${DATASET:-data/pbebench/lite_tasks_full_og.jsonl}
+OUTPUT=${OUTPUT:-outputs/lite_direct_solve_openhands.jsonl}
 
 PORT=${PORT:-8000}
 GPU_NODE=localhost
@@ -34,7 +34,7 @@ python -m openhands_agents.run \
     --framework direct_solve \
     --dataset-path "$DATASET" \
     --output-path "$OUTPUT" \
-    --default-reward pbebench \
+    --default-reward "$REWARD" \
     --sif-path "$SIF_PATH" \
     --rewards-dir "$REWARDS_DIR" \
     --base-url "$BASE_URL" \
