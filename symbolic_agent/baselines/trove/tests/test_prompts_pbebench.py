@@ -23,12 +23,18 @@ def test_pbebench_create_prompt_models_replace_program_list_stdout():
     assert "**Tools**" in prompt
 
 
-def test_pbebench_create_prompt_uses_pbebench_specific_helpers():
+def test_pbebench_create_prompt_suggests_pbebench_helper_signatures():
     prompt = build_create_prompt("Task", task_family="pbebench")
 
-    assert "def parse_replace_call" in prompt
-    assert "def score_programs" in prompt
+    assert "Reusable helper signatures" in prompt
+    assert "def apply_programs(s, programs): ..." in prompt
+    assert "def score_programs(programs, examples): ..." in prompt
+    assert "def search_candidate_programs(examples, max_programs=5): ..." in prompt
+    assert "def debug_program_failure(programs, examples): ..." in prompt
     assert "def find_replace_chain" not in prompt
+    assert "import ast" not in prompt
+    assert "ast.parse" not in prompt
+    assert "return correct / len(examples)" not in prompt
 
 
 def test_pbebench_create_prompt_warns_against_duplicating_existing_tools():

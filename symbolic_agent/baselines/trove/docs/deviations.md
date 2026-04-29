@@ -30,8 +30,10 @@ self-consistency selector remains available via `--trove-selection consistency`.
 ### 1.3 PBEBench-shaped few-shot examples
 For `task_family="pbebench"` we replace the generic CREATE / SKIP / IMPORT
 example pairs with PBEBench-shaped pairs that demonstrate `replace()`
-chains and a small reusable helper (`find_replace_chain`). The legacy
-default examples remain for `task_family="default"`.
+chains. CREATE mode also shows signature-only examples of reusable helper
+shapes (apply, score, search, prune, debug, end-to-end solve) instead of
+full function definitions, to reduce anchoring on a single copied helper.
+The legacy default examples remain for `task_family="default"`.
 
 ### 1.4 Strict **Solution** parsing for PBEBench
 The legacy parser falls back to "first ```python``` block anywhere" when

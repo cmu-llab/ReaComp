@@ -224,7 +224,10 @@ _CREATE_INSTRUCTION_PBEBENCH = (
     "replace() call string, applying a candidate program list to inputs, or "
     "scoring a program list against input/output pairs). If a helper that "
     "already exists in the toolbox would solve this question, reuse it via "
-    "IMPORT mode instead of defining a near-duplicate here."
+    "IMPORT mode instead of defining a near-duplicate here.\n"
+    "The helper signatures below are examples of useful tool shapes, not "
+    "definitions to copy. If you create a helper, implement the complete "
+    "function body in **Tools**."
 )
 
 _CREATE_EXAMPLE_DEFAULT = """\
@@ -255,6 +258,18 @@ def apply_substitutions(strings, substitutions):
 ```"""
 
 _CREATE_EXAMPLE_PBEBENCH = """\
+## Reusable helper signatures
+These are example shapes for reusable PBEBench tools. Do not copy `...` stubs
+as real tools; implement complete helpers when you decide to create one.
+```python
+def apply_programs(s, programs): ...
+def score_programs(programs, examples): ...
+def search_candidate_programs(examples, max_programs=5): ...
+def prune_search_state(partial_programs, examples): ...
+def debug_program_failure(programs, examples): ...
+def solve_examples(examples, max_programs=5): ...
+```
+
 ## Example
 **Question**
 Produce a sequence of replace() calls that transforms "hello world" into
@@ -265,29 +280,7 @@ Produce a sequence of replace() calls that transforms "hello world" into
 programs = ["replace(' ', '_')", "replace('h', 'H')", "replace('e', 'E')", "replace('l', 'L')", "replace('o', 'O')", "replace('w', 'W')", "replace('r', 'R')", "replace('d', 'D')"]
 print(programs)
 ```
-**Tools**
-```python
-import ast
-
-def parse_replace_call(call_str):
-    \"\"\"Parse a 'replace(old, new)' string into an (old, new) tuple of literals.\"\"\"
-    expr = ast.parse(call_str.strip(), mode="eval").body
-    old = ast.literal_eval(expr.args[0])
-    new = ast.literal_eval(expr.args[1])
-    return old, new
-
-def score_programs(programs, examples):
-    \"\"\"Return the fraction of (input, output) examples that `programs` reproduces.\"\"\"
-    pairs = [parse_replace_call(p) for p in programs]
-    correct = 0
-    for inp, expected in examples:
-        s = inp
-        for old, new in pairs:
-            s = s.replace(old, new)
-        if s == expected:
-            correct += 1
-    return correct / len(examples) if examples else 0.0
-```"""
+"""
 
 _CREATE_TASK_TEMPLATE = """\
 ## Task
