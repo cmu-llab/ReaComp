@@ -540,6 +540,13 @@ def main():
     records = _load_dataset(args.dataset_path)
     logger.info("Loaded %d records from %s", len(records), args.dataset_path)
 
+    # Stamp global task_id/task_index before slicing so shards use correct IDs.
+    for global_i, rec in enumerate(records):
+        if "task_id" not in rec:
+            rec["task_id"] = global_i
+        if "task_index" not in rec:
+            rec["task_index"] = global_i
+
     if args.start_index is not None or args.end_index is not None:
         start = args.start_index or 0
         end = args.end_index if args.end_index is not None else len(records)
