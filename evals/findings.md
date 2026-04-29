@@ -48,7 +48,7 @@ Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M outpu
 | GPT-5, single attempt † | 72.4% | — | 76.5 | — | — | — |
 | DF-32 (gpt-oss-120b) | 92.4% | 0.9796 | 97.3 | +2.11 | 111.1 | 16.74 |
 | BoK-32 (gpt-oss-120b) | 93.8% | 0.9808 | 97.8 | +2.19 | 68.0 | 12.20 |
-| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 87.0%\* | 0.9529\* | 95.1\* | +1.47\* | 149.3\* | ~$84\* |
+| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 87.9%\* | 0.9564\* | 95.1\* | +1.41\* | 319.4\* | ~$80\* |
 | *— Coding-agent-induced symbolic solvers (build cost §) —* | | | | | | |
 | **CC Solver** | **80.4%** | **0.9438** | **93.7** | **+3.00** | **— §** | **~$10 §** |
 | **Qwen Solver (best run)** | **65.7%** | **0.9022** | **87.4** | **+3.01** | **4.82 §** | **$0.85 §** |
@@ -63,7 +63,7 @@ Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M outpu
 | **BoK + All Symbolic (effi)** | **93.9%** | **0.9810** | **97.8** | **+2.19** | **43.5** | **22.94** |
 
 † Reported scores from PBEBench paper  
-‡ Partial run (391/1008 tasks, early tasks skew easy). Pass rate and cost will worsen as harder tasks are processed — CL=5 already at 68.1% in this partial. Complexity Δ+1.47 is notably tighter than symbolic solvers (+3.0) or BoK (+2.19). Avg 382K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$84 at current avg.
+‡ Partial run (881/1008 tasks, early tasks skew easy). Pass rate and cost will worsen as harder tasks are processed — CL=5 already at 66.7% in this partial. Complexity Δ+1.41 is notably tighter than symbolic solvers (+3.0) or BoK (+2.19). Avg 362K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$80 at current avg.
 
 > **Model note:** LLM baselines use **gpt-oss-120b** served via vLLM. Symbolic solvers are induced by a separate coding agent (CC by claude-sonnet-4-6; Qwen by Qwen3.6-35B-A3B inside OpenHands) — distinct from the inference LLM. Effi token savings reflect replacing gpt-oss-120b inference with zero-cost symbolic execution; solver build cost (under $1 one-time, see ablations) is negligible at any realistic eval scale.
 
@@ -139,7 +139,7 @@ Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M outpu
 |---|---:|---:|---:|---:|---:|---:|
 | *— LLM-only methods —* | | | | | | |
 | BoK-32 (gpt-oss-120b) | 68.4% | 0.9428 | 89.9 | +5.14 | 332.1 | 57.83 |
-| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 4.2%\* | 0.6104\* | 49.6\* | +1.50\* | 85.7\* | ~$435\* |
+| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 7.0%\* | 0.6550\* | 54.6\* | +5.71\* | 306.3\* | ~$380\* |
 | *— Coding-agent-induced symbolic solvers (build cost §) —* | | | | | | |
 | **CC Solver** | **69.7%** | **0.9873** | **97.2** | **+8.06** | **— §** | **~$10 §** |
 | **Qwen Solver (run 2)** | **74.7%** | **0.9836** | **96.8** | **+5.26** | **4.82 §** | **$0.85 §** |
@@ -152,7 +152,7 @@ Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M outpu
 | **BoK + All Symbolic Solvers (effi)** | **85.8%** | **0.9570** | **92.7** | **+4.64** | **71.6** | **27.89** |
 
 † Reported scores from leaderboard  
-‡ Partial run (48/1216 tasks — still early, all CL=20 max difficulty); pass rate and cost will improve substantially as easier tasks are processed. Avg 1.79M tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$435 at current avg (will decrease significantly as easier tasks dominate).
+‡ Partial run (199/1216 tasks — CL 17–20 only); pass rate and cost will improve substantially as easier tasks are processed. Avg 1.54M tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$380 at current avg (will decrease significantly as easier tasks dominate).
 
 ### Symbolic solver breakdown by cascade length
 
@@ -423,7 +423,7 @@ Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.
 | gpt-5 † | 77.0% | 100 | 90 | 72 | 46 | 16.40 | 103.13 | — |
 | BoK-32 (gpt-oss-120b) | 68.7% | 100 | 100 | 57.6 | 17.2 | 225.3 | 17.88 | −0.611 |
 | DF-32 (gpt-oss-120b) | 79.6% | 100 | 99.6 | 84.4 | 34.4 | 224.2 | 17.43 | −0.834 |
-| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 96.3%\* | 100\* | 91.4\* | —\* | —\* | 33.2\* | ~$8.65\* | −0.069\* |
+| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 87.7%\* | 100\* | 86.0\* | 57.0\* | —\* | 158.2\* | ~$37\* | −0.175\* |
 | *— Coding-agent-induced symbolic solvers (build cost §) —* | | | | | | | | |
 | **CC Solver** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **— §** | **~$24 §** | **−0.756** |
 | **Qwen Solver (run 2)** | **60.7%** | **100** | **71.2** | **34.4** | **37.2** | **7.49 §** | **$1.28 §** | **−1.087** |
@@ -437,7 +437,7 @@ Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.
 | DF + BoK + CC + Qwen Solver (effi) | **87.3%** | **100** | **100** | **89.6** | **59.6** | 271.3 | 46.99 | −0.943 |
 
 † Reported scores from SLR-Bench paper  
-‡ Partial run (436/1000 tasks, basic+easy only — medium+hard not yet processed). Pass rate will drop substantially for medium/hard. Complexity Δ−0.069 on solved tasks — very close to GT. Avg 76K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total will increase once medium/hard tasks are reached. Single attempt, no test-time scaling. Pass% = (Basic+Easy+Medium+Hard)/4 (250 tasks each).
+‡ Partial run (586/1000 tasks, basic+easy+partial medium — hard not yet processed). Pass rate will drop further for hard tasks. Complexity Δ−0.175 on solved tasks — slightly simpler than GT. Avg 270K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total will increase once hard tasks are reached. Single attempt, no test-time scaling. Pass% = (Basic+Easy+Medium+Hard)/4 (250 tasks each).
 
 ### Symbolic solver breakdown by rule complexity
 

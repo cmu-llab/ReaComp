@@ -507,6 +507,10 @@ def main():
                         help="Directory for per-task debug JSON files (prompt, answer, reward, trajectory)")
 
     # Run control
+    parser.add_argument("--start-index", type=int, default=None,
+                        help="First record index to process (inclusive, 0-based). Use with --end-index to shard.")
+    parser.add_argument("--end-index", type=int, default=None,
+                        help="Last record index to process (exclusive). Omit to run to end of dataset.")
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--checkpoint-path", default="",
                         help="Override checkpoint path (default: <output>.ckpt.json)")
@@ -535,6 +539,12 @@ def main():
 
     records = _load_dataset(args.dataset_path)
     logger.info("Loaded %d records from %s", len(records), args.dataset_path)
+
+    if args.start_index is not None or args.end_index is not None:
+        start = args.start_index or 0
+        end = args.end_index if args.end_index is not None else len(records)
+        records = records[start:end]
+        logger.info("Sliced to indices [%d, %d) → %d records", start, end, len(records))
 
     reward_fn = _load_reward(args.default_reward)
     if getattr(args, "max_programs", None) is not None:

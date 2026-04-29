@@ -8,11 +8,28 @@
 # Usage (from project root):
 #   bash scripts/run_direct_solve_openhands.sh
 #   bash scripts/run_direct_solve_openhands.sh --workers 4
+#
+# Sharding (run two jobs in parallel on separate index ranges):
+#   START_INDEX=0   END_INDEX=504  bash scripts/run_direct_solve_openhands.sh
+#   START_INDEX=504 END_INDEX=1008 bash scripts/run_direct_solve_openhands.sh
+#   Then merge: python scripts/merge_direct_solve_shards.py outputs/lite_direct_solve_openhands_0_504.jsonl outputs/lite_direct_solve_openhands_504_1008.jsonl --output outputs/lite_direct_solve_openhands.jsonl
 set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DATASET=${DATASET:-data/pbebench/lite_tasks_full_og.jsonl}
-OUTPUT=${OUTPUT:-outputs/lite_direct_solve_openhands.jsonl}
+START_INDEX=${START_INDEX:-}
+END_INDEX=${END_INDEX:-}
+
+# Auto-suffix output filename with shard indices if set
+BASE_OUTPUT=${OUTPUT:-outputs/lite_direct_solve_openhands.jsonl}
+if [ -n "$START_INDEX" ] && [ -n "$END_INDEX" ]; then
+    EXT="${BASE_OUTPUT##*.}"
+    BASE="${BASE_OUTPUT%.*}"
+    OUTPUT="${BASE}_${START_INDEX}_${END_INDEX}.${EXT}"
+else
+    OUTPUT="$BASE_OUTPUT"
+fi
+
 REWARD=${REWARD:-pbebench}
 
 PORT=${PORT:-8000}
@@ -31,6 +48,11 @@ WORKERS=${WORKERS:-8} # parallel conversations; each gets its own sandbox subpro
 # Pass through any extra args (e.g. --workers 4)
 EXTRA_ARGS=("$@")
 
+# Build optional shard flags
+SHARD_ARGS=()
+[ -n "$START_INDEX" ] && SHARD_ARGS+=(--start-index "$START_INDEX")
+[ -n "$END_INDEX" ]   && SHARD_ARGS+=(--end-index   "$END_INDEX")
+
 python -m openhands_agents.run \
     --framework direct_solve \
     --dataset-path "$DATASET" \
@@ -44,4 +66,5 @@ python -m openhands_agents.run \
     --max-steps "$MAX_STEPS" \
     --workers "$WORKERS" \
     --skip-existing \
+    "${SHARD_ARGS[@]}" \
     "${EXTRA_ARGS[@]}"
