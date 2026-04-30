@@ -152,6 +152,7 @@ class DirectFeedbackController:
                     resp = self._client.chat.completions.create(
                         model=self.model,
                         max_tokens=self.max_tokens,
+                        temperature=1.0,
                         messages=[{"role": "user", "content": user_message}],
                     )
                     msg = resp.choices[0].message
