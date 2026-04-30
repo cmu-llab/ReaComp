@@ -49,7 +49,7 @@ class BestOfKController:
         debug_dir: Optional[str] = None,
         k: int = 5,
         max_tokens: int = 4096,
-        temperature: float = 0.8,
+        temperature: float = 1.0,
     ):
         self.model = model
         self.k = k
@@ -89,10 +89,7 @@ class BestOfKController:
         Harmony segment splitting ("Expected 2 output messages, got N").
         Returns raw response text (empty string on failure).
         """
-        kwargs: Dict = {"max_tokens": self.max_tokens}
-        # Only pass temperature for non-gpt-oss backends (gpt-oss rejects it)
-        if self._backend != "gpt_oss":
-            kwargs["temperature"] = self.temperature
+        kwargs: Dict = {"max_tokens": self.max_tokens, "temperature": self.temperature}
 
         for attempt in range(3):
             try:
