@@ -30,7 +30,7 @@ OUTPUT_PRICE = 0.19  / 1e6
 ATLAS_INPUT_PRICE  = 0.1612 / 1e6
 ATLAS_OUTPUT_PRICE = 0.9653 / 1e6
 
-CC_SLR_BUILD   = 24.00   # estimated (see findings.md)
+CC_SLR_BUILD   =  4.01   # exact (tracked run)
 QWEN_SLR_BUILD =  1.28   # exact from trajectory (native Qwen3.6-35B-A3B tokenizer)
 
 DS_SLR_PATH = REPO_ROOT / "outputs" / "slr_bench_direct_solve_openhands.jsonl"

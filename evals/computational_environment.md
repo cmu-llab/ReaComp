@@ -72,7 +72,7 @@ Ensemble outputs are computed deterministically from individual outputs; no addi
 | DF-32 (gpt-oss-120b) | gpt-oss-120b | 1000 | 224.2 | $17.43 | Complete. |
 | BoK-32 (gpt-oss-120b) | gpt-oss-120b | 1000 | 225.3 | $17.88 | Complete. |
 | QO Agent / DirectSolve | Qwen3.6-35B-A3B | 1000 | ~573 proj. | ~$124 proj. | 708/1000 done at $88 actual; avg 575K tokens/task → ~$124 projected. avg 8.9 steps/task |
-| CC Solver (build) | claude-sonnet-4-6 (CC CLI) | 1 session | — | ~$24 est. | One-time; interactive session ~30 min, no trajectory log |
+| CC Solver (build) | claude-sonnet-4-6 (CC CLI) | 1 session | — | $4.01 | One-time; interactive session ~30 min, exact cost from tracked run |
 | QO Solver run 1 (build) | Qwen3.6-35B-A3B | 1 session | 2.93 | $0.51 | 68 turns, 25 min |
 | QO Solver run 2 (build) | Qwen3.6-35B-A3B | 1 session | 7.49 | $1.28 | 84 turns, 47 min |
 
@@ -85,8 +85,8 @@ Ensemble outputs are computed deterministically from individual outputs; no addi
 | gpt-oss-120b inference (Lite DF + BoK, Hard BoK, SLR DF + BoK) | ~$122 |
 | Qwen3.6-35B-A3B — QO Agent / DirectSolve (Lite + Hard\* + SLR\*, partial) | ~$353 |
 | Qwen3.6-35B-A3B — QO Solver induction (6 PBE + 2 SLR runs) | ~$7 |
-| claude-sonnet-4-6 — CC Solver induction (1 PBE + 1 SLR session) | ~$34 (est.) |
-| **Total reported experiments** | **~$516** |
+| claude-sonnet-4-6 — CC Solver induction (1 PBE + 1 SLR session) | ~$14 (~$10 est. PBE + $4.01 SLR) |
+| **Total reported experiments** | **~$496** |
 
 All costs are reference figures using public API pricing. Actual compute was run on an internal cluster (2 × A100 80 GB) at no direct monetary cost.
 

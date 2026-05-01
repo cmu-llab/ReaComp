@@ -59,7 +59,7 @@ Note: temperature=1.0 is used for both BoK and DF, as recommended by the gpt-oss
 - **Tokenizer:** native `Qwen/Qwen3.6-35B-A3B` via `transformers.AutoTokenizer` (NOT tiktoken cl100k_base)
 - **Script:** `scripts/compute_trajectory_tokens.py --tokenizer Qwen/Qwen3.6-35B-A3B` (sb_finish retry bloat excluded)
 - **Pricing:** AtlasCloud $0.1612/M input, $0.9653/M output (Qwen runs); DeepInfra $0.039/M input, $0.19/M output (gpt-oss-120b, reasoning billed as output)
-- **CC build cost:** estimated ~$10 (PBE) / ~$24 (SLR) — no trajectory log from the interactive Claude Code session
+- **CC build cost:** ~$10 est. (PBE) / $4.01 exact (SLR, from tracked run)
 
 ### Random seeds
 
@@ -470,7 +470,7 @@ Each candidate requires a SWI-Prolog subprocess call (50–200 ms); brute force 
 
 Effi mode: solver used at zero cost when reward = 1.0; LLM tokens counted only for solver failures. Complexity Δ = mean predicted − mean GT (correct solutions only).
 
-Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.19/M output). Reported costs for o3/gpt-5 are from the SLR-Bench paper figure (total compute across 1000 instances). o3/gpt-5 Acc% derived from tier scores: (Basic+Easy+Medium+Hard)/4 with 250 tasks each. Total tokens in millions across all 1000 tasks. § Symbolic solver rows show one-time build tokens/cost; effi cost includes inference + solver build. Qwen build costs exact; CC build cost estimated (~$24 for SLR).
+Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.19/M output). Reported costs for o3/gpt-5 are from the SLR-Bench paper figure (total compute across 1000 instances). o3/gpt-5 Acc% derived from tier scores: (Basic+Easy+Medium+Hard)/4 with 250 tasks each. Total tokens in millions across all 1000 tasks. § Symbolic solver rows show one-time build tokens/cost; effi cost includes inference + solver build. Qwen build costs exact; CC build cost exact ($4.01 for SLR, from tracked run).
 
 | System | Acc% | Basic | Easy | Medium | Hard | Total (M tok) | Cost ($) | Complexity Δ |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -481,16 +481,16 @@ Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.
 | DF-32 (gpt-oss-120b) | 79.6% | 100 | 99.6 | 84.4 | 34.4 | 224.2 | 17.43 | −0.834 |
 | Qwen3.6-35B-A3B (OpenHands, partial ‡) | 59.9%\* | 100\* | 86.0\* | 39.4\* | 14.3\* | 406.8\* | ~$88\* | −0.172\* |
 | *— Coding-agent-induced symbolic solvers (build cost §) —* | | | | | | | | |
-| **CC Solver** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **— §** | **~$24 §** | **−0.756** |
+| **CC Solver** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **— §** | **$4.01 §** | **−0.756** |
 | **Qwen Solver (run 2)** | **60.7%** | **100** | **71.2** | **34.4** | **37.2** | **7.49 §** | **$1.28 §** | **−1.087** |
 | *— Hybrid: symbolic solver + LLM fallback (effi, inference + build §) —* | | | | | | | | |
 | BoK + Qwen Solver (effi) | 75.9% | 100 | 100 | 62.8 | 40.8 | 162.8 | 14.49 | −1.063 |
-| BoK + CC Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 34.80 | −0.796 |
-| BoK + CC + Qwen Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 36.08 | −0.795 |
+| BoK + CC Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 14.81 | −0.796 |
+| BoK + CC + Qwen Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 16.09 | −0.795 |
 | DF + Qwen Solver (effi) | 83.9% | 100 | 99.6 | 86.4 | 49.6 | 166.1 | 14.29 | −1.123 |
-| **DF + CC Solver (effi)** | **86.6%** | **100** | **99.6** | **88.8** | **58.0** | **138.8** | **34.90** | **−0.924** |
-| **DF + CC + Qwen Solver (effi)** | **86.7%** | **100** | **99.6** | **88.8** | **58.4** | **138.8** | **36.18** | **−0.924** |
-| DF + BoK + CC + Qwen Solver (effi) | **87.3%** | **100** | **100** | **89.6** | **59.6** | 271.3 | 46.99 | −0.943 |
+| **DF + CC Solver (effi)** | **86.6%** | **100** | **99.6** | **88.8** | **58.0** | **138.8** | **14.91** | **−0.924** |
+| **DF + CC + Qwen Solver (effi)** | **86.7%** | **100** | **99.6** | **88.8** | **58.4** | **138.8** | **16.19** | **−0.924** |
+| DF + BoK + CC + Qwen Solver (effi) | **87.3%** | **100** | **100** | **89.6** | **59.6** | 271.3 | 27.00 | −0.943 |
 
 † Reported scores from SLR-Bench paper  
 ‡ Partial run (708/1000 tasks — basic 250/250, easy 250/250, medium 180/250, hard 28/250). Accuracy will change as remaining medium/hard tasks complete. Complexity Δ−0.172 on solved tasks — slightly simpler than GT. Avg 575K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$124 at current avg. Single attempt, no test-time scaling. Acc% = (Basic+Easy+Medium+Hard)/4 (250 tasks each).
