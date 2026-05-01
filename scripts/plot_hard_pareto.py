@@ -34,7 +34,7 @@ ATLAS_INPUT_PRICE  = 0.1612 / 1e6
 ATLAS_OUTPUT_PRICE = 0.9653 / 1e6
 
 # Solver build costs (native Qwen3.6-35B-A3B tokenizer, AtlasCloud pricing)
-CC_BUILD        = 10.00   # Claude Code PBE session (estimated)
+CC_BUILD        =  2.00   # Claude Code PBE session (exact from tracked run)
 QWEN_R2_BUILD   =  0.85   # Qwen run 2 (Sun_Apr_26_402, exact from trajectory)
 QWEN_ALL_BUILD  =  5.11   # All 6 Qwen runs combined (exact from trajectories)
 
