@@ -56,7 +56,7 @@ Two strategies in `scripts/ensemble_outputs.py`:
 | Script | Purpose |
 |--------|---------|
 | `scripts/eval_solver.py` | Evaluate `SOLVER.py` on PBEBench or SLR-Bench; writes standard JSONL |
-| `scripts/quick_eval.py` | Pass rate, mean reward, token usage, complexity for any JSONL output |
+| `scripts/quick_eval.py` | Accuracy, mean reward, token usage, complexity for any JSONL output |
 | `scripts/ensemble_outputs.py` | Build standard or effi ensemble from multiple sources |
 | `scripts/run_all_pbebench_lite_evals.sh` | Full PBEBench-Lite pipeline: ensembles + eval + plots |
 | `scripts/run_all_pbebench_hard_evals.sh` | Full PBEBench-Hard pipeline: ensembles + eval + plots |
@@ -70,13 +70,13 @@ Comparison figures (4-way: DF, BoK, CC Solver, OH Qwen Solver) live in `figures/
 
 | Figure | Description |
 |--------|-------------|
-| `pbebench_lite_comparison_passrate.png` | Pass rate vs cascade length (Lite) |
+| `pbebench_lite_comparison_passrate.png` | Accuracy vs cascade length (Lite) |
 | `pbebench_lite_comparison_meanreward.png` | Mean reward vs cascade length (Lite) |
 | `pbebench_lite_comparison_complexity.png` | Cascade complexity vs cascade length (Lite) |
-| `pbebench_hard_comparison_passrate.png` | Pass rate vs cascade length (Hard) |
+| `pbebench_hard_comparison_passrate.png` | Accuracy vs cascade length (Hard) |
 | `pbebench_hard_comparison_meanreward.png` | Mean reward vs cascade length (Hard) |
 | `pbebench_hard_comparison_complexity.png` | Cascade complexity vs cascade length (Hard) |
-| `slr_comparison_passrate.png` | Pass rate vs curriculum tier (SLR) |
+| `slr_comparison_passrate.png` | Accuracy vs curriculum tier (SLR) |
 | `slr_comparison_meanreward.png` | Mean reward vs curriculum tier (SLR) |
 | `slr_comparison_complexity.png` | Rule complexity vs curriculum tier (SLR) |
 | `slr_comparison_level_*.png` | Same three metrics vs curriculum level 1–20 (SLR) |

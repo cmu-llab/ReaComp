@@ -1,5 +1,6 @@
 """
-4-way comparison plots for SLR-Bench: DF, BoK, CC solver, OH Qwen solver.
+5-way comparison plots for SLR-Bench: DF, BoK, CC solver, OH Qwen solver,
+Qwen3.6-35B-A3B (OpenHands) [DirectSolve coding-agent baseline].
 No ensembles — individual systems only, for readability.
 
 Produces 6 figures in the style of figures/solver_cascade_meanreward_with_bok.png:
@@ -36,21 +37,23 @@ from rewards.slr_bench import _extract_rule, rule_complexity
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 
-DATASET       = REPO_ROOT / "data/slr_bench/v1_All_full.jsonl"
-CLAUDE_SOLVER = REPO_ROOT / "evals/solver_results/slr_claude_code/slr.jsonl"
-QWEN_SOLVER   = REPO_ROOT / "evals/solver_results/slr_qwen3.6_35b_a3b/Sat_Apr_25_643_AM/slr.jsonl"
-BOK_OUTPUT    = REPO_ROOT / "outputs/slr_bench_best_of_k.jsonl"
-DF_OUTPUT     = REPO_ROOT / "outputs/slr_bench_direct_feedback.jsonl"
-FIGURES_DIR   = REPO_ROOT / "figures"
+DATASET         = REPO_ROOT / "data/slr_bench/v1_All_full.jsonl"
+CLAUDE_SOLVER   = REPO_ROOT / "evals/solver_results/slr_claude_code/slr.jsonl"
+QWEN_SOLVER     = REPO_ROOT / "evals/solver_results/slr_qwen3.6_35b_a3b/Sun_Apr_26_131_PM/slr.jsonl"
+BOK_OUTPUT      = REPO_ROOT / "outputs/slr_bench_best_of_k_stripped.jsonl"
+DF_OUTPUT       = REPO_ROOT / "outputs/slr_bench_direct_feedback_stripped.jsonl"
+DS_OUTPUT       = REPO_ROOT / "outputs/slr_bench_direct_solve_openhands.jsonl"
+FIGURES_DIR     = REPO_ROOT / "figures"
 
 TIER_ORDER  = ["basic", "easy", "medium", "hard"]
 LEVEL_ORDER = list(range(1, 21))
 
 SYSTEMS = [
-    ("DF (gpt-oss-120b)",            DF_OUTPUT,     "#16A34A", False),
-    ("BoK (gpt-oss-120b)",           BOK_OUTPUT,    "#D97706", False),
-    ("CC Solver",                    CLAUDE_SOLVER, "#2563EB", True),
-    ("OH Qwen Solver",               QWEN_SOLVER,   "#DC2626", True),
+    ("DF (gpt-oss-120b)",   DF_OUTPUT,     "#16A34A", False),
+    ("BoK (gpt-oss-120b)",  BOK_OUTPUT,    "#D97706", False),
+    ("CC Solver",           CLAUDE_SOLVER, "#2563EB", True),
+    ("QO Solver",           QWEN_SOLVER,   "#DC2626", True),
+    ("QO Agent",            DS_OUTPUT,     "#7C3AED", False),
 ]
 
 # ── loaders ───────────────────────────────────────────────────────────────────
@@ -255,10 +258,10 @@ def plot_pass_rate(tier_stats: dict[str, dict[str, dict]], out: Path):
     ax.set_xticks(xs)
     ax.set_xticklabels(TIER_ORDER, fontsize=11)
     ax.set_xlabel("Curriculum tier", fontsize=12)
-    ax.set_ylabel("Pass rate (%)", fontsize=12)
+    ax.set_ylabel("Accuracy (%)", fontsize=12)
     ax.set_ylim(0, 115)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%g%%"))
-    ax.set_title("Pass rate vs curriculum tier\n(SLR-Bench, 250 tasks per tier)", fontsize=13, fontweight="bold")
+    ax.set_title("Accuracy vs curriculum tier\n(SLR-Bench, 250 tasks per tier)", fontsize=13, fontweight="bold")
     ax.legend(fontsize=10, loc="upper right")
     _save(fig, out)
 
@@ -339,10 +342,10 @@ def plot_level_pass_rate(level_stats: dict[str, dict[int, dict]], out: Path):
     ax.set_xticks(xs)
     ax.set_xticklabels([str(lv) for lv in LEVEL_ORDER], fontsize=9)
     ax.set_xlabel("Curriculum level", fontsize=12)
-    ax.set_ylabel("Pass rate (%)", fontsize=12)
+    ax.set_ylabel("Accuracy (%)", fontsize=12)
     ax.set_ylim(0, 115)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%g%%"))
-    ax.set_title("Pass rate vs curriculum level\n(SLR-Bench, 50 tasks per level)", fontsize=13, fontweight="bold")
+    ax.set_title("Accuracy vs curriculum level\n(SLR-Bench, 50 tasks per level)", fontsize=13, fontweight="bold")
     ax.legend(fontsize=10, loc="upper right")
     _save(fig, out)
 
@@ -402,13 +405,15 @@ def plot_level_complexity(level_stats: dict[str, dict[int, dict]], gt_by_level: 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--plot",          action="store_true")
-    parser.add_argument("--figures-dir",   default=str(FIGURES_DIR))
-    parser.add_argument("--claude-solver", default=str(CLAUDE_SOLVER))
-    parser.add_argument("--qwen-solver",   default=str(QWEN_SOLVER))
-    parser.add_argument("--bok",           default=str(BOK_OUTPUT))
-    parser.add_argument("--df",            default=str(DF_OUTPUT))
-    parser.add_argument("--dataset",       default=str(DATASET))
+    parser.add_argument("--plot",           action="store_true")
+    parser.add_argument("--figures-dir",    default=str(FIGURES_DIR))
+    parser.add_argument("--claude-solver",  default=str(CLAUDE_SOLVER))
+    parser.add_argument("--qwen-solver",    default=str(QWEN_SOLVER))
+    parser.add_argument("--bok",            default=str(BOK_OUTPUT))
+    parser.add_argument("--df",             default=str(DF_OUTPUT))
+    parser.add_argument("--direct-solve",   default=str(DS_OUTPUT),
+                        help="DirectSolve (Qwen3.6-35B-A3B OpenHands) output JSONL")
+    parser.add_argument("--dataset",        default=str(DATASET))
     args = parser.parse_args()
 
     fdir = Path(args.figures_dir)
@@ -422,7 +427,8 @@ def main():
         "DF (gpt-oss-120b)":  Path(args.df),
         "BoK (gpt-oss-120b)": Path(args.bok),
         "CC Solver":           Path(args.claude_solver),
-        "OH Qwen Solver":      Path(args.qwen_solver),
+        "QO Solver":           Path(args.qwen_solver),
+        "QO Agent":            Path(args.direct_solve),
     }
     print("Loading results...")
     all_results = {name: load_results(p) for name, p in paths.items()}

@@ -12,7 +12,7 @@ Each task is a set of (input string, output string) pairs. The goal is to infer 
 - At most 5 programs per sequence (PBEBench-Lite) or 20 (PBEBench-Hard).
 - No other Python functions or imports.
 
-**Evaluation metrics**: pass rate (fraction of tasks where all pairs are correctly transformed), mean reward (mean fraction of pairs correct), and cascade complexity (sum of `len(A) + len(B)` across all programs — lower is simpler and closer to ground truth).
+**Evaluation metrics**: accuracy (fraction of tasks where all pairs are correctly transformed), mean reward (mean fraction of pairs correct), and cascade complexity (sum of `len(A) + len(B)` across all programs — lower is simpler and closer to ground truth).
 
 ### Symbolic Logic Rules (SLR)
 
@@ -20,7 +20,7 @@ Each task is a set of (background facts, direction label) pairs, where backgroun
 
 **DSL**: Prolog conjunctive rules over car-property predicates (`car_color`, `car_len`, `has_wall`, `has_roof`, `has_payload`, `car_num`, `has_wheel`, `load_num`, `passenger_num`, `car_type`, `has_window`), anchored by `has_car(T, C)`.
 
-**Evaluation metrics**: pass rate (reward = 1.0), mean reward (partial_score 0–1), rule complexity (number of top-level body literals excluding `has_car/2` — lower is simpler), and curriculum tier/level breakdowns.
+**Evaluation metrics**: accuracy (reward = 1.0), mean reward (partial_score 0–1), rule complexity (number of top-level body literals excluding `has_car/2` — lower is simpler), and curriculum tier/level breakdowns.
 
 ---
 
@@ -92,7 +92,7 @@ A coding agent reads the demos and a task specification (`building_prompts/SOLVE
 
 `scripts/eval_solver.py` runs the induced solver on PBEBench-Lite, PBEBench-Hard, or SLR-Bench. Results are written in a format compatible with `scripts/quick_eval.py` for direct comparison with LLM baselines.
 
-Construction cost: ~100–265K tokens per Qwen run (KV-cache estimate, tiktoken cl100k_base). The one-time build cost is negligible relative to inference savings at any realistic evaluation scale (see findings §8).
+Construction cost: $0.30–$1.34 per Qwen run (exact, native Qwen3.6-35B-A3B tokenizer via `transformers.AutoTokenizer`; AtlasCloud pricing $0.1612/M input, $0.9653/M output). Full per-run breakdown in `findings.md` §Solver Construction Ablations. The one-time build cost is negligible relative to inference savings at any realistic evaluation scale (see findings §8).
 
 ---
 
@@ -102,7 +102,7 @@ Symbolic solvers and LLM baselines are complementary: the solver has zero per-ta
 
 **Standard**: per task, select the candidate with the highest verifier reward; break ties by cascade/rule complexity (prefer simpler), then source order. All LLM tokens counted regardless.
 
-**Efficiency (effi)**: if the symbolic solver achieves a perfect score (reward = 1.0), use it unconditionally and record zero LLM token cost. Otherwise fall back to the best LLM candidate. With the CC solver solving 80.4% of PBEBench-Lite tasks perfectly, effi mode cuts average token cost by ~30% at DF+BoK level with no pass rate loss; ~61% savings on Hard; ~65% on SLR-Bench.
+**Efficiency (effi)**: if the symbolic solver achieves a perfect score (reward = 1.0), use it unconditionally and record zero LLM token cost. Otherwise fall back to the best LLM candidate. With the CC solver solving 80.4% of PBEBench-Lite tasks perfectly, effi mode cuts average token cost by ~30% at DF+BoK level with no accuracy loss; ~61% savings on Hard; ~65% on SLR-Bench.
 
 Multiple solvers can also be unioned (no LLM involved): each solver's best answer per task is scored and the highest-reward, lowest-complexity answer wins. Ensembling 3 Qwen CoT runs alone reaches 85.5% Lite / 78.9% Hard; adding CC and all Qwen variants reaches 91.3% Lite / 84.7% Hard — all at zero LLM cost.
 

@@ -34,6 +34,7 @@ done
 BOK=outputs/hard_bok_converted.jsonl
 CC=evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl
 QWEN=evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/hard.jsonl
+DS=outputs/hard_direct_solve_openhands.jsonl   # DirectSolve baseline (Qwen3.6-35B-A3B OpenHands, may be partial)
 TASKS=data/pbebench/tasks_full_og.jsonl
 OUT=outputs
 
@@ -66,6 +67,7 @@ EVAL_ARGS=(
     $CC
     $QWEN
     $BOK
+    $DS
     $OUT/hard_ensemble_bok_cc.jsonl
     $OUT/hard_ensemble_bok_qwen.jsonl
     $OUT/hard_ensemble_bok_cc_qwen.jsonl
@@ -84,10 +86,11 @@ echo ""
 echo "=== Generating comparison plots ==="
 
 PLOT_ARGS=(--split hard --plot
-    --bok  $BOK
-    --cc-solver   $CC
-    --qwen-solver $QWEN
-    --tasks $TASKS
+    --bok          $BOK
+    --cc-solver    $CC
+    --qwen-solver  $QWEN
+    --direct-solve $DS
+    --tasks        $TASKS
 )
 if [[ -n "$METRICS_JSON" ]]; then
     python scripts/plot_pbebench_comparison.py "${PLOT_ARGS[@]}" \

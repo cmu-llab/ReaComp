@@ -2,8 +2,8 @@
 Pareto frontier plot: cost vs performance for SLR-Bench systems.
 
 Two separate figures:
-  1. slr_pareto_overall.png  — overall pass rate
-  2. slr_pareto_hard.png     — hard-tier pass rate
+  1. slr_pareto_overall.png  — overall accuracy
+  2. slr_pareto_hard.png     — hard-tier accuracy
 
 Usage:
     python scripts/plot_slr_pareto.py
@@ -26,13 +26,47 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 INPUT_PRICE  = 0.039 / 1e6   # gpt-oss-120b @ DeepInfra
 OUTPUT_PRICE = 0.19  / 1e6
 
+# AtlasCloud pricing for Qwen3.6-35B-A3B (DirectSolve / solver build)
+ATLAS_INPUT_PRICE  = 0.1612 / 1e6
+ATLAS_OUTPUT_PRICE = 0.9653 / 1e6
+
 CC_SLR_BUILD   = 24.00   # estimated (see findings.md)
 QWEN_SLR_BUILD =  1.28   # exact from trajectory (native Qwen3.6-35B-A3B tokenizer)
+
+DS_SLR_PATH = REPO_ROOT / "outputs" / "slr_bench_direct_solve_openhands.jsonl"
 
 
 def infer_cost(d):
     tok = d.get("token_usage", {})
     return tok.get("input_total", 0) * INPUT_PRICE + tok.get("output_total", 0) * OUTPUT_PRICE
+
+
+def infer_cost_atlas_jsonl(path):
+    """Sum inference cost for a raw JSONL file using AtlasCloud Qwen pricing."""
+    total = 0.0
+    with open(path) as f:
+        for line in f:
+            r = json.loads(line)
+            tok = r.get("token_usage") or {}
+            inp = tok.get("input", 0) or 0
+            out = tok.get("output", 0) or 0
+            total += inp * ATLAS_INPUT_PRICE + out * ATLAS_OUTPUT_PRICE
+    return total
+
+
+def accuracy_jsonl(path):
+    rows = [json.loads(l) for l in open(path)]
+    return sum(1 for r in rows if r.get("solved") or r.get("success")) / len(rows) * 100
+
+
+def get_hard_jsonl(path):
+    """Compute hard-tier accuracy from a raw JSONL (requires dataset for tier lookup)."""
+    # Hard tier in SLR-Bench = task indices 750-999 (250 tasks per tier, 4 tiers)
+    rows = [json.loads(l) for l in open(path)]
+    hard = [r for r in rows if 750 <= (r.get("task_index") or r.get("task_id") or 0) < 1000]
+    if not hard:
+        return None
+    return sum(1 for r in hard if r.get("solved") or r.get("success")) / len(hard) * 100
 
 
 def get_hard(d):
@@ -70,7 +104,7 @@ def build_points(data):
             slr_count += 1
             name = "CC" if slr_count == 1 else "QO"
             build = CC_SLR_BUILD if slr_count == 1 else QWEN_SLR_BUILD
-            legend_label = "CC (symbolic solver)" if slr_count == 1 else "QO (symbolic solver)"
+            legend_label = "CC Solver" if slr_count == 1 else "QO Solver"
             points.append(dict(
                 name=name, legend_label=legend_label,
                 cost=build + infer_cost(d),
@@ -101,10 +135,14 @@ def build_points(data):
         size   = 100 if name in ("DF", "BoK") else 120
 
         legend_map = {
-            "DF": "DF (LLM-only)", "BoK": "BoK (LLM-only)",
-            "DF + CC": "DF + CC (hybrid)", "BoK + CC": "BoK + CC (hybrid)",
-            "DF + QO": "DF + QO (hybrid)", "BoK + QO": "BoK + QO (hybrid)",
-            "DF + CC + QO": "DF + CC + QO (hybrid)", "BoK + CC + QO": "BoK + CC + QO (hybrid)",
+            "DF":          "DF (gpt-oss-120b)",
+            "BoK":         "BoK (gpt-oss-120b)",
+            "DF + CC":     "DF + CC Solver",
+            "BoK + CC":    "BoK + CC Solver",
+            "DF + QO":     "DF + QO Solver",
+            "BoK + QO":    "BoK + QO Solver",
+            "DF + CC + QO":  "DF + CC Solver + QO Solver",
+            "BoK + CC + QO": "BoK + CC Solver + QO Solver",
         }
 
         points.append(dict(
@@ -121,6 +159,18 @@ def build_points(data):
             name=name, legend_label=name,
             cost=cost, overall=overall, hard=hard,
             color="#756bb1", marker="^", size=160, zorder=5,
+        ))
+
+    # DirectSolve baseline — included if output file exists (may be partial)
+    if DS_SLR_PATH.exists():
+        ds_cost = infer_cost_atlas_jsonl(DS_SLR_PATH)
+        ds_overall = accuracy_jsonl(DS_SLR_PATH)
+        ds_hard = get_hard_jsonl(DS_SLR_PATH)
+        points.append(dict(
+            name="DirectSolve",
+            legend_label="QO Agent",
+            cost=ds_cost, overall=ds_overall, hard=ds_hard,
+            color="#7C3AED", marker="s", size=140, zorder=5,
         ))
 
     return points
@@ -178,9 +228,11 @@ def make_figure(points, y_key, ylabel, out_path, dpi=200, draw_pareto=False):
     ax.spines["right"].set_visible(False)
     ax.tick_params(labelsize=9)
 
-    ax.legend(fontsize=8, frameon=False, loc="lower right")
+    # Legend below the plot so marker symbols don't visually overlap the data
+    ax.legend(fontsize=8, frameon=False,
+              loc="upper center", bbox_to_anchor=(0.5, -0.18),
+              ncol=2, borderaxespad=0.)
 
-    plt.tight_layout()
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out_path}")
@@ -199,10 +251,10 @@ def main():
     points = build_points(data)
     out_dir = Path(args.out_dir)
 
-    make_figure(points, "overall", "Overall pass rate (%)",
+    make_figure(points, "overall", "Overall accuracy (%)",
                 out_dir / "slr_pareto_overall.png", dpi=args.dpi,
                 draw_pareto=args.pareto_line)
-    make_figure(points, "hard",    "Hard-tier pass rate (%)",
+    make_figure(points, "hard",    "Hard-tier accuracy (%)",
                 out_dir / "slr_pareto_hard.png", dpi=args.dpi,
                 draw_pareto=args.pareto_line)
 
