@@ -45,7 +45,7 @@ Token counts are exact, taken from provider usage fields logged in every output 
 | DF-32 (gpt-oss-120b) | gpt-oss-120b | 1008 | 111.1 | $16.74 | 32 attempts max, single-turn per attempt |
 | BoK-32 (gpt-oss-120b) | gpt-oss-120b | 1008 | 68.0 | $12.20 | 32 independent samples |
 | QO Agent / DirectSolve | Qwen3.6-35B-A3B | 1008 | 395.3 | $85.38 | Complete. openhands-sdk; avg 11.1 steps/task (max 100) |
-| CC Solver (build) | claude-sonnet-4-6 (CC CLI) | 1 session | — | ~$10 est. | One-time; interactive session ~30 min, no trajectory log |
+| CC Solver (build) | claude-sonnet-4-6 (CC CLI) | 1 session | — | ~$2 | One-time; interactive session ~30 min, exact cost from tracked run |
 | QO Solver run 1 (build) | Qwen3.6-35B-A3B | 1 session | 4.46 | $0.79 | 76 turns, 201 min |
 | QO Solver run 2 (build) | Qwen3.6-35B-A3B | 1 session | 4.82 | $0.85 | 72 turns, 34 min |
 | QO Solver run 3 (build) | Qwen3.6-35B-A3B | 1 session | 6.24 | $1.10 | 80 turns, 44 min |
@@ -61,8 +61,8 @@ Ensemble outputs are computed deterministically from individual outputs; no addi
 | Experiment | Model | n tasks | Total M tok | Ref. cost | Notes |
 |---|---|---:|---:|---:|---|
 | BoK-32 (gpt-oss-120b) | gpt-oss-120b | 1216 | 332.1 | $57.83 | Complete. |
-| QO Agent / DirectSolve | Qwen3.6-35B-A3B | 1216 | ~1026 proj. | ~$218 proj. | 1016/1216 done at $187 actual; $0.184/task avg → ~$218 projected. avg 18.7 steps/task |
-| CC Solver (inference only) | — | 1216 | 0 | ~$10 build | same solver as Lite; build ~30 min |
+| QO Agent / DirectSolve | Qwen3.6-35B-A3B | 1216 | ~1054 proj. | ~$225 proj. | 1162/1216 done at $215 actual; $0.185/task avg → ~$225 projected. avg 18.7 steps/task |
+| CC Solver (inference only) | — | 1216 | 0 | ~$2 build | same solver as Lite; build ~30 min |
 | QO Solver run 2 (inference only) | — | 1216 | 0 | $0.85 build | same solver as Lite run 2 |
 
 ### SLR-Bench (1000 tasks)
@@ -71,7 +71,7 @@ Ensemble outputs are computed deterministically from individual outputs; no addi
 |---|---|---:|---:|---:|---|
 | DF-32 (gpt-oss-120b) | gpt-oss-120b | 1000 | 224.2 | $17.43 | Complete. |
 | BoK-32 (gpt-oss-120b) | gpt-oss-120b | 1000 | 225.3 | $17.88 | Complete. |
-| QO Agent / DirectSolve | Qwen3.6-35B-A3B | 1000 | ~573 proj. | ~$124 proj. | 708/1000 done at $88 actual; avg 575K tokens/task → ~$124 projected. avg 8.9 steps/task |
+| QO Agent / DirectSolve | Qwen3.6-35B-A3B | 1000 | ~754 proj. | ~$157 proj. | 783/1000 done at $123 actual; avg 754K tokens/task → ~$157 projected. avg 8.9 steps/task |
 | CC Solver (build) | claude-sonnet-4-6 (CC CLI) | 1 session | — | $4.01 | One-time; interactive session ~30 min, exact cost from tracked run |
 | QO Solver run 1 (build) | Qwen3.6-35B-A3B | 1 session | 2.93 | $0.51 | 68 turns, 25 min |
 | QO Solver run 2 (build) | Qwen3.6-35B-A3B | 1 session | 7.49 | $1.28 | 84 turns, 47 min |
@@ -85,8 +85,8 @@ Ensemble outputs are computed deterministically from individual outputs; no addi
 | gpt-oss-120b inference (Lite DF + BoK, Hard BoK, SLR DF + BoK) | ~$122 |
 | Qwen3.6-35B-A3B — QO Agent / DirectSolve (Lite + Hard\* + SLR\*, partial) | ~$353 |
 | Qwen3.6-35B-A3B — QO Solver induction (6 PBE + 2 SLR runs) | ~$7 |
-| claude-sonnet-4-6 — CC Solver induction (1 PBE + 1 SLR session) | ~$14 (~$10 est. PBE + $4.01 SLR) |
-| **Total reported experiments** | **~$496** |
+| claude-sonnet-4-6 — CC Solver induction (1 PBE + 1 SLR session) | ~$6 (~$2 PBE + $4.01 SLR) |
+| **Total reported experiments** | **~$488** |
 
 All costs are reference figures using public API pricing. Actual compute was run on an internal cluster (2 × A100 80 GB) at no direct monetary cost.
 
