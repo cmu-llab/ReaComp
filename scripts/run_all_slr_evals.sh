@@ -28,6 +28,7 @@ BOK=outputs/slr_bench_best_of_k_stripped.jsonl
 DF=outputs/slr_bench_direct_feedback_stripped.jsonl
 CC=evals/solver_results/slr_claude_code/slr.jsonl
 QWEN=evals/solver_results/slr_qwen3.6_35b_a3b/Sun_Apr_26_131_PM/slr.jsonl
+DS=outputs/slr_bench_direct_solve_openhands.jsonl   # DirectSolve baseline (Qwen3.6-35B-A3B OpenHands, may be partial)
 TASKS=data/slr_bench/v1_All_full.jsonl
 OUT=outputs
 
@@ -89,6 +90,7 @@ EVAL_ARGS=(
     $QWEN
     $DF
     $BOK
+    $DS
     $OUT/slr_ensemble_df_bok.jsonl
     $OUT/slr_ensemble_df_cc.jsonl
     $OUT/slr_ensemble_bok_cc.jsonl
@@ -120,11 +122,12 @@ echo ""
 echo "=== Generating comparison plots ==="
 
 python scripts/plot_slr_comparison.py --plot \
-    --df   $DF \
-    --bok  $BOK \
+    --df            $DF \
+    --bok           $BOK \
     --claude-solver $CC \
     --qwen-solver   $QWEN \
-    --dataset $TASKS
+    --direct-solve  $DS \
+    --dataset       $TASKS
 
 echo ""
 echo "Done. Figures written to figures/slr_comparison_*.png"

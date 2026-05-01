@@ -157,6 +157,24 @@ DATASET=slr  bash scripts/run_direct_feedback_vllm.sh
 ```
 Both scripts checkpoint after every task — safe to kill and relaunch.
 
+**DirectSolve (OpenHands + Qwen3.6-35B-A3B):**
+```bash
+# Single job (all tasks)
+DATASET=data/pbebench/tasks_full_og.jsonl PORT=8002 bash scripts/run_direct_solve_openhands.sh
+
+# Sharded (two parallel jobs covering non-overlapping index ranges)
+START_INDEX=0   END_INDEX=800  DATASET=data/pbebench/tasks_full_og.jsonl PORT=8002 bash scripts/run_direct_solve_openhands.sh
+START_INDEX=800 END_INDEX=1216 DATASET=data/pbebench/tasks_full_og.jsonl PORT=8002 bash scripts/run_direct_solve_openhands.sh
+# Output is auto-suffixed: outputs/hard_direct_solve_openhands_0_800.jsonl etc.
+
+# Merge shards (deduplicates by task_id, sorts by task_index)
+python scripts/merge_direct_solve_shards.py \
+    outputs/hard_direct_solve_openhands_0_800.jsonl \
+    outputs/hard_direct_solve_openhands_800_1216.jsonl \
+    --output outputs/hard_direct_solve_openhands.jsonl
+```
+Indices are **0-based, exclusive end** (Python slice semantics). Global `task_id`/`task_index` are stamped before slicing, so shards always use correct dataset-level IDs regardless of split point.
+
 ### 4. Ensembling, eval, and plots
 
 **PBEBench-Lite** (BoK and DF outputs must be pulled from cluster and stripped first):
@@ -279,6 +297,8 @@ python scripts/compute_trajectory_tokens.py \
 │   ├── run_all_slr_evals.sh            # full SLR pipeline: ensembles + eval + plots
 │   ├── run_best_of_k_vllm.sh           # run BoK baseline via vLLM
 │   ├── run_direct_feedback_vllm.sh     # run Direct Feedback baseline via vLLM
+│   ├── run_direct_solve_openhands.sh   # run DirectSolve baseline (one OH conversation/task); supports sharding via START_INDEX/END_INDEX
+│   ├── merge_direct_solve_shards.py    # merge shard JSONLs + checkpoints into one file
 │   └── run_solver_builder_openhands.sh # run SolverBuilder agent via OpenHands
 ├── openhands_agents/
 │   └── solver_builder/       # SolverBuilder agent (controller + tools)

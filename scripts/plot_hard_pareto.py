@@ -1,10 +1,11 @@
 """
-Pareto frontier plot: cost vs pass rate for PBEBench-Hard systems.
+Pareto frontier plot: cost vs accuracy for PBEBench-Hard systems.
 
 Costs:
   - BoK: inference only (no-cache, reasoning billed as output)
   - Solvers: build cost only (zero per-task LLM calls)
   - Effi hybrids: build cost + reduced BoK inference cost
+  - DirectSolve (Qwen3.6-35B-A3B OpenHands): per-task inference at AtlasCloud pricing
 
 Usage:
     python scripts/plot_hard_pareto.py
@@ -28,6 +29,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 INPUT_PRICE  = 0.039 / 1e6
 OUTPUT_PRICE = 0.19  / 1e6
 
+# AtlasCloud pricing for Qwen3.6-35B-A3B (DirectSolve / solver build)
+ATLAS_INPUT_PRICE  = 0.1612 / 1e6
+ATLAS_OUTPUT_PRICE = 0.9653 / 1e6
+
 # Solver build costs (native Qwen3.6-35B-A3B tokenizer, AtlasCloud pricing)
 CC_BUILD        = 10.00   # Claude Code PBE session (estimated)
 QWEN_R2_BUILD   =  0.85   # Qwen run 2 (Sun_Apr_26_402, exact from trajectory)
@@ -47,7 +52,19 @@ def infer_cost(path):
     return total
 
 
-def pass_rate(path):
+def infer_cost_atlas(path):
+    """Sum inference cost using AtlasCloud Qwen3.6-35B-A3B pricing."""
+    total = 0.0
+    for line in open(path):
+        r = json.loads(line)
+        tok = r.get("token_usage") or {}
+        inp = tok.get("input", 0) or 0
+        out = tok.get("output", 0) or 0
+        total += inp * ATLAS_INPUT_PRICE + out * ATLAS_OUTPUT_PRICE
+    return total
+
+
+def accuracy(path):
     rows = [json.loads(l) for l in open(path)]
     return sum(1 for r in rows if r.get("solved") or r.get("success")) / len(rows) * 100
 
@@ -60,58 +77,67 @@ def build_points():
     CC_PATH    = sol / "claude_code/Thu_Apr_23_807_PM/hard.jsonl"
     QR2_PATH   = sol / "qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/hard.jsonl"
     BOK_PATH   = out / "hard_bok_converted.jsonl"
+    DS_PATH    = out / "hard_direct_solve_openhands.jsonl"
 
     bok_infer = infer_cost(BOK_PATH)
 
     raw = [
-        # (name, legend_label, cost, pass_rate, color, marker, size, zorder)
-        ("CC",          "CC (symbolic solver)",
-         CC_BUILD,      pass_rate(CC_PATH),
+        # (name, legend_label, cost, acc, color, marker, size, zorder)
+        ("CC",          "CC Solver",
+         CC_BUILD,      accuracy(CC_PATH),
          "#e6550d", "*", 280, 6),
 
-        ("QO",     "QO (symbolic solver)",
-         QWEN_R2_BUILD, pass_rate(QR2_PATH),
+        ("QO",          "QO Solver",
+         QWEN_R2_BUILD, accuracy(QR2_PATH),
          "#fd8d3c", "*", 280, 6),
 
-        ("CC+QO",  "CC + QO (symbolic)",
+        ("CC+QO",       "CC Solver + QO Solver",
          CC_BUILD + QWEN_R2_BUILD,
-         pass_rate(out / "hard_union_cc_qwen_run2.jsonl"),
+         accuracy(out / "hard_union_cc_qwen_run2.jsonl"),
          "#e6550d", "P", 200, 6),
 
-        ("All solvers", "All solvers (symbolic)",
+        ("All solvers", "All solvers",
          CC_BUILD + QWEN_ALL_BUILD,
-         pass_rate(out / "hard_union_all_solvers.jsonl"),
+         accuracy(out / "hard_union_all_solvers.jsonl"),
          "#a63603", "P", 200, 6),
 
-        ("BoK",         "BoK (LLM only)",
-         bok_infer,     pass_rate(BOK_PATH),
+        ("BoK",         "BoK (gpt-oss-120b)",
+         bok_infer,     accuracy(BOK_PATH),
          "#3182bd", "o", 100, 5),
 
-        ("BoK+CC",      "BoK + CC (hybrid)",
+        ("BoK+CC",      "BoK + CC Solver",
          infer_cost(out / "hard_effi_bok_cc.jsonl") + CC_BUILD,
-         pass_rate(out / "hard_effi_bok_cc.jsonl"),
+         accuracy(out / "hard_effi_bok_cc.jsonl"),
          "#31a354", "D", 120, 5),
 
-        ("BoK+QO", "BoK + QO (hybrid)",
+        ("BoK+QO",      "BoK + QO Solver",
          infer_cost(out / "hard_effi_bok_qwen_run2.jsonl") + QWEN_R2_BUILD,
-         pass_rate(out / "hard_effi_bok_qwen_run2.jsonl"),
+         accuracy(out / "hard_effi_bok_qwen_run2.jsonl"),
          "#74c476", "D", 120, 5),
 
-        ("BoK+CC+QO", "BoK + CC + QO (hybrid)",
+        ("BoK+CC+QO",   "BoK + CC Solver + QO Solver",
          infer_cost(out / "hard_effi_bok_cc_qwen_run2.jsonl") + CC_BUILD + QWEN_R2_BUILD,
-         pass_rate(out / "hard_effi_bok_cc_qwen_run2.jsonl"),
+         accuracy(out / "hard_effi_bok_cc_qwen_run2.jsonl"),
          "#006d2c", "D", 120, 5),
 
-        ("BoK+All",     "BoK + All solvers (hybrid)",
+        ("BoK+All",     "BoK + All solvers",
          infer_cost(out / "hard_effi_bok_all_solvers.jsonl") + CC_BUILD + QWEN_ALL_BUILD,
-         pass_rate(out / "hard_effi_bok_all_solvers.jsonl"),
+         accuracy(out / "hard_effi_bok_all_solvers.jsonl"),
          "#00441b", "D", 140, 5),
     ]
 
+    # DirectSolve baseline — only included if output file exists (may be partial)
+    if DS_PATH.exists():
+        raw.append((
+            "DirectSolve", "QO Agent",
+            infer_cost_atlas(DS_PATH), accuracy(DS_PATH),
+            "#7C3AED", "s", 140, 5,
+        ))
+
     return [
-        dict(name=name, legend_label=ll, cost=cost, overall=pr,
+        dict(name=name, legend_label=ll, cost=cost, overall=acc,
              color=color, marker=marker, size=size, zorder=zorder)
-        for name, ll, cost, pr, color, marker, size, zorder in raw
+        for name, ll, cost, acc, color, marker, size, zorder in raw
     ]
 
 
@@ -147,15 +173,18 @@ def make_figure(points, out_path, dpi=200, draw_pareto=False):
                    label=label)
 
     ax.set_xlabel("Total cost ($)", fontsize=10)
-    ax.set_ylabel("Pass rate (%)", fontsize=10)
+    ax.set_ylabel("Accuracy (%)", fontsize=10)
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"${x:.0f}"))
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y, _: f"{y:.0f}%"))
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.tick_params(labelsize=9)
-    ax.legend(fontsize=8, frameon=False, loc="upper right")
 
-    plt.tight_layout()
+    # Legend below the plot so marker symbols don't visually overlap the data
+    leg = ax.legend(fontsize=8, frameon=False,
+                    loc="upper center", bbox_to_anchor=(0.5, -0.18),
+                    ncol=2, borderaxespad=0.)
+
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out_path}")

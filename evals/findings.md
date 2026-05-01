@@ -59,7 +59,7 @@ Note: temperature=1.0 is used for both BoK and DF, as recommended by the gpt-oss
 - **Tokenizer:** native `Qwen/Qwen3.6-35B-A3B` via `transformers.AutoTokenizer` (NOT tiktoken cl100k_base)
 - **Script:** `scripts/compute_trajectory_tokens.py --tokenizer Qwen/Qwen3.6-35B-A3B` (sb_finish retry bloat excluded)
 - **Pricing:** AtlasCloud $0.1612/M input, $0.9653/M output (Qwen runs); DeepInfra $0.039/M input, $0.19/M output (gpt-oss-120b, reasoning billed as output)
-- **CC build cost:** estimated ~$10 (PBE) / ~$24 (SLR) — no trajectory log from the interactive Claude Code session
+- **CC build cost:** ~$10 est. (PBE) / $4.01 exact (SLR, from tracked run)
 
 ### Random seeds
 
@@ -94,7 +94,7 @@ Even at 10⁹ program evaluations per second, exhausting the Lite space would ta
 Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**. Not reported for † baselines (not re-run by us).  
 Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M output). Qwen3.6-35B-A3B (OpenHands) at AtlasCloud pricing ($0.1612/M input, $0.9653/M output). Total tokens in millions across all 1008 tasks. § Symbolic solver rows show one-time build tokens/cost (zero per-task inference); effi cost includes inference + solver build. Qwen build costs exact (native tokenizer); CC build cost estimated (~$10 for PBE).
 
-| System | Pass% | Mean reward | Edit Sim | Complexity Δ | Total (M tok) | Cost ($) |
+| System | Acc% | Mean reward | Edit Sim | Complexity Δ | Total (M tok) | Cost ($) |
 |---|---:|---:|---:|---:|---:|---:|
 | *— LLM-only methods —* | | | | | | |
 | gpt-oss-120b, single attempt † | 62.5% | — | 69.9 | — | — | — |
@@ -121,7 +121,7 @@ Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M outpu
 
 ### Symbolic solver breakdown by cascade length
 
-| Cascade | N | Pass% (CC) | Mean reward (CC) | Pass% (Qwen) | Mean reward (Qwen) |
+| Cascade | N | Acc% (CC) | Mean reward (CC) | Acc% (Qwen) | Mean reward (Qwen) |
 |---:|---:|---:|---:|---:|---:|
 | 2 | 246 | 98.4% | 0.990 | 96.3% | 0.992 |
 | 3 | 253 | 90.9% | 0.963 | 81.0% | 0.947 |
@@ -138,16 +138,16 @@ CC solver collapses at CL=5 (50%) — at the 5-program limit there is little sla
 
 **3. Symbolic + LLM ensembles consistently outperform either alone.** BoK alone caps at 93.8%; adding the CC Solver (effi) reaches 93.9% while cutting tokens by 33% (45K vs 67K avg/task). DF + All Symbolic effi reaches 93.2% at only 78K avg tokens — 29% cheaper than DF alone.
 
-**4. Effi mode preserves pass rate while cutting cost.** BoK + All Symbolic effi matches BoK + CC Solver effi in pass rate (93.9%) but saves a further 2K tokens/task, with no pass rate tradeoff.
+**4. Effi mode preserves accuracy while cutting cost.** BoK + All Symbolic effi matches BoK + CC Solver effi in accuracy (93.9%) but saves a further 2K tokens/task, with no accuracy tradeoff.
 
 **5. Effi slightly increases complexity Δ vs standalone LLM.** DF standalone Δ+2.11, but DF+CC effi rises to Δ+3.00 because the CC solver's outputs replace LLM outputs on tasks it solves. All-Symbolic effi mitigates this (Δ+2.18) since the union includes tighter Qwen outputs.
 
 **6. DF and BoK produce similar complexity.** DF Δ+2.11 vs BoK Δ+2.19 — essentially the same. BoK selects the minimum-complexity correct answer from 32 parallel samples; DF's sequential refinement converges to comparable results on average.
 
 **7. Best trade-off points:**
-- Best pass rate (zero cost): All Symbolic union (91.3%, 0 tokens, Δ+1.88)
-- Best pass rate + token efficiency: BoK + All Symbolic effi (93.9%, 43K avg tokens/task)
-- Best pass rate regardless of cost: BoK + CC Solver effi or BoK + All Symbolic effi (93.9%)
+- Best accuracy (zero cost): All Symbolic union (91.3%, 0 tokens, Δ+1.88)
+- Best accuracy + token efficiency: BoK + All Symbolic effi (93.9%, 43K avg tokens/task)
+- Best accuracy regardless of cost: BoK + CC Solver effi or BoK + All Symbolic effi (93.9%)
 
 **8. Solver construction cost is negligible when amortised.** The Qwen run 2 solver cost $0.85 to build (4.8M total tokens across 72 turns). Effi mode saves ~24K tokens/task over BoK standalone (67,480 → 43,113, −36%) — build cost recoups at 9 tasks and is <1% overhead across 1008 tasks. See ablations section for full token cost breakdown.
 
@@ -187,11 +187,11 @@ Hard uses the global alphabet V=52 (uppercase, lowercase, digits) with cascades 
 Complexity Δ = mean predicted − mean GT cascade complexity, **correct solutions only**.  
 Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M output; reasoning billed as output). Total tokens in millions across all 1216 tasks. § Symbolic solver rows show one-time build tokens/cost; effi cost includes inference + solver build. Qwen build costs exact; CC build cost estimated (~$10 for PBE).
 
-| System | Pass% | Mean reward | Edit Sim | Complexity Δ | Total (M tok) | Cost ($) |
+| System | Acc% | Mean reward | Edit Sim | Complexity Δ | Total (M tok) | Cost ($) |
 |---|---:|---:|---:|---:|---:|---:|
 | *— LLM-only methods —* | | | | | | |
 | BoK-32 (gpt-oss-120b) | 68.4% | 0.9428 | 89.9 | +5.14 | 332.1 | 57.83 |
-| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 33.4%\* | 0.8290\* | 74.6\* | +1.36\* | 773.5\* | ~$220\* |
+| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 29.8%\* | 0.8308\* | 73.5\* | +1.36\* | 879.0\* | ~$187\* |
 | *— Coding-agent-induced symbolic solvers (build cost §) —* | | | | | | |
 | **CC Solver** | **69.7%** | **0.9873** | **97.2** | **+8.06** | **— §** | **~$10 §** |
 | **Qwen Solver (run 2)** | **74.7%** | **0.9836** | **96.8** | **+5.26** | **4.82 §** | **$0.85 §** |
@@ -204,11 +204,11 @@ Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M outpu
 | **BoK + All Symbolic Solvers (effi)** | **85.8%** | **0.9570** | **92.7** | **+4.64** | **71.6** | **27.89** |
 
 † Reported scores from leaderboard  
-‡ Partial run (908/1216 tasks — CL 2–20; shard 0–800 complete at 492 tasks + shard 800–1216 at 416 tasks); pass rate will change as remaining CL 2–20 tasks complete. Avg 852K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$220 at current avg.
+‡ Partial run (1016/1216 tasks); accuracy will rise as remaining tasks complete. Avg 865K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$222 at current avg.
 
 ### Symbolic solver breakdown by cascade length
 
-| CL | N | Pass% (CC) | Mean reward (CC) | Pass% (Qwen) | Mean reward (Qwen) |
+| CL | N | Acc% (CC) | Mean reward (CC) | Acc% (Qwen) | Mean reward (Qwen) |
 |---:|---:|---:|---:|---:|---:|
 | 2 | 64 | 93.8% | 0.999 | 100.0% | 1.000 |
 | 3 | 64 | 96.9% | 0.999 | 95.3% | 0.999 |
@@ -234,7 +234,7 @@ CC solver degrades gradually CL 5–17, then collapses at 18–20 (36%→12%→2
 
 ### Symbolic solver breakdown by BFCC category (Claude Code)
 
-| BFCC relationships | N | Pass% |
+| BFCC relationships | N | Acc% |
 |---|---:|---:|
 | No BFCC relationships | 55 | 92.7% |
 | Bleeding | 47 | 91.5% |
@@ -257,7 +257,7 @@ Tasks with no BFCC interactions are easiest (92.7%); feeding interactions are co
 
 ### Solver failure analysis
 
-Dominant failure mode across both datasets is **near-misses**: solver finds a program that correctly transforms all but 1–3 pairs. Reflected in high mean scores (0.944 lite, 0.987 hard) despite imperfect pass rates.
+Dominant failure mode across both datasets is **near-misses**: solver finds a program that correctly transforms all but 1–3 pairs. Reflected in high mean scores (0.944 lite, 0.987 hard) despite imperfect accuracy.
 
 Solver fails when:
 1. A correct program must be discovered through a long intermediate chain (cascade ≥ 18).
@@ -268,7 +268,7 @@ Solver fails when:
 
 Both solvers re-run on PBEBench-Hard with identical settings to measure determinism. Results written to `hard_run2.jsonl` alongside run1.
 
-| System | Run 1 Pass% | Run 2 Pass% | Δ Pass% | Per-task agreement | Flips |
+| System | Run 1 Acc% | Run 2 Acc% | Δ Acc% | Per-task agreement | Flips |
 |---|---:|---:|---:|---:|---:|
 | Claude Code solver | 69.65% | 69.74% | +0.09pp | 1211/1216 (99.6%) | 5 |
 | Qwen3.6-35B-A3B solver | 58.88% | 57.89% | −1.00pp | 1180/1216 (97.0%) | 36 |
@@ -285,13 +285,13 @@ All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no t
 
 **4. Solver complexity overshoots GT substantially on Hard.** CC solver Δ+8.06, Qwen Δ+5.26 — much larger than Lite (+3.00/+3.01). Longer cascades give inductive search more ways to produce valid-but-verbose programs. BoK + All Symbolic union brings this down to Δ+3.54 by selecting simpler answers across many candidates.
 
-**5. All-four-BFCC is the hardest category.** 40.2% pass rate for CC, making up 22% of the dataset. Dense mutual ordering interactions the beam search cannot fully resolve.
+**5. All-four-BFCC is the hardest category.** 40.2% accuracy for CC, making up 22% of the dataset. Dense mutual ordering interactions the beam search cannot fully resolve.
 
 **6. Effi mode cuts reported token cost by ~78%.** BoK + All Symbolic effi: 58,847 avg tokens/task vs 273,143 standalone BoK — a 78.4% reduction. The 14.2% of tasks not solved by any symbolic solver fall back to BoK (avg 273K tokens each), while the solved 85.8% incur zero LLM cost. Note: BoK still runs all 32 samples for all tasks by design (no early exit); effi savings reflect *reported* cost used for amortisation calculations, not actual GPU compute.
 
 **7. Best trade-off points:**
-- Best pass rate (zero cost): All Symbolic union (84.7%, 0 tokens)
-- Best pass rate overall: BoK + All Symbolic effi (85.8%, ~59K avg tokens/task)
+- Best accuracy (zero cost): All Symbolic union (84.7%, 0 tokens)
+- Best accuracy overall: BoK + All Symbolic effi (85.8%, ~59K avg tokens/task)
 - Best symbolic-only: All Symbolic union beats BoK-32 standalone by +16.3pp at zero cost
 
 ### Output files
@@ -321,14 +321,16 @@ All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no t
 
 ### Performance
 
-| Demos | Run | Lite Pass% | Lite Edit Sim | Hard Pass% | Hard Edit Sim | Algorithm (short) |
-|-------|----:|----------:|--------------:|----------:|--------------:|-------------------|
-| 100 examples + CoT | 1 | 53.4% | 78.6 | 58.9% | 94.5 | greedy + multi-pass residual fixing |
-| 100 examples + CoT | 2 | 65.7% | 87.4 | 74.7% | 96.8 | safety-first greedy + 2-step lookahead |
-| 100 examples + CoT | **3** | **79.2%** | **96.7** | 51.8% | 90.0 | unique-op permutations + greedy + 2-op sequences |
-| 100 examples, **no CoT** | 1 | 42.1% | 67.6 | 24.8% | 82.9 | beam search + heuristic scoring |
-| 48 examples + CoT | 1 | 55.7% | 78.6 | 76.2% | 96.5 | multi-start greedy + permutation reorder |
-| 12 examples + CoT | 1 | 47.7% | 80.2 | 50.4% | 94.3 | adaptive beam search |
+| Demos | Run | Lite Acc% | Lite Edit Sim | Hard Acc% | Hard Edit Sim | Demo Acc% ¶ | Demo Reward ¶ | Algorithm (short) |
+|-------|----:|----------:|--------------:|----------:|--------------:|------------:|--------------:|-------------------|
+| 100 examples + CoT | 1 | 53.4% | 78.6 | 58.9% | 94.5 | 71.4% | 0.9875 | greedy + multi-pass residual fixing |
+| 100 examples + CoT | 2 | 65.7% | 87.4 | 74.7% | 96.8 | 87.9% | 0.9930 | safety-first greedy + 2-step lookahead |
+| 100 examples + CoT | **3** | **79.2%** | **96.7** | 51.8% | 90.0 | 75.8% | 0.8774 | unique-op permutations + greedy + 2-op sequences |
+| 100 examples, **no CoT** | 1 | 42.1% | 67.6 | 24.8% | 82.9 | 48.4% | 0.9633 | beam search + heuristic scoring |
+| 48 examples + CoT | 1 | 55.7% | 78.6 | 76.2% | 96.5 | 93.5% | 0.9930 | multi-start greedy + permutation reorder |
+| 12 examples + CoT | 1 | 47.7% | 80.2 | 50.4% | 94.3 | 58.3% | 0.9917 | adaptive beam search |
+
+¶ Evaluated on the Hard PBEBench instances the solver was fitted on (91 unique tasks for 100-example runs, 46 for 48-example, 12 for 12-example; same task can appear twice in demos as both a success and a failure trace).
 
 ### Solver construction token cost
 
@@ -356,13 +358,13 @@ Extracts edit regions between input and output (longest-common-prefix/suffix anc
 Classifies candidates as **unique** (exactly one complete single-replace candidate exists for a changed pair — it must be in the solution) vs **optional** (multiple candidates). Strategy 1 tries all permutations of the forced unique operations. Strategy 2 adds further programs greedily from the optional pool. Strategy 3 enumerates Cartesian products of optional choices (capped at 3000 combinations). Strategy 4 handles "hard pairs" — examples where no single replace suffices — by explicitly searching 2-operation sequences (enumerate all A1/B1, compute intermediate, find A2/B2 that reaches output). Post-search, all permutations of the best program are tried for ordering optimisation. The unique-candidate forcing is the key structural insight: it dramatically prunes the search space by treating forced operations as constraints rather than candidates. This produced the best Lite result of any Qwen run (79.2%, nearly matching the CC solver's 80.4%) but underperformed on Hard (51.8%) — likely because Hard's longer cascades mean fewer unique-forced operations, leaving more of the burden on greedy/optional search which degrades at higher cascade lengths.
 
 **100 examples + CoT, run 2 — "Safety-first greedy + 2-step lookahead"** (`Sun_Apr_26_402_PM`):
-Separates examples into "changed" (providing signal) and "unchanged" (providing safety constraints). Candidates are pre-filtered to discard any that modify unchanged pairs — a hard safety gate applied before scoring, not as a penalty. Generates both direct candidates and 2-step lookahead candidates (enumerate A1/B1 pairs, check if the intermediate can reach output in one more step). Greedy selection picks by improvement count, with a fallback to best-overall if no candidate improves. The safety-first design results in a tighter search space and the 2-step lookahead explicitly handles feeding interactions. This approach achieved the highest Lite pass rate (65.7%) of any Qwen run.
+Separates examples into "changed" (providing signal) and "unchanged" (providing safety constraints). Candidates are pre-filtered to discard any that modify unchanged pairs — a hard safety gate applied before scoring, not as a penalty. Generates both direct candidates and 2-step lookahead candidates (enumerate A1/B1 pairs, check if the intermediate can reach output in one more step). Greedy selection picks by improvement count, with a fallback to best-overall if no candidate improves. The safety-first design results in a tighter search space and the 2-step lookahead explicitly handles feeding interactions. This approach achieved the highest Lite accuracy (65.7%) of any Qwen run.
 
 **100 examples, no CoT — "Beam search + heuristic scoring"** (`Sat_Apr_25_819_PM`):
 Without reasoning traces the agent fell back to a textbook beam search: enumerate all (A,B) pairs scoring them by how many diffs they fully explain (×1000) plus partial progress (×10), then run beam search (beam_size=50) using the verifier to select states. No structural insights about edit regions, feeding interactions, or multi-step decomposition — just breadth-first exploration. The resulting solver is the weakest, especially on Hard, because beam search without structural priors doesn't scale to long cascades.
 
 **48 examples + CoT — "Multi-start greedy + permutation reorder"** (`Sat_Apr_25_1104_PM`):
-Adopts the clearest separation of concerns: greedy construction using exact candidates (programs that directly solve an example) plus progress candidates (programs that reduce edit distance), followed by a best-ordering search that tries all permutations for ≤8 programs and random-shuffle + local-swap for larger sequences. Multi-start (multiple random seeds) provides diversity. The permutation reorder step is the key insight: it explicitly handles feeding/bleeding interactions by scoring different program orderings, rather than hoping the greedy order is correct. This design is the most principled and also achieved the highest Hard pass rate (76.2%) among single runs.
+Adopts the clearest separation of concerns: greedy construction using exact candidates (programs that directly solve an example) plus progress candidates (programs that reduce edit distance), followed by a best-ordering search that tries all permutations for ≤8 programs and random-shuffle + local-swap for larger sequences. Multi-start (multiple random seeds) provides diversity. The permutation reorder step is the key insight: it explicitly handles feeding/bleeding interactions by scoring different program orderings, rather than hoping the greedy order is correct. This design is the most principled and also achieved the highest Hard accuracy (76.2%) among single runs.
 
 **12 examples + CoT — "Adaptive beam search"** (`Sun_Apr_26_120_AM`):
 Uses beam search with adaptive parameters (beam width and max programs scale with the fraction of changed examples). Adds a diversity constraint (no repeated candidates within a sequence) and an alternative-path fallback for partial success. The adaptive complexity is a reasonable heuristic but the limited example set (12) meant the agent lacked sufficient signal to invent structural insights like edit-region anchoring or permutation reordering. The resulting solver is a competent but generic beam search, clearly below the CoT runs with richer examples.
@@ -376,25 +378,27 @@ Uses beam search with adaptive parameters (beam width and max programs scale wit
 No trajectory is available (induced in an interactive Claude Code session), but the SOLVER_ALGORITHM.md documents the approach.
 
 **CC PBE solver — "Two-phase safe/unrestricted beam search with difflib candidate extraction"** (`claude_code/Thu_Apr_23_807_PM`):
-Runs two sequential beam searches. Phase 1 (beam=150) enforces a safety constraint: candidates are restricted to patterns that do not appear as substrings in any already-correct input, preventing collateral damage. Phase 2 (beam=75) drops the constraint to handle the rare edge case where the only correct program matches a character that also appears in an unchanged string. Candidates are generated dynamically using `difflib.SequenceMatcher` on the intermediate state at each beam depth — crucially, at depth 2 the candidates are computed from the strings produced *after* depth-1 programs, enabling discovery of feed/bleed ordering. Context-extended patterns (extending the diff region by 1–2 surrounding characters) help find more specific replacements that avoid hitting unintended positions. Ranked by safety, direct fixes, partial applicability penalty, and pattern length. The two-phase design is the most technically sophisticated of all runs, and the resulting solver achieves the highest pass rate of any single solver on both Lite (80.4%) and Hard (69.7%).
+Runs two sequential beam searches. Phase 1 (beam=150) enforces a safety constraint: candidates are restricted to patterns that do not appear as substrings in any already-correct input, preventing collateral damage. Phase 2 (beam=75) drops the constraint to handle the rare edge case where the only correct program matches a character that also appears in an unchanged string. Candidates are generated dynamically using `difflib.SequenceMatcher` on the intermediate state at each beam depth — crucially, at depth 2 the candidates are computed from the strings produced *after* depth-1 programs, enabling discovery of feed/bleed ordering. Context-extended patterns (extending the diff region by 1–2 surrounding characters) help find more specific replacements that avoid hitting unintended positions. Ranked by safety, direct fixes, partial applicability penalty, and pattern length. The two-phase design is the most technically sophisticated of all runs, and the resulting solver achieves the highest accuracy of any single solver on both Lite (80.4%) and Hard (69.7%).
 
 ---
 
 ### Qwen SLR solver analysis
 
-| Run | Pass% | Mean score | Algorithm (short) |
-|----:|------:|-----------:|-------------------|
-| 1 (`Sat_Apr_25_643_AM`) | *(old Qwen — eval pending)* | — | layered hypothesis generation + early exit |
-| 2 (`Sun_Apr_26_131_PM`) | 60.7% | 0.607 | in-Python filter + budget-limited verification |
+| Run | Acc% | Mean score | Demo Acc% ¶ | Demo Reward ¶ | Algorithm (short) |
+|----:|------:|-----------:|------------:|--------------:|-------------------|
+| 1 (`Sat_Apr_25_643_AM`) | *(old Qwen — eval pending)* | — | 59.8% | 0.7493 | layered hypothesis generation + early exit |
+| 2 (`Sun_Apr_26_131_PM`) | 60.7% | 0.607 | 64.4% | 0.6437 | in-Python filter + budget-limited verification |
+
+¶ Evaluated on the 87 unique SLR-Bench tasks the solvers were fitted on (92 demos, 5 duplicate instances from the success/failure sampling grid).
 
 **Qwen SLR run 1 — "Layered hypothesis generation with early exit"** (`Sat_Apr_25_643_AM`):
 Builds a feature space by parsing all predicates and their argument value domains. Classifies predicates as car-level or train-level, then generates candidate body literals accordingly. Searches in layers of ascending complexity (1 literal, then 2, then 3), enumerating all combinations within each layer. Uses early exit: the moment a perfect rule (score=1.0) is found in a layer, the search stops without evaluating deeper layers. This guarantees returning the simplest correct rule. Rule candidates are purely conjunctive (`has_car(T,C), pred(C,val), ...`); no negation or disjunction. Final selection ranks by score then complexity. Relies directly on the HuggingFace judge for every candidate evaluation.
 
 **Qwen SLR run 2 — "In-Python filter + budget-limited verification"** (`Sun_Apr_26_131_PM`):
-The key architectural change vs run 1 is moving the filtering almost entirely into Python to avoid the ~27-second SWI-Prolog verifier cost per rule. Generates candidates across four stages: (1a) direct separating properties — exact (pred, value) pairs that appear in all eastbound and no westbound trains; (1b) integer predicate arithmetic rules (`N > 0` style); (1c) negation-as-failure rules (`X \= excluded`); (1d) universal negation (`\+ has_car...`). Gathers candidates from both positive *and* negative examples (the key insight: the distinguishing value may only appear in negatives). If no single-property rule passes, escalates to 2- then 3-property conjunctions, capped at 50,000 combinations. Only the top-K simplest in-Python candidates are sent to the verifier (budget: 5 calls). Despite this more sophisticated design, run 2 achieved lower pass rate (60.7%) than run 1 — the budget of 5 verifier calls is too tight for medium/hard tasks, and the in-Python emulation may reject candidates the verifier would accept. The low mean score (0.607) vs run 1's higher score suggests more complete failures rather than near-misses.
+The key architectural change vs run 1 is moving the filtering almost entirely into Python to avoid the ~27-second SWI-Prolog verifier cost per rule. Generates candidates across four stages: (1a) direct separating properties — exact (pred, value) pairs that appear in all eastbound and no westbound trains; (1b) integer predicate arithmetic rules (`N > 0` style); (1c) negation-as-failure rules (`X \= excluded`); (1d) universal negation (`\+ has_car...`). Gathers candidates from both positive *and* negative examples (the key insight: the distinguishing value may only appear in negatives). If no single-property rule passes, escalates to 2- then 3-property conjunctions, capped at 50,000 combinations. Only the top-K simplest in-Python candidates are sent to the verifier (budget: 5 calls). Despite this more sophisticated design, run 2 achieved lower accuracy (60.7%) than run 1 — the budget of 5 verifier calls is too tight for medium/hard tasks, and the in-Python emulation may reject candidates the verifier would accept. The low mean score (0.607) vs run 1's higher score suggests more complete failures rather than near-misses.
 
 **CC SLR solver — "Ascending-complexity search with local Python evaluator"** (`claude_code/Sat_Apr_25_251_AM`):
-Parses each facts string into a normalised car model (cars re-indexed as c1, c2, … by car_num, train-id agnostic) enabling train-agnostic pattern matching. Discovers predicates dynamically, handling any DSL extension. Generates candidates in ascending rule complexity order: complexity-1 (single property on one car), complexity-2 (two properties, or car_num + property, or two-car rules), complexity-3 and complexity-4 with corresponding multi-car shapes. Local Python evaluation emulates Prolog's existential semantics (rule fires if *any* car satisfies all conditions for single-car rules; any *two distinct cars* for two-car rules). Ranks by accuracy then complexity, returning the simplest perfect rule. Optionally re-scores top-K against the official SWI-Prolog verifier when available. The normalised car model and dynamic predicate discovery are the key design choices — they make the solver robust to train numbering and vocabulary variation. Achieves 68.4% overall (100% basic, 78.4% easy, ~48% medium/hard), with mean score 0.9669 — near-misses dominate failures, consistent with a systematic search that finds almost-correct rules.
+Parses each facts string into a normalised car model (cars re-indexed as c1, c2, … by car_num, train-id agnostic) enabling train-agnostic pattern matching. Discovers predicates dynamically, handling any DSL extension. Generates candidates in ascending rule complexity order: complexity-1 (single property on one car), complexity-2 (two properties, or car_num + property, or two-car rules), complexity-3 and complexity-4 with corresponding multi-car shapes. Local Python evaluation emulates Prolog's existential semantics (rule fires if *any* car satisfies all conditions for single-car rules; any *two distinct cars* for two-car rules). Ranks by accuracy then complexity, returning the simplest perfect rule. Optionally re-scores top-K against the official SWI-Prolog verifier when available. The normalised car model and dynamic predicate discovery are the key design choices — they make the solver robust to train numbering and vocabulary variation. Achieves 68.4% overall (100% basic, 78.4% easy, ~48% medium/hard), with mean score 0.9669 — near-misses dominate failures, consistent with a systematic search that finds almost-correct rules. Demo accuracy (87 fitted tasks): **72.4%**, mean reward 0.9675.
 
 ### Key findings
 
@@ -410,7 +414,7 @@ Parses each facts string into a normalised car model (cars re-indexed as c1, c2,
 
 ### Solver ensemble results (symbolic-only, no LLM)
 
-| Ensemble | Lite Pass% | Hard Pass% | Avg tokens |
+| Ensemble | Lite Acc% | Hard Acc% | Avg tokens |
 |----------|----------:|----------:|----------:|
 | CC solver only | 80.4% | 69.7% | 0 |
 | Qwen run 3 only (best single Qwen) | 79.2% | 51.8% | 0 |
@@ -466,34 +470,34 @@ Each candidate requires a SWI-Prolog subprocess call (50–200 ms); brute force 
 
 Effi mode: solver used at zero cost when reward = 1.0; LLM tokens counted only for solver failures. Complexity Δ = mean predicted − mean GT (correct solutions only).
 
-Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.19/M output). Reported costs for o3/gpt-5 are from the SLR-Bench paper figure (total compute across 1000 instances). o3/gpt-5 Pass% derived from tier scores: (Basic+Easy+Medium+Hard)/4 with 250 tasks each. Total tokens in millions across all 1000 tasks. § Symbolic solver rows show one-time build tokens/cost; effi cost includes inference + solver build. Qwen build costs exact; CC build cost estimated (~$24 for SLR).
+Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.19/M output). Reported costs for o3/gpt-5 are from the SLR-Bench paper figure (total compute across 1000 instances). o3/gpt-5 Acc% derived from tier scores: (Basic+Easy+Medium+Hard)/4 with 250 tasks each. Total tokens in millions across all 1000 tasks. § Symbolic solver rows show one-time build tokens/cost; effi cost includes inference + solver build. Qwen build costs exact; CC build cost exact ($4.01 for SLR, from tracked run).
 
-| System | Pass% | Basic | Easy | Medium | Hard | Total (M tok) | Cost ($) | Complexity Δ |
+| System | Acc% | Basic | Easy | Medium | Hard | Total (M tok) | Cost ($) | Complexity Δ |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | *— LLM-only methods —* | | | | | | | | |
 | o3 † | 77.8% | 99 | 93 | 74 | 45 | 4.30 | 207.24 | — |
 | gpt-5 † | 77.0% | 100 | 90 | 72 | 46 | 16.40 | 103.13 | — |
 | BoK-32 (gpt-oss-120b) | 68.7% | 100 | 100 | 57.6 | 17.2 | 225.3 | 17.88 | −0.611 |
 | DF-32 (gpt-oss-120b) | 79.6% | 100 | 99.6 | 84.4 | 34.4 | 224.2 | 17.43 | −0.834 |
-| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 80.6%\* | 100\* | 86.0\* | 42.2\* | —\* | 284.6\* | ~$97\* | −0.223\* |
+| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 59.9%\* | 100\* | 86.0\* | 39.4\* | 14.3\* | 406.8\* | ~$88\* | −0.172\* |
 | *— Coding-agent-induced symbolic solvers (build cost §) —* | | | | | | | | |
-| **CC Solver** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **— §** | **~$24 §** | **−0.756** |
+| **CC Solver** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **— §** | **$4.01 §** | **−0.756** |
 | **Qwen Solver (run 2)** | **60.7%** | **100** | **71.2** | **34.4** | **37.2** | **7.49 §** | **$1.28 §** | **−1.087** |
 | *— Hybrid: symbolic solver + LLM fallback (effi, inference + build §) —* | | | | | | | | |
 | BoK + Qwen Solver (effi) | 75.9% | 100 | 100 | 62.8 | 40.8 | 162.8 | 14.49 | −1.063 |
-| BoK + CC Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 34.80 | −0.796 |
-| BoK + CC + Qwen Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 36.08 | −0.795 |
+| BoK + CC Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 14.81 | −0.796 |
+| BoK + CC + Qwen Solver (effi) | 80.3% | 100 | 100 | 68.4 | 52.8 | 132.4 | 16.09 | −0.795 |
 | DF + Qwen Solver (effi) | 83.9% | 100 | 99.6 | 86.4 | 49.6 | 166.1 | 14.29 | −1.123 |
-| **DF + CC Solver (effi)** | **86.6%** | **100** | **99.6** | **88.8** | **58.0** | **138.8** | **34.90** | **−0.924** |
-| **DF + CC + Qwen Solver (effi)** | **86.7%** | **100** | **99.6** | **88.8** | **58.4** | **138.8** | **36.18** | **−0.924** |
-| DF + BoK + CC + Qwen Solver (effi) | **87.3%** | **100** | **100** | **89.6** | **59.6** | 271.3 | 46.99 | −0.943 |
+| **DF + CC Solver (effi)** | **86.6%** | **100** | **99.6** | **88.8** | **58.0** | **138.8** | **14.91** | **−0.924** |
+| **DF + CC + Qwen Solver (effi)** | **86.7%** | **100** | **99.6** | **88.8** | **58.4** | **138.8** | **16.19** | **−0.924** |
+| DF + BoK + CC + Qwen Solver (effi) | **87.3%** | **100** | **100** | **89.6** | **59.6** | 271.3 | 27.00 | −0.943 |
 
 † Reported scores from SLR-Bench paper  
-‡ Partial run (661/1000 tasks, basic 100% + easy 86% + medium 42.2% (161/250) — hard tier not yet processed). Pass rate will drop further as hard tasks are processed. Complexity Δ−0.223 on solved tasks — slightly simpler than GT. Avg 431K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$97 at current avg. Single attempt, no test-time scaling. Pass% = (Basic+Easy+Medium+Hard)/4 (250 tasks each).
+‡ Partial run (708/1000 tasks — basic 250/250, easy 250/250, medium 180/250, hard 28/250). Accuracy will change as remaining medium/hard tasks complete. Complexity Δ−0.172 on solved tasks — slightly simpler than GT. Avg 575K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$124 at current avg. Single attempt, no test-time scaling. Acc% = (Basic+Easy+Medium+Hard)/4 (250 tasks each).
 
 ### Symbolic solver breakdown by rule complexity
 
-| Rule complexity | N | Pass% (CC) | Mean reward (CC) | Pass% (Qwen) | Mean reward (Qwen) |
+| Rule complexity | N | Acc% (CC) | Mean reward (CC) | Acc% (Qwen) | Mean reward (Qwen) |
 |---|---:|---:|---:|---:|---:|
 | 1 | 50 | 100.0% | 1.0000 | 100.0% | 1.0000 |
 | 1–2 | 350 | 93.1% | 0.9890 | 94.3% | 0.9429 |
@@ -520,7 +524,7 @@ CC solver outperforms Qwen at every complexity level above 1. The gap widens at 
 
 **7. Best trade-off points:**
 - Zero cost: CC Solver (68.4%, Hard 46.8%) — matches frontier LLMs on Hard tier
-- Best pass rate: DF + BoK + CC + Qwen effi (87.3%, Hard 59.6%, 271M tokens)
+- Best accuracy: DF + BoK + CC + Qwen effi (87.3%, Hard 59.6%, 271M tokens)
 - Best efficiency: DF + CC Solver effi (86.6%, Hard 58.0%, 138.8M tokens, $10.90)
 
 ### Output files
@@ -543,7 +547,7 @@ CC solver outperforms Qwen at every complexity level above 1. The gap widens at 
 
 **Dataset:** 3,077 language-pair tasks from Austronesian comparative linguistics. Each task is a Proto-language → daughter language correspondence: given a set of (proto-form, attested-form) word pairs, induce an ordered sequence of `replace(A,B)` sound change rules.  
 **Data source:** `data/real_forward_reconstruction/` — one CSV per language pair, converted by `scripts/convert_real_forward_reconstruction.py`.  
-**Key differences from PBEBench:** (1) Alphabet is the International Phonetic Alphabet (IPA) — Unicode characters including ŋ, ʔ, ɲ, dʒ, etc. (2) Word boundaries marked with `#` (e.g. `#kahiw#`). (3) Examples per task: min=1, max=857, **median=4** — far sparser than PBEBench's 5+ examples. (4) No ground-truth cascade — evaluated by pass rate only (no complexity comparison). (5) Cascade length is unknown in advance; we test max_programs ∈ {20, 50, 100}.  
+**Key differences from PBEBench:** (1) Alphabet is the International Phonetic Alphabet (IPA) — Unicode characters including ŋ, ʔ, ɲ, dʒ, etc. (2) Word boundaries marked with `#` (e.g. `#kahiw#`). (3) Examples per task: min=1, max=857, **median=4** — far sparser than PBEBench's 5+ examples. (4) No ground-truth cascade — evaluated by accuracy only (no complexity comparison). (5) Cascade length is unknown in advance; we test max_programs ∈ {20, 50, 100}.  
 **Solvers:** Same CC and Qwen solvers induced on PBEBench with ASCII strings — **zero retraining or adaptation**.
 
 ### IPA and boundary compatibility
@@ -568,7 +572,7 @@ Both solvers operate on Python `str.replace()` and `difflib.SequenceMatcher`, wh
 
 ### Key findings
 
-**1. Strong zero-shot generalisation to unseen alphabet and domain.** Both CC and Qwen run 2 achieve ~70% pass rate on real IPA data despite being induced entirely from ASCII PBEBench examples. The solvers generalise because their core algorithm (diff-based candidate extraction, greedy/beam search) is character-agnostic — it never assumes ASCII or a fixed alphabet.
+**1. Strong zero-shot generalisation to unseen alphabet and domain.** Both CC and Qwen run 2 achieve ~70% accuracy on real IPA data despite being induced entirely from ASCII PBEBench examples. The solvers generalise because their core algorithm (diff-based candidate extraction, greedy/beam search) is character-agnostic — it never assumes ASCII or a fixed alphabet.
 
 **2. `#` word boundaries are handled correctly and usefully.** The solvers naturally produce context-sensitive rules like `replace('#k', '')` (word-initial deletion) rather than unconstrained `replace('k', '')`, because the `#` is present in both input and output strings and the diff extracts it as part of the pattern. This mirrors the standard phonological notion of a positional environment.
 
@@ -584,9 +588,9 @@ Both solvers operate on Python `str.replace()` and `difflib.SequenceMatcher`, wh
 
 ### Compression sweep (Qwen run 2)
 
-To diagnose how much of the 70% pass rate reflects genuine rule discovery vs. per-example patching, we swept `max_programs = max(2, ceil(n_examples / ratio))` over Qwen run 2 on the full Real-FR dataset (`scripts/sweep_real_fr_compression.sh`).
+To diagnose how much of the 70% accuracy reflects genuine rule discovery vs. per-example patching, we swept `max_programs = max(2, ceil(n_examples / ratio))` over Qwen run 2 on the full Real-FR dataset (`scripts/sweep_real_fr_compression.sh`).
 
-| Setting | Pass% | Avg programs/task |
+| Setting | Acc% | Avg programs/task |
 |---|---:|---:|
 | Baseline (k=100, unconstrained) | 69.9% | 26.35 |
 | ratio=1.0 (programs ≤ n_examples) | 43.8% | 10.47 |
@@ -594,7 +598,7 @@ To diagnose how much of the 70% pass rate reflects genuine rule discovery vs. pe
 | ratio=3.0 (programs ≤ n_examples/3) | 30.5% | 4.82 |
 | ratio=5.0 (programs ≤ n_examples/5) | **29.6%** | **3.62** |
 
-The pass rate plateaus around **~30%** for ratio ≥ 2. This is the "genuinely compact-rule" floor — tasks where a short program exists that explains all training examples with high compression. The remaining ~40pp (from 30% to 70%) is tasks where the solver constructs a longer cascade that patches each training example individually rather than capturing a shared underlying rule.
+The accuracy plateaus around **~30%** for ratio ≥ 2. This is the "genuinely compact-rule" floor — tasks where a short program exists that explains all training examples with high compression. The remaining ~40pp (from 30% to 70%) is tasks where the solver constructs a longer cascade that patches each training example individually rather than capturing a shared underlying rule.
 
 **Key observations from the most aggressive ratio (ratio=5.0, 910 solved tasks):** Inspecting solved tasks qualitatively reveals a clear split by example count:
 
@@ -611,7 +615,7 @@ The pass rate plateaus around **~30%** for ratio ≥ 2. This is the "genuinely c
 
 The `replace(A,B)` DSL is strictly more expressive than real sound laws. A genuine sound law maps one phoneme (or phoneme class in an environment) to another: /b/→/f/, /ʔ/→∅, /u/→/o/ before glottal. The DSL allows arbitrary string substitutions with no phonological structure: `replace('m', 'ja')` would require a consonant to simultaneously become a vowel sequence, which has no known phonological parallel. Similarly, `replace('msi', 'mdi')` encodes a trigram-specific transformation that cannot correspond to any single rule because it conflates the identity of /m/ with the mutation of the following consonant.
 
-The reward function (training pass rate) cannot distinguish these cases — both score 1.0. This has two consequences:
+The reward function (training accuracy) cannot distinguish these cases — both score 1.0. This has two consequences:
 1. **False positives on sparse tasks:** With ≤2 examples, almost any short program achieves 1.0 by coincidence.
 2. **Complexity inflation on rich tasks:** With many examples the solver can always improve its score by adding more programs, so the unconstrained solver uses 26 programs on average — far more than any real sound change history.
 

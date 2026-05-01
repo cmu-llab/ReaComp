@@ -1,6 +1,7 @@
 """
-4-way comparison plots for PBEBench (Lite or Hard):
-  DF (gpt-oss-120b), BoK (gpt-oss-120b), CC Solver, OH Qwen Solver.
+5-way comparison plots for PBEBench (Lite or Hard):
+  DF (gpt-oss-120b), BoK (gpt-oss-120b), CC Solver, OH Qwen Solver,
+  Qwen3.6-35B-A3B (OpenHands) [DirectSolve coding-agent baseline].
 
 x-axis: cascade length (number of replace() programs in the GT solution).
 Produces 3 figures per benchmark:
@@ -43,30 +44,33 @@ from rewards.pbebench import _parse_programs, _validate_programs, cascade_comple
 
 DEFAULTS = {
     "lite": {
-        "df":           REPO_ROOT / "outputs/lite_tasks_full_og_direct_feedback.jsonl",
-        "bok":          REPO_ROOT / "outputs/lite_tasks_full_og_best_of_k.jsonl",
-        "cc_solver":    REPO_ROOT / "evals/solver_results/claude_code/Thu_Apr_23_807_PM/lite.jsonl",
-        "qwen_solver":  REPO_ROOT / "evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/lite.jsonl",
-        "tasks":        REPO_ROOT / "data/pbebench/lite_tasks_full_og.jsonl",
+        "df":              REPO_ROOT / "outputs/lite_tasks_full_og_direct_feedback_stripped.jsonl",
+        "bok":             REPO_ROOT / "outputs/lite_tasks_full_og_best_of_k_stripped.jsonl",
+        "cc_solver":       REPO_ROOT / "evals/solver_results/claude_code/Thu_Apr_23_807_PM/lite.jsonl",
+        "qwen_solver":     REPO_ROOT / "evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/lite.jsonl",
+        "direct_solve":    REPO_ROOT / "outputs/lite_direct_solve_openhands.jsonl",
+        "tasks":           REPO_ROOT / "data/pbebench/lite_tasks_full_og.jsonl",
         "max_programs": 5,
     },
     "hard": {
-        "df":           None,  # not available
-        "bok":          REPO_ROOT / "outputs/gpt_oss_120b_pbebench_hard_outputs.jsonl",
-        "cc_solver":    REPO_ROOT / "evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl",
-        "qwen_solver":  REPO_ROOT / "evals/solver_results/qwen3.6_35b_a3b/Fri_Apr_24_200_AM/hard.jsonl",
-        "tasks":        REPO_ROOT / "data/pbebench/tasks_full_og.jsonl",
+        "df":              None,  # not available
+        "bok":             REPO_ROOT / "outputs/hard_bok_converted.jsonl",
+        "cc_solver":       REPO_ROOT / "evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl",
+        "qwen_solver":     REPO_ROOT / "evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_DEMOS_PBEBENCH_seed_42_100_examples_with_CoT/hard.jsonl",
+        "direct_solve":    REPO_ROOT / "outputs/hard_direct_solve_openhands.jsonl",
+        "tasks":           REPO_ROOT / "data/pbebench/tasks_full_og.jsonl",
         "max_programs": 20,
     },
 }
 
 # Consistent colours + styles across both benchmarks
-# (label_prefix, color, is_solver)
+# (color, is_solver)
 SYSTEM_STYLE = {
-    "DF (gpt-oss-120b)":  ("#16A34A", False),
-    "BoK (gpt-oss-120b)": ("#D97706", False),
-    "CC Solver":           ("#2563EB", True),
-    "OH Qwen Solver":      ("#DC2626", True),
+    "DF (gpt-oss-120b)":    ("#16A34A", False),
+    "BoK (gpt-oss-120b)":   ("#D97706", False),
+    "CC Solver":             ("#2563EB", True),
+    "QO Solver":             ("#DC2626", True),
+    "QO Agent":              ("#7C3AED", False),
 }
 
 _REPLACE_RE = re.compile(
@@ -322,10 +326,10 @@ def plot_pass_rate(cl_stats: dict[str, dict[int, dict]], all_cls: list[int],
     ax.set_xticks(xs)
     ax.set_xticklabels([str(cl) for cl in all_cls], fontsize=9)
     ax.set_xlabel(_xlabel(split), fontsize=12)
-    ax.set_ylabel("Pass rate (%)", fontsize=12)
+    ax.set_ylabel("Accuracy (%)", fontsize=12)
     ax.set_ylim(0, 115)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%g%%"))
-    ax.set_title(f"Pass rate vs cascade length\n({_title_suffix(split)})",
+    ax.set_title(f"Accuracy vs cascade length\n({_title_suffix(split)})",
                  fontsize=13, fontweight="bold")
     ax.legend(fontsize=10, loc="upper right")
     _save(fig, out)
@@ -399,22 +403,25 @@ def main():
     parser.add_argument("--split", choices=["lite", "hard"], required=True)
     parser.add_argument("--plot", action="store_true")
     parser.add_argument("--figures-dir", default=str(REPO_ROOT / "figures"))
-    parser.add_argument("--df",          default=None)
-    parser.add_argument("--bok",         default=None)
-    parser.add_argument("--cc-solver",   default=None)
-    parser.add_argument("--qwen-solver", default=None)
-    parser.add_argument("--tasks",       default=None)
-    parser.add_argument("--metrics-json", default=None)
+    parser.add_argument("--df",            default=None)
+    parser.add_argument("--bok",           default=None)
+    parser.add_argument("--cc-solver",     default=None)
+    parser.add_argument("--qwen-solver",   default=None)
+    parser.add_argument("--direct-solve",  default=None,
+                        help="DirectSolve (Qwen3.6-35B-A3B OpenHands) output JSONL")
+    parser.add_argument("--tasks",         default=None)
+    parser.add_argument("--metrics-json",  default=None)
     args = parser.parse_args()
 
     cfg = DEFAULTS[args.split]
-    df_path   = Path(args.df)          if args.df          else cfg["df"]
-    bok_path  = Path(args.bok)         if args.bok         else cfg["bok"]
-    cc_path   = Path(args.cc_solver)   if args.cc_solver   else cfg["cc_solver"]
-    qw_path   = Path(args.qwen_solver) if args.qwen_solver else cfg["qwen_solver"]
-    tasks_path = Path(args.tasks)      if args.tasks       else cfg["tasks"]
-    max_prog  = cfg["max_programs"]
-    fdir      = Path(args.figures_dir)
+    df_path      = Path(args.df)           if args.df           else cfg["df"]
+    bok_path     = Path(args.bok)          if args.bok          else cfg["bok"]
+    cc_path      = Path(args.cc_solver)    if args.cc_solver    else cfg["cc_solver"]
+    qw_path      = Path(args.qwen_solver)  if args.qwen_solver  else cfg["qwen_solver"]
+    ds_path      = Path(args.direct_solve) if args.direct_solve else cfg.get("direct_solve")
+    tasks_path   = Path(args.tasks)        if args.tasks        else cfg["tasks"]
+    max_prog     = cfg["max_programs"]
+    fdir         = Path(args.figures_dir)
 
     if args.plot:
         fdir.mkdir(parents=True, exist_ok=True)
@@ -456,11 +463,18 @@ def main():
         print(f"  Warning: CC Solver not found at {cc_path}, skipping.")
 
     if qw_path and qw_path.exists():
-        print(f"Loading OH Qwen Solver: {qw_path}")
-        systems["OH Qwen Solver"] = load_solver(qw_path)
-        print(f"  {len(systems['OH Qwen Solver'])} tasks")
+        print(f"Loading QO Solver: {qw_path}")
+        systems["QO Solver"] = load_solver(qw_path)
+        print(f"  {len(systems['QO Solver'])} tasks")
     elif qw_path:
-        print(f"  Warning: OH Qwen Solver not found at {qw_path}, skipping.")
+        print(f"  Warning: QO Solver not found at {qw_path}, skipping.")
+
+    if ds_path and ds_path.exists():
+        print(f"Loading QO Agent (DirectSolve): {ds_path}")
+        systems["QO Agent"] = load_standard(ds_path)
+        print(f"  {len(systems['QO Agent'])} tasks")
+    elif ds_path:
+        print(f"  Warning: QO Agent not found at {ds_path}, skipping.")
 
     if not systems:
         print("No data loaded — nothing to do.")

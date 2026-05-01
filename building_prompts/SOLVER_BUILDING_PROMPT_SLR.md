@@ -6,7 +6,7 @@ Write a single Python file implementing a solver for a given SLR-Bench task.
 
 Write a Python-based symbolic program synthesizer that infers a Prolog rule from a set of (background_facts, direction_label) pairs, where direction_label is either "eastbound" or "westbound".
 
-You will be shown examples of an LLM solving similar tasks in @DEMOS_SLRBENCH.json, including reasoning traces from both successful and unsuccessful attempts across easy and hard cases. Use these to understand the task structure and take inspiration from the problem-solving strategies, especially in cases where the LLM struggles.
+You will be shown examples of an LLM solving similar tasks in @demos/DEMOS_SLRBENCH_seed_42_92_examples_with_CoT.json, including reasoning traces from both successful and unsuccessful attempts across easy and hard cases. Use these to understand the task structure and take inspiration from the problem-solving strategies, especially in cases where the LLM struggles.
 
 Output:
 - a Python solver file @SOLVER_SLR.py
@@ -19,7 +19,7 @@ The solver should use the verifier defined in @rewards/slr_bench.py to evaluate 
 * Output exactly one Python file and one markdown file.
 * Use only the Python standard library.
 * No external data, APIs, or dataset-specific assumptions.
-* The solver must generalize across tasks in @DEMOS_SLRBENCH.json
+* The solver must generalize across tasks in @demos/DEMOS_SLRBENCH_seed_42_92_examples_with_CoT.json
 
 ## Interface
 
@@ -59,7 +59,7 @@ The solver should:
 * infer a rule consistent with the examples and compatible with the verifier
 * use (not reimplement) the verifier to score candidate rules
 * prefer simple rules with the fewest body literals
-* follow the domain-specific language defined above and in @DEMOS_SLRBENCH.json
+* follow the domain-specific language defined above and in @demos/DEMOS_SLRBENCH_seed_42_92_examples_with_CoT.json
 * search over candidate rules and select ones that correctly classify all examples
 * if no fully consistent rule is found, return the top-K highest scoring rules
 * return structured rules or hypotheses that could be useful for downstream refinement if partially incorrect
