@@ -260,7 +260,6 @@ python scripts/compute_trajectory_tokens.py \
 │   └── slr_bench/            # SLR-Bench task files
 ├── evals/
 │   ├── solver_results/       # per-task JSONL from eval_solver.py
-│   ├── experimental_setup.md # full experimental details
 │   └── README.md             # eval directory guide
 ├── outputs/                  # LLM baseline and ensemble outputs
 ├── figures/                  # comparison plots (PNG)
