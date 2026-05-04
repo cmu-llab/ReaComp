@@ -87,7 +87,7 @@ Each program is a `replace(A, B)` where A (predicate) has length 1–3 and B (re
 | Lite (global vocab, V=17) | 17 | 27,243,180 | 5 | **≈ 1.5 × 10³⁷** |
 | Hard (global vocab, V=52) | 52 | 20,553,379,860 | 20 | **≈ 1.8 × 10²⁰⁶** |
 
-Even at 10⁹ program evaluations per second, exhausting the Lite space would take ~10²⁴ years; Hard is cosmologically larger (~10²⁰⁶). The symbolic solvers escape this by inferring pattern A directly from input/output diffs rather than enumerating all patterns, pruning replacement B to a small candidate set, and applying greedy or beam search over the cascade — evaluating hundreds to thousands of candidates per task rather than quintillions.
+Even at 10⁹ program evaluations per second, exhausting the Lite space would take ~10¹⁷ years (10³³ candidates ÷ 10⁹/s ÷ 10⁷ s/year); Hard is cosmologically larger (~10¹⁹⁰ years). The symbolic solvers escape this by inferring pattern A directly from input/output diffs rather than enumerating all patterns, pruning replacement B to a small candidate set, and applying greedy or beam search over the cascade — evaluating hundreds to thousands of candidates per task rather than quintillions.
 
 ### Main results
 
@@ -100,7 +100,7 @@ Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M outpu
 | gpt-oss-120b, single attempt † | 62.5% | — | 69.9 | — | — | — |
 | GPT-5, single attempt † | 72.4% | — | 76.5 | — | — | — |
 | DF-32 (gpt-oss-120b) | 92.4% | 0.9796 | 97.3 | +2.11 | 111.1 | 16.74 |
-| BoK-32 (gpt-oss-120b) | 93.8% | 0.9808 | 97.8 | +2.19 | 68.0 | 12.20 |
+| BoK (gpt-oss-120b) | 93.8% | 0.9808 | 97.8 | +2.19 | 68.0 | 12.20 |
 | Qwen3.6-35B-A3B (OpenHands) | 87.2% | 0.9544 | 94.9 | +1.47 | 395.3 | 85.38 |
 | *— Coding-agent-induced symbolic solvers (build cost §) —* | | | | | | |
 | **CC Solver** | **80.4%** | **0.9438** | **93.7** | **+3.00** | **— §** | **~$2 §** |
@@ -134,7 +134,7 @@ CC solver collapses at CL=5 (50%) — at the 5-program limit there is little sla
 
 **1. Symbolic solvers alone are surprisingly strong.** The CC Solver (80.4%) surpasses gpt-oss-120b (62.5%) and GPT-5 (72.4%) at their single-attempt setting — at zero per-task inference cost. The Qwen Solver (65.7%) also beats gpt-oss-120b single attempt.
 
-**2. Unioning all symbolic solvers reaches 91.3% at zero LLM cost.** The full symbolic union (CC + all 6 Qwen runs) achieves 91.3% pass — within 2.5pp of BoK-32 (93.8%) while spending zero tokens. This is the strongest zero-cost result and the tightest complexity (Δ+1.88), as the union can always pick the simplest correct answer among diverse solver outputs.
+**2. Unioning all symbolic solvers reaches 91.3% at zero LLM cost.** The full symbolic union (CC + all 6 Qwen runs) achieves 91.3% pass — within 2.5pp of BoK (93.8%) while spending zero tokens. This is the strongest zero-cost result and the tightest complexity (Δ+1.88), as the union can always pick the simplest correct answer among diverse solver outputs.
 
 **3. Symbolic + LLM ensembles consistently outperform either alone.** BoK alone caps at 93.8%; adding the CC Solver (effi) reaches 93.9% while cutting tokens by 33% (45K vs 67K avg/task). DF + All Symbolic effi reaches 93.2% at only 78K avg tokens — 29% cheaper than DF alone.
 
@@ -174,7 +174,7 @@ CC solver collapses at CL=5 (50%) — at the 5-program limit there is little sla
 
 **Dataset:** 1,216 tasks · cascade length 2–20 · 64 tasks per level  
 **Max programs:** 20  
-**LLM baseline:** gpt-oss-120b, BoK-32 only (K=32, max 16,384 tokens/sample, no early exit — all 32 always run). No DF on Hard due to sequential cost and lock-in risk at long cascades. Token cost from `metrics/bok_hard_tokens_cluster.json` (measured on cluster with model tokenizer): avg 273,143/task total (28,750 input + 3,690 output + 240,704 CoT reasoning). CoT dominates at 88%.  
+**LLM baseline:** gpt-oss-120b, BoK only (K=32, max 16,384 tokens/sample, no early exit — all 32 always run). No DF on Hard due to sequential cost and lock-in risk at long cascades. Token cost from `metrics/bok_hard_tokens_cluster.json` (measured on cluster with model tokenizer): avg 273,143/task total (28,750 input + 3,690 output + 240,704 CoT reasoning). CoT dominates at 88%.  
 **Symbolic solvers:** CC Solver and Qwen Solver (run 2, 100 examples + CoT). Zero per-task LLM cost.  
 **Ensembles:** effi mode — solver used at zero cost when reward = 1.0; BoK tokens counted only for tasks the solver fails. Note: BoK runs all 32 samples regardless of solver result (no early exit by design) — effi savings reflect *reported* token cost, not actual GPU compute. Complexity Δ = mean predicted − mean GT (correct solutions only).
 
@@ -190,8 +190,8 @@ Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M outpu
 | System | Acc% | Mean reward | Edit Sim | Complexity Δ | Total (M tok) | Cost ($) |
 |---|---:|---:|---:|---:|---:|---:|
 | *— LLM-only methods —* | | | | | | |
-| BoK-32 (gpt-oss-120b) | 68.4% | 0.9428 | 89.9 | +5.14 | 332.1 | 57.83 |
-| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 26.1%\* | 0.8377\* | 73.0\* | +1.36\* | 1005.9\* | ~$215\* |
+| BoK (gpt-oss-120b) | 68.4% | 0.9428 | 89.9 | +5.14 | 332.1 | 57.83 |
+| Qwen3.6-35B-A3B (OpenHands)$^\ddagger$ | 24.9% | 0.8411 | 73.2 | +1.36 | 1046.8 | ~$224 |
 | *— Coding-agent-induced symbolic solvers (build cost §) —* | | | | | | |
 | **CC Solver** | **69.7%** | **0.9873** | **97.2** | **+8.06** | **— §** | **~$2 §** |
 | **Qwen Solver (run 2)** | **74.7%** | **0.9836** | **96.8** | **+5.26** | **4.82 §** | **$0.85 §** |
@@ -204,7 +204,7 @@ Token costs for gpt-oss-120b at DeepInfra pricing ($0.039/M input, $0.19/M outpu
 | **BoK + All Symbolic Solvers (effi)** | **85.8%** | **0.9570** | **92.7** | **+4.64** | **71.6** | **19.89** |
 
 † Reported scores from leaderboard  
-‡ Partial run (1162/1216 tasks); accuracy will rise as remaining tasks complete. Avg 866K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$225 at current avg.
+‡ Complete run (1216/1216 tasks). Avg 861K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Total ~$224.
 
 ### Symbolic solver breakdown by cascade length
 
@@ -277,11 +277,11 @@ All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no t
 
 ### Key findings
 
-**1. Qwen run 2 is stronger than CC on Hard, reversed from Lite.** Qwen run 2 (74.7%) outperforms CC (69.7%) on Hard — and both beat BoK-32 (68.4%) at zero LLM cost. The Qwen run 2 algorithm (safety-first greedy + 2-step lookahead) handles medium-length cascades better; CC collapses earlier at CL 17–18.
+**1. Qwen run 2 is stronger than CC on Hard, reversed from Lite.** Qwen run 2 (74.7%) outperforms CC (69.7%) on Hard — and both beat BoK (68.4%) at zero LLM cost. The Qwen run 2 algorithm (safety-first greedy + 2-step lookahead) handles medium-length cascades better; CC collapses earlier at CL 17–18.
 
 **2. All Symbolic union (84.7%) slightly edges BoK + All Symbolic (85.8%) in cost.** The pure symbolic union reaches 84.7% at zero token cost — within 1.1pp of the best ensemble result (85.8%) while spending nothing. BoK contributes its complementary strength at short cascades (CL 2–12) where it approaches 100%.
 
-**3. BoK-32 and solvers are complementary across cascade lengths.** BoK-32 is near-perfect at CL 2–8 (96–100%) but collapses at CL 14+ (<47%). Symbolic solvers hold 55–70%+ through CL 17. BoK + All Symbolic union combines both strengths for +17.4pp over BoK alone.
+**3. BoK and solvers are complementary across cascade lengths.** BoK is near-perfect at CL 2–8 (96–100%) but collapses at CL 14+ (<47%). Symbolic solvers hold 55–70%+ through CL 17. BoK + All Symbolic union combines both strengths for +17.4pp over BoK alone.
 
 **4. Solver complexity overshoots GT substantially on Hard.** CC solver Δ+8.06, Qwen Δ+5.26 — much larger than Lite (+3.00/+3.01). Longer cascades give inductive search more ways to produce valid-but-verbose programs. BoK + All Symbolic union brings this down to Δ+3.54 by selecting simpler answers across many candidates.
 
@@ -292,14 +292,14 @@ All flips are at the partial-credit boundary (0.96↔1.0 or 0.98↔1.0) — no t
 **7. Best trade-off points:**
 - Best accuracy (zero cost): All Symbolic union (84.7%, 0 tokens)
 - Best accuracy overall: BoK + All Symbolic effi (85.8%, ~59K avg tokens/task)
-- Best symbolic-only: All Symbolic union beats BoK-32 standalone by +16.3pp at zero cost
+- Best symbolic-only: All Symbolic union beats BoK standalone by +16.3pp at zero cost
 
 ### Output files
 
 | File | Description |
 |---|---|
-| `outputs/gpt_oss_120b_pbebench_hard_outputs.jsonl` | BoK-32 raw outputs (PBEBench paper release) |
-| `outputs/hard_bok_converted.jsonl` | BoK-32 converted to quick_eval format (per-task token costs) |
+| `outputs/gpt_oss_120b_pbebench_hard_outputs.jsonl` | BoK raw outputs (PBEBench paper release) |
+| `outputs/hard_bok_converted.jsonl` | BoK converted to quick_eval format (per-task token costs) |
 | `evals/solver_results/claude_code/Thu_Apr_23_807_PM/hard.jsonl` | CC Solver results |
 | `evals/solver_results/qwen3.6_35b_a3b/Sun_Apr_26_402_PM_.../hard.jsonl` | Qwen Solver results (run 2) |
 | `outputs/hard_union_cc_qwen_run2.jsonl` | CC + Qwen run 2 union |
@@ -477,9 +477,9 @@ Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.
 | *— LLM-only methods —* | | | | | | | | |
 | o3 † | 77.8% | 99 | 93 | 74 | 45 | 4.30 | 207.24 | — |
 | gpt-5 † | 77.0% | 100 | 90 | 72 | 46 | 16.40 | 103.13 | — |
-| BoK-32 (gpt-oss-120b) | 68.7% | 100 | 100 | 57.6 | 17.2 | 225.3 | 17.88 | −0.611 |
+| BoK (gpt-oss-120b) | 68.7% | 100 | 100 | 57.6 | 17.2 | 225.3 | 17.88 | −0.611 |
 | DF-32 (gpt-oss-120b) | 79.6% | 100 | 99.6 | 84.4 | 34.4 | 224.2 | 17.43 | −0.834 |
-| Qwen3.6-35B-A3B (OpenHands, partial ‡) | 59.1%\* | 100\* | 86.0\* | 36.9\* | 13.6\* | 590.4\* | ~$123\* | −0.222\* |
+| Qwen3.6-35B-A3B (OpenHands) | 58.4% | 100 | 86.0 | 32.8 | 14.8 | 1232.6 | $243.41 | −0.354 |
 | *— Coding-agent-induced symbolic solvers (build cost §) —* | | | | | | | | |
 | **CC Solver** | **68.4%** | **100** | **78.4** | **48.4** | **46.8** | **— §** | **$4.01 §** | **−0.756** |
 | **Qwen Solver (run 2)** | **60.7%** | **100** | **71.2** | **34.4** | **37.2** | **7.49 §** | **$1.28 §** | **−1.087** |
@@ -493,7 +493,7 @@ Token costs for gpt-oss-120b estimated at DeepInfra pricing ($0.039/M input, $0.
 | DF + BoK + CC + Qwen Solver (effi) | **87.3%** | **100** | **100** | **89.6** | **59.6** | 271.3 | 27.00 | −0.943 |
 
 † Reported scores from SLR-Bench paper  
-‡ Partial run (783/1000 tasks — basic 250/250, easy 250/250, medium 217/250, hard 66/250). Accuracy will change as remaining medium/hard tasks complete. Complexity Δ−0.222 on solved tasks — slightly simpler than GT. Avg 754K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Projected total ~$157 at current avg. Single attempt, no test-time scaling. Acc% = (Basic+Easy+Medium+Hard)/4 (250 tasks each).
+Acc% = (Basic+Easy+Medium+Hard)/4 (250 tasks each). Avg 1,233K tokens/task at AtlasCloud Qwen3.6-35B-A3B pricing ($0.1612/M input, $0.9653/M output). Single attempt, no test-time scaling.
 
 ### Symbolic solver breakdown by rule complexity
 
@@ -512,7 +512,7 @@ CC solver outperforms Qwen at every complexity level above 1. The gap widens at 
 
 **1. CC Solver matches o3 and gpt-5 on the Hard tier at zero LLM cost.** CC Solver: 46.8% on Hard vs o3 45%, gpt-5 46% — essentially equal — while spending nothing per task. Overall, CC (68.4%) and Qwen (60.7%) are below o3/gpt-5 (77.8%/77.0%) on aggregate, but the gap is entirely in Basic/Easy where the LLM solvers are near-perfect; on Hard the symbolic solvers are competitive.
 
-**2. BoK-32 is strong on Basic/Easy but collapses on Hard.** 100% on Basic/Easy, then 57.6% Medium, 17.2% Hard — a severe cliff. DF is more balanced (84.4% Medium, 34.4% Hard). The symbolic solvers hold up far better on Hard (46.8% CC). Complementarity between DF and symbolic makes effi ensembles very effective.
+**2. BoK is strong on Basic/Easy but collapses on Hard.** 100% on Basic/Easy, then 57.6% Medium, 17.2% Hard — a severe cliff. DF is more balanced (84.4% Medium, 34.4% Hard). The symbolic solvers hold up far better on Hard (46.8% CC). Complementarity between DF and symbolic makes effi ensembles very effective.
 
 **3. DF + CC Solver effi reaches 86.6% overall (58.0% Hard) at 138.8M tokens.** Full DF (1000 tasks) combined with CC Solver lifts Hard from 34.4% to 58.0% — +23.6pp — surpassing both o3 (45%) and gpt-5 (46%) on the Hard tier. DF + CC + Qwen adds 0.1pp at the same token cost. Adding BoK further pushes to 87.3% (59.6% Hard) but doubles token cost.
 

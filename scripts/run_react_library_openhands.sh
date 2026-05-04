@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
-USER="arnaik"
+USER="anonymous"
 DATASET=data/pbebench/lite_tasks_full.jsonl
 OUTPUT=outputs/oh_react_library_pbebench_lite_full_v2.jsonl
 REWARD=pbebench
