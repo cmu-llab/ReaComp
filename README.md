@@ -60,23 +60,6 @@ The output directory is automatically tagged with the demos filename (e.g. `buil
 
 ---
 
-## Results
-
-See `evals/findings.md` for the full results table and `figures/` for comparison plots.
-
-Key result on **PBEBench-Hard** (cascade length 2–20):
-
-| System | Pass rate |
-|--------|----------:|
-| BoK (gpt-oss-120b, K=32) | — |
-| CC Solver (zero LLM cost) | 69.7% |
-| OH Qwen Solver (zero LLM cost) | 57.8% |
-| BoK + CC Solver ensemble | best combined |
-
-Solver variance (run1 vs run2): CC solver 99.6% per-task agreement (Δ=0.09pp), Qwen 97.0% (Δ=1.0pp) — essentially deterministic.
-
----
-
 ## Setup
 
 ```bash
@@ -277,7 +260,6 @@ python scripts/compute_trajectory_tokens.py \
 │   └── slr_bench/            # SLR-Bench task files
 ├── evals/
 │   ├── solver_results/       # per-task JSONL from eval_solver.py
-│   ├── findings.md           # consolidated results
 │   ├── experimental_setup.md # full experimental details
 │   └── README.md             # eval directory guide
 ├── outputs/                  # LLM baseline and ensemble outputs
