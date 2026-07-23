@@ -1,19 +1,93 @@
 # ReaComp — Rebuttal / Author Response
 
-We thank all three reviewers for their careful and constructive reviews. Below we
-respond to **every point each reviewer raised, in the order they raised it**
-(Weaknesses, Questions, Clarity, and Limitations notes), quoting each concern so
-it is easy to verify that we have addressed it. Items awaiting rebuttal-period
-experiments are marked **[TBD]** and will be filled in with concrete numbers
-before discussion closes.
+We thank the Area Chair and all three reviewers. Below we respond first to the
+**meta-review** (Section 0), then to **every point each reviewer raised, in the
+order they raised it** (Weaknesses, Questions, Clarity, Limitations), quoting each
+concern so it is easy to verify we have addressed it. Items awaiting
+rebuttal-period experiments are marked **[TBD]** and will be updated with concrete
+numbers before discussion closes.
 
-One request is shared by all three reviewers — a comparison against other
-neuro-symbolic / library-learning / solver-induction methods. We are adding a
-**TroVE** baseline (Wang et al., 2024b, already cited in §6) run in the *same*
-Qwen3.6-35B-A3B + OpenHands + verifier harness as our DirectSolve baseline, so
-any gap is attributable to the induction mechanism rather than to model or
-infrastructure differences. We refer to this as **[R-TROVE]** below and report
+One request recurs across the meta-review and all three reviewers — a comparison
+against other neuro-symbolic / library-learning / solver-induction methods. We are
+adding a **TroVE** baseline (Wang et al., 2024b, already cited in §6) run in the
+*same* Qwen3.6-35B-A3B + OpenHands + verifier harness as our DirectSolve baseline,
+so any gap is attributable to the induction mechanism rather than to model or
+infrastructure differences. We refer to this as **[R-TROVE]** and report
 **[TBD: numbers]** for PBEBench-Lite and SLR-Bench.
+
+---
+
+# Section 0 — Response to the Meta-Review
+
+We thank the AC for the accurate summary and for identifying, in point (d), a
+concrete set of conditions under which the assessment would improve. We take these
+seriously and address each below. We respectfully note that **most of these
+concerns are already addressed by experiments in the current submission** (chiefly
+Appendices F.2 and F.4), which we suspect were easy to miss given their placement
+in the appendix; we will surface them in the main text. We map each AC condition
+to the existing (or in-progress) evidence:
+
+**(d.1) "Sensitivity to trace quality."** Already measured. The **no-CoT
+ablation** (App. F.2, Table 13) shows that removing reasoning traces from the
+demonstrations drops PBEBench-Hard accuracy from **74.7% → 24.8%** (and 53.4% →
+42.1% on Lite), while *reducing the number* of CoT examples (100 → 48) has a much
+smaller effect. This directly quantifies trace-quality sensitivity and shows the
+signal comes from reasoning content, not example count.
+
+**(d.2) "Solver induction variance."** Already measured. Three independent
+induction runs on the **identical** 100-example CoT trace set span **53.4–79.2%
+(Lite) / 51.8–74.7% (Hard)** (App. F.2, Table 13), each discovering a
+qualitatively different algorithm. We characterize this as search over algorithmic
+space and show ensembling recovers it (91.3% Lite / 84.7% Hard). We additionally
+report inference-time determinism (App. Table 18: CC 99.6%, QO 97.0% per-task
+agreement across reruns), separating *induction* variance from *inference*
+variance.
+
+**(d.3) "Generalize beyond the original benchmark distributions."** Already
+demonstrated. The **forward-reconstruction case study** (§4, App. F.4) evaluates
+solvers **zero-shot** on real historical-linguistics data with an **unseen IPA
+alphabet**, variable/unknown cascade lengths, and **no ground-truth programs** —
+a genuine distribution shift, not resampling of the training distribution. Solvers
+reach ~70% individually and **80.1%** ensembled without any retraining.
+
+**(d.4) "Reusable abstractions rather than task-specific heuristics."** We already
+provide the analysis that tests exactly this — the **compression sweep** (App. F.4,
+Table 20): under strong compression (programs ≤ n_examples/5), accuracy drops to
+~30%, revealing the subset of tasks that admit compact, general rules versus those
+solved by longer example-patching cascades. We report this limitation honestly and
+recover linguistically plausible sound laws (e.g. /b/→/f/ lenition, glottal-stop
+deletion) under compression. This is direct evidence *characterizing* when solvers
+capture reusable structure versus heuristics — not a claim we hide from.
+
+**(d.5) "Stronger neuro-symbolic / library-learning baselines."** This is the one
+condition not yet in the submission, and we agree it is the most important
+addition. See **[R-TROVE]**: a TroVE library-induction baseline in the matched
+Qwen3.6 + OpenHands harness on PBEBench-Lite and SLR-Bench. Combined with the
+existing DirectSolve coding-agent baseline (87.2% Lite / 24.9% Hard / 58.4% SLR),
+this brackets ReaComp against both per-task agentic effort and cross-task library
+reuse under matched conditions. **[TBD: numbers]**
+
+**(d.6) "Broader benchmarks."** We currently span two verifier-backed synthetic
+domains (string-rewrite cascades, Prolog rule induction) *plus* one real-world
+transfer study (historical linguistics), covering synthetic and natural
+distributions. We agree ARC-family / List-Functions benchmarks are valuable next
+targets but they require per-domain DSLs and verifiers beyond a responsible
+rebuttal-window addition; we will add them to Future Work and **narrow the paper's
+claims** to the verifier-backed PBE/ILP setting we actually evaluate, as the AC
+suggests.
+
+**On "lacks theoretical justification for when induction succeeds/generalizes."**
+We agree the contribution is empirical. We will add a discussion framing the
+observed regularities as testable conditions: induction succeeds when (i) traces
+carry reasoning (d.1), (ii) the target distribution shares the DSL's structural
+assumptions (d.3), and (iii) the verifier is fast and exact (App. B). A full theory
+of generalization for coding-agent-induced solvers is beyond this paper's scope,
+and we will state that boundary explicitly rather than over-claim.
+
+In summary, five of the six conditions in (d) are supported by evidence already in
+the submission or by the honest limitation analyses we report; the sixth (stronger
+baselines) is in progress. We will make these results far more visible in the main
+text and narrow claims where the evidence does not yet reach.
 
 ---
 
