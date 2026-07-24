@@ -8,12 +8,23 @@ rebuttal-period experiments are marked **[TBD]** and will be updated with concre
 numbers before discussion closes.
 
 One request recurs across the meta-review and all three reviewers — a comparison
-against other neuro-symbolic / library-learning / solver-induction methods. We are
-adding a **TroVE** baseline (Wang et al., 2024b, already cited in §6) run in the
-*same* Qwen3.6-35B-A3B + OpenHands + verifier harness as our DirectSolve baseline,
-so any gap is attributable to the induction mechanism rather than to model or
-infrastructure differences. We refer to this as **[R-TROVE]** and report
-**[TBD: numbers]** for PBEBench-Lite and SLR-Bench.
+against other neuro-symbolic / library-learning / solver-induction methods. We
+have added a **TroVE** baseline (Wang et al., 2024b, already cited in §6) run in
+the *same* Qwen3.6-35B-A3B + OpenHands + verifier harness as our
+**Qwen3.6-35B-A3B (OpenHands)** coding-agent baseline, so any gap is attributable
+to the induction mechanism rather than to model or infrastructure differences. We
+refer to this as **[R-TROVE]**. TroVE achieves **47.9% on PBEBench-Lite** and
+**44.1% on SLR-Bench** (mean reward 0.554 / 0.729), versus **87.2% / 58.4%** for
+the Qwen3.6-35B-A3B (OpenHands) agent and **93.9% / 86.7%** for ReaComp's best
+hybrid. To preempt a compute-fairness objection, we report TroVE under **two
+configurations**: (i) a lightweight single-shot setting (K=3 candidates/mode, no
+chain-of-thought, 4K-token generations) and (ii) a **compute-matched** setting
+whose per-call generation budget matches the Qwen3.6-35B-A3B (OpenHands) agent
+(chain-of-thought on, 16K-token generations); **[TBD: matched numbers]**. Beyond
+accuracy, [R-TROVE] also yields a **qualitative library-content comparison**
+(App. F.2 analyzes what *ReaComp* induces; we do the same for TroVE's toolbox)
+that speaks directly to the "reusable abstractions vs. task-specific heuristics"
+question in meta-review (d.4).
 
 ---
 
@@ -50,22 +61,45 @@ alphabet**, variable/unknown cascade lengths, and **no ground-truth programs** �
 a genuine distribution shift, not resampling of the training distribution. Solvers
 reach ~70% individually and **80.1%** ensembled without any retraining.
 
-**(d.4) "Reusable abstractions rather than task-specific heuristics."** We already
-provide the analysis that tests exactly this — the **compression sweep** (App. F.4,
-Table 20): under strong compression (programs ≤ n_examples/5), accuracy drops to
-~30%, revealing the subset of tasks that admit compact, general rules versus those
-solved by longer example-patching cascades. We report this limitation honestly and
-recover linguistically plausible sound laws (e.g. /b/→/f/ lenition, glottal-stop
-deletion) under compression. This is direct evidence *characterizing* when solvers
-capture reusable structure versus heuristics — not a claim we hide from.
+**(d.4) "Reusable abstractions rather than task-specific heuristics."** This is a
+central strength of our approach, and we provide two complementary analyses that
+test it directly. **(i) The induced solvers are documented general algorithms, not
+lookup tables.** The **qualitative trajectory analysis** (App. F.2, "Qualitative
+trajectory analysis"; Table 13) inspects each induced `SOLVER.py` and reports its
+*mechanism*: e.g. run 1 = "extract edit regions → greedy selection maximizing fixes
+→ residual repair passes"; run 2 = "safety-first hard constraint (never modify
+already-correct examples) + 2-step lookahead for interaction effects"; the Claude
+Code solver = "two-phase safe/unrestricted beam search with candidate extraction
+from `difflib.SequenceMatcher`"; the SLR solver = "ascending-complexity layered
+search with early exit on the simplest correct rule." These are input-agnostic
+search procedures parameterized by the task's examples — the definition of a
+reusable abstraction — and they are inspectable code, not hidden weights.
+**(ii) The compression sweep** (App. F.4, Table 20) then stress-tests *how* general
+the learned rules are: under strong compression (programs ≤ n_examples/5) accuracy
+drops to ~30%, honestly delimiting the tasks that admit compact general rules from
+those solved by longer example-patching cascades, and recovering linguistically
+plausible sound laws (e.g. /b/→/f/ lenition, glottal-stop deletion). Crucially,
+**this is exactly the axis on which a library-learning baseline should be
+contrasted, not just accuracy.** In our in-progress **[R-TROVE]** run we observe
+that TroVE's induced toolbox is a *mixture* of genuinely general functions
+(brute-force replace-search over example-derived candidates) and **memorized,
+task-specific functions** — e.g. a "reusable" toolbox entry whose body hardcodes one
+task's answer (`programs = ["replace('cb','iyj')", "replace('v','bw')"]`) and is
+then re-invoked on unrelated tasks. This is precisely the "task-specific heuristics
+masquerading as abstractions" failure the AC is concerned about — and it is a
+property of per-task-sampled library induction, whereas ReaComp compiles a *single*
+general algorithm whose mechanism we can read off (App. F.2). We will add this
+qualitative library-content comparison alongside the accuracy numbers. **[TBD:
+final TroVE toolbox analysis]**
 
 **(d.5) "Stronger neuro-symbolic / library-learning baselines."** This is the one
 condition not yet in the submission, and we agree it is the most important
 addition. See **[R-TROVE]**: a TroVE library-induction baseline in the matched
 Qwen3.6 + OpenHands harness on PBEBench-Lite and SLR-Bench. Combined with the
-existing DirectSolve coding-agent baseline (87.2% Lite / 24.9% Hard / 58.4% SLR),
-this brackets ReaComp against both per-task agentic effort and cross-task library
-reuse under matched conditions. **[TBD: numbers]**
+existing Qwen3.6-35B-A3B (OpenHands) coding-agent baseline (87.2% Lite / 24.9%
+Hard / 58.4% SLR), this brackets ReaComp against both per-task agentic effort and
+cross-task library reuse under matched conditions: TroVE scores 47.9% Lite / 44.1%
+SLR — below the coding agent, which is in turn below ReaComp.
 
 **(d.6) "Broader benchmarks."** We currently span two verifier-backed synthetic
 domains (string-rewrite cascades, Prolog rule induction) *plus* one real-world
@@ -88,6 +122,89 @@ In summary, five of the six conditions in (d) are supported by evidence already 
 the submission or by the honest limitation analyses we report; the sixth (stronger
 baselines) is in progress. We will make these results far more visible in the main
 text and narrow claims where the evidence does not yet reach.
+
+---
+
+# [R-TROVE] — The new TroVE baseline: fidelity and findings
+
+Because a matched neuro-symbolic baseline is the single most-requested addition
+(meta-review d.5; ggna-Q2; orXJ-2; ZhtM), we describe here (i) how faithful our
+TroVE implementation is, (ii) the headline accuracy, and (iii) what we find in the
+induced library.
+
+**Headline accuracy.** Over all 1008 PBEBench-Lite and 1000 SLR-Bench tasks:
+
+| System | PBEBench-Lite Acc% | SLR-Bench Acc% |
+|---|---|---|
+| TroVE (library induction, this work) | **47.9** | **44.1** |
+| Qwen3.6-35B-A3B (OpenHands) — coding agent, no induction | 87.2 | 58.4 |
+| ReaComp — best hybrid | 93.9 | 86.7 |
+
+On SLR-Bench the accuracy is sharply tiered (basic 100.0% / easy 66.8% /
+medium 9.6% / hard 0.0%); on PBEBench-Lite it declines with cascade length
+(len 2: 83.7% → len 5: 12.9%). TroVE thus trails the coding-agent baseline by
+**39.3 pp on Lite and 14.3 pp on SLR**, and ReaComp's best hybrid by **46.0 /
+42.6 pp** — despite the prompts explicitly asking for reusable abstractions.
+
+**Compute-matched control.** The numbers above use a lightweight single-shot TroVE
+configuration (K=3 candidates per mode, chain-of-thought disabled, 4K-token
+generations). To ensure the gap is not an artifact of under-resourcing, we also run
+a **compute-matched** configuration whose per-call generation budget equals the
+Qwen3.6-35B-A3B (OpenHands) agent's — chain-of-thought **on** and 16,384-token
+generations (the agent's exact per-call budget). We note that TroVE is
+single-shot candidate generation by construction and does *not* include the
+agent's multi-step (up to 100-step) tool-use loop; matching per-call budget and
+sample count isolates generation compute while preserving TroVE's algorithm.
+**[TBD: compute-matched Lite + SLR numbers]**
+
+**Implementation fidelity.** We implement TroVE (Wang et al., 2024b) in the *same*
+Qwen3.6-35B-A3B + OpenHands + verifier harness as our Qwen3.6-35B-A3B (OpenHands)
+coding-agent baseline, so any performance gap isolates the induction mechanism
+rather than model or infrastructure differences. The implementation follows the
+paper's algorithm:
+
+| TroVE component | Our implementation |
+|---|---|
+| Three generation modes (IMPORT / CREATE / SKIP) | Implemented; K candidates per mode sampled concurrently per task |
+| Growing toolbox of reusable functions | Persistent package dir; functions added on CREATE, importable on later tasks |
+| Candidate selection | Reward-based selection (verifier), tiebroken by fewest AST nodes — a deliberate, documented deviation from the paper's self-consistency, appropriate because we have an exact verifier |
+| Periodic toolbox trimming by usage | Implemented (usage-count threshold, periodic) |
+| Prompts | Ask explicitly for a *new, reusable, generic* function and *not* to duplicate existing toolbox entries — i.e. we bias the model **toward** abstraction, not away from it |
+
+The only deviations are (a) reward-based rather than self-consistency selection
+(justified by the exact verifier and standard in verifier-backed settings), and
+(b) the trace-generation model is our benchmark model rather than the paper's.
+Neither favors ReaComp.
+
+**Finding — library learning memorizes rather than abstracts (SLR-Bench).** Under
+this faithful setup, TroVE's induced "library" does *not* converge to reusable
+abstractions. On SLR-Bench the toolbox collapses to a **single function** that
+takes no arguments, performs no computation, and simply `print`s a **hardcoded
+rule string** derived from one specific task (its chain-of-thought frozen in a
+docstring); repeated CREATE calls overwrite this one slot with a new memorized
+answer. When this "abstraction" is **reused** (IMPORT mode), it solves only
+**5/190 tasks (2.6%, mean reward 0.539)**, versus **416/687 (60.6%, mean reward
+0.878) when the model instead solves each task from scratch** (SKIP) — i.e.
+**reuse actively degrades performance**. The same pattern holds on PBEBench-Lite:
+IMPORT solves 45/404 (11.1%, mean reward 0.197) while SKIP solves 364/494 (73.7%,
+mean reward 0.805). In other words, the model ignores the prompt's request for
+generality and memorizes, and reusing memorized answers on new tasks hurts —
+library reuse is the single weakest mode on *both* benchmarks.
+
+**Contrast with ReaComp.** ReaComp compiles a *single general* algorithm whose
+mechanism is human-readable (App. F.2 — e.g. the SLR solvers perform
+ascending-complexity search over the task's own predicate space, re-deriving the
+correct rule per task). This is the genuine reusable abstraction, and it is why
+ReaComp's CC solver reaches 46.8% on SLR-Hard — matching frontier models — where a
+memorized-answer library collapses.
+
+**Scope (stated honestly).** This finding is for TroVE *with this coding agent*
+under matched conditions; a stronger coding agent might induce more general
+functions. We therefore claim only that, under matched conditions, library
+induction here reduces to task-specific memorization — not that library learning
+is fundamentally incapable. We report accuracy against TroVE and the
+Qwen3.6-35B-A3B (OpenHands) agent as the primary quantitative comparison, with the
+library-content analysis as supporting qualitative evidence for d.4.
 
 ---
 
@@ -181,10 +298,21 @@ by an LLM or search at inference time*, whereas ReaComp compiles reasoning into 
 **standalone solver that runs with zero LLM calls**. The Sesterhenn et al. (2025)
 compute-matched re-evaluation we already cite reinforces this: library-learning
 gains often shrink under compute control — a critique ReaComp sidesteps by moving
-cost entirely offline. Empirically, our existing **DirectSolve** baseline (same
-Qwen3.6 agent, per task: 87.2% Lite / 24.9% Hard / 58.4% SLR) already shows that
-per-task agentic effort trails the compiled solver on hard instances; TroVE will
-add the cross-task library-reuse comparison. **[TBD: numbers]**
+cost entirely offline. Empirically, our existing **Qwen3.6-35B-A3B (OpenHands)**
+coding-agent baseline (same Qwen3.6 agent, per task: 87.2% Lite / 24.9% Hard /
+58.4% SLR) already shows that per-task agentic effort trails the compiled solver on
+hard instances; TroVE adds the cross-task library-reuse comparison (47.9% Lite /
+44.1% SLR — below both). Directly heeding Sesterhenn et al., we report TroVE under
+a **compute-matched** configuration as well (chain-of-thought on, 16K-token
+generations, matching the coding agent's per-call budget), so the gap cannot be
+attributed to under-resourcing. Beyond the headline accuracy, we will
+report a **qualitative contrast of the induced libraries**: our own solvers are
+documented general search algorithms (App. F.2), whereas TroVE's per-task-sampled
+toolbox in our runs mixes general functions with **task-specific memorized
+functions** (toolbox entries that hardcode a single task's answer yet are re-invoked
+on others) — empirical support for the claim that a *single compiled solver*
+captures reusable structure more cleanly than accumulate-and-reuse library learning.
+**[TBD: numbers + toolbox analysis]**
 
 ### Limitations note — "It seems to be missing a discussion on the quality of reasoning traces."
 
@@ -308,15 +436,22 @@ code edits, execution against the trace set, and reward-guided refinement over
 not asserted but **verifier-established**: every "solved" is `reward = 1.0` under
 exact deterministic execution (§3), with per-cascade-length, per-tier, and
 per-BFCC breakdowns (Tables 12, 16, 17, 27) and statistical-significance testing
-(App. F.5). We will make the App. D.1 pointer prominent in the main text.
+(App. F.5). Finally, the resulting solvers are not opaque: the **qualitative
+trajectory analysis** (App. F.2) documents each induced solver's *actual algorithm*
+— e.g. two-phase safe/unrestricted beam search with `difflib.SequenceMatcher`
+candidate extraction (Claude Code, strongest single solver: 80.4% Lite / 69.7%
+Hard), safety-first greedy with 2-step lookahead, or ascending-complexity layered
+search for SLR — so a reader can inspect and judge solver design directly. We will
+make the App. D.1 and App. F.2 pointers prominent in the main text.
 
 ### Concern 2 — "A comparison with other symbolic solvers is necessary."
 
-Agreed; see **[R-TROVE]**. We are adding a TroVE library-induction baseline in the
-identical Qwen3.6 + OpenHands + verifier harness on PBEBench-Lite and SLR-Bench.
-Together with the existing DirectSolve coding-agent baseline (87.2% Lite / 24.9%
-Hard / 58.4% SLR), this brackets ReaComp against both per-task agentic solving and
-cross-task library learning under matched conditions. **[TBD: numbers]**
+Agreed; see **[R-TROVE]**. We have added a TroVE library-induction baseline in the
+identical Qwen3.6 + OpenHands + verifier harness on PBEBench-Lite and SLR-Bench
+(47.9% Lite / 44.1% SLR). Together with the existing Qwen3.6-35B-A3B (OpenHands)
+coding-agent baseline (87.2% Lite / 24.9% Hard / 58.4% SLR), this brackets ReaComp
+against both per-task agentic solving and cross-task library learning under matched
+conditions.
 
 ### Concern 3 — "For the fallback cases, the authors appear to solve them directly using an LLM. It would be worth considering how to better leverage the outputs produced by the symbolic solver when handling these fallback cases."
 
