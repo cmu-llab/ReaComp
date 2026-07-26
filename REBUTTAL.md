@@ -21,6 +21,7 @@ induction method itself rather than the model or the infrastructure.
 | System | PBEBench-Lite | SLR-Bench |
 |---|--:|--:|
 | TroVE (library induction) | 47.9% | 44.1% |
+| TroVE (compute-matched: CoT, 16K tokens) | 53.2% | 54.5% |
 | Qwen3.6-35B-A3B (OpenHands), coding agent, no induction | 87.2% | 58.4% |
 | ReaComp, best hybrid | 93.9% | 86.7% |
 
@@ -30,8 +31,8 @@ and 42.6 points under ReaComp. Its SLR accuracy is steeply tiered (basic 100%, e
 structured search matters, whereas ReaComp's CC solver reaches 46.8% there. (TroVE
 uses fewer total tokens than the coding agent because it samples a fixed set of
 single-shot candidates rather than running a multi-step agentic loop; to rule out
-under-resourcing we are also completing a per-call compute-matched run, reported in
-the [TBD] below.)
+under-resourcing we also ran a per-call compute-matched configuration, reported
+below.)
 
 On fidelity: we implement TroVE's three modes (IMPORT, CREATE, SKIP), a growing
 importable toolbox, usage-based trimming, and candidate selection. We select by
@@ -41,36 +42,53 @@ paper's. Neither choice works in ReaComp's favor, and the prompts explicitly ask
 model for reusable, generic functions.
 
 The more interesting result speaks to meta-review point (d.4). TroVE's induced
-library does not become a set of reusable abstractions; it memorizes. On SLR the
-toolbox collapses to a single function that takes no arguments and prints a hardcoded
-rule copied from one task, with that task's chain-of-thought left in a docstring, and
-each CREATE call simply overwrites it with another task's answer. When the model
-reuses this function (IMPORT) it solves 5 of 190 tasks (mean reward 0.54); when it
-instead solves each task from scratch (SKIP) it solves 416 of 687 (mean reward 0.88).
-Reusing the "library" actually lowers performance, and the same holds on Lite (IMPORT
-0.20 vs SKIP 0.81). ReaComp compiles one general algorithm whose logic is readable in
-the code (App. F.2; the SLR solver, for instance, does ascending-complexity search
-over each task's own predicates). We are careful about scope: this is TroVE with this
-particular coding agent, and a stronger agent might do better, so we do not claim
-library learning cannot work in general. [TBD: a compute-matched TroVE run with
-chain-of-thought on and a 16K-token budget.]
+library does not become a set of reusable abstractions; it memorizes. On SLR
+(compute-matched run) the toolbox is a handful of near-duplicate functions
+(`find_eastbound_rule`, `find_train_rule`, `find_train_eastbound_rule`, ...), each
+taking no arguments and specialized to one task's data, with that task's specific
+train identifiers baked into the body. The decisive evidence is in how these get
+used. When the model imports a toolbox function (IMPORT) it solves 2 of 393 tasks
+(1%, mean reward 0.52); when it instead writes a solution for the task in front of it
+(SKIP) it solves 538 of 584 (92%, mean reward 0.98). Reusing the "library" does not
+help, it hurts, and the same pattern holds on Lite (IMPORT 24% vs SKIP 67%). In other
+words the accumulated library is close to dead weight: TroVE succeeds when it ignores
+it. This is consistent with the compute-matched re-evaluation of TroVE on MATH by
+Sesterhenn et al. (2025), which we cite, and which independently finds TroVE's tools
+to be trivial or rarely reused and its apparent gains to come from extra compute
+rather than reuse (shrinking to about 1% once compute is matched). Our two findings,
+that matched compute closes most of TroVE's headroom and that reuse itself does not
+help, point the same way from a different domain. ReaComp instead compiles one general
+algorithm whose logic is readable in the code (App. F.2; the SLR solver, for instance,
+does ascending-complexity search over each task's own predicates). We are careful
+about scope: this is TroVE with this particular coding agent, and a stronger agent
+might do better, so we do not claim library learning cannot work in general.
+
+The per-call compute-matched run (chain-of-thought on, 16K-token budget) confirms the
+gap is not an artifact of under-resourcing. It raises TroVE to 53.2% on Lite (from
+47.9%) and 54.5% on SLR (from 44.1%, with tiers basic 100%, easy 76.4%, medium 29.6%,
+hard 12.0%). The extra budget helps, most visibly lifting the SLR hard tier off the
+floor (0.0% to 12.0%), but library induction under matched compute still trails the
+coding agent (87.2% / 58.4%) and ReaComp's best hybrid (93.9% / 86.7%) by wide
+margins on both benchmarks.
 
 ### G2. Generalization beyond the training distribution
 
-The paper already tests this. In the forward-reconstruction study (App. F.4), the
-induced solvers are applied zero-shot to real historical-linguistics data with an
-unseen IPA alphabet, variable and unknown cascade lengths, and no ground-truth
-programs. That is a real distribution shift, not a resampling of the training set.
-The solvers reach about 70% individually and 80.1% when ensembled, with no
-retraining. One useful property of a standalone symbolic solver is that on a novel
-input it cannot quietly fall back on an LLM's priors; it either generalizes on its
-own terms or fails visibly. We are explicit about the boundary: this holds for
-distributions that share the DSL's structure, not for arbitrary new task formats
-(App. B).
+The paper already tests this in the main text. The real-world forward-reconstruction
+case study (§4, "Real-world case study") applies the induced solvers zero-shot to real
+historical-linguistics data with an unseen IPA alphabet, variable and unknown cascade
+lengths, and no ground-truth programs, reaching about 70% individually and 80.1%
+ensembled with no retraining (§5 summarizes the finding; full setup and qualitative
+examples in App. F.4). That is a real distribution shift, not a resampling of the
+training set. One useful property of a standalone symbolic solver is that on a novel
+input it cannot quietly fall back on an LLM's priors; it either generalizes on its own
+terms or fails visibly. We are explicit about the boundary: this holds for
+distributions that share the DSL's structure, not for arbitrary new task formats.
 
 ### G3. Sensitivity to trace quality and induction variance
 
-Both are measured in the paper (App. F.2, Table 13).
+Both are measured in the paper. The solver-induction ablations are reported in §4
+("Solver induction ablations") and discussed in §5, with the full grid in App. F.2
+(Table 13).
 
 Trace quality: dropping chain-of-thought from the demonstrations lowers
 PBEBench-Hard from 74.7% to 24.8% (and Lite from 53.4% to 42.1%), while cutting the
@@ -82,8 +100,8 @@ already-correct examples.
 
 Induction variance: three runs on identical traces span 53.4-79.2% on Lite and
 51.8-74.7% on Hard, each arriving at a different algorithm. We would add that this
-variance is useful rather than only a liability. Because each run discovers a
-different algorithm, the solvers have slightly different failure modes, so ensembling
+variance is useful, because each run discovers a different algorithm. 
+The solvers have slightly different failure modes, so ensembling
 them beats any single solver (91.3% Lite and 84.7% Hard, above the best individual
 run in both cases). In other words, variance across induction attempts is a source of
 solver diversity that the ensemble exploits. Separately, inference for a fixed solver
@@ -92,55 +110,78 @@ variance is in what gets induced, not in how a given solver behaves at test time
 
 ### G4. Domain scope and open-world benchmarks
 
-The two-domain plus real-world scope is deliberate. Solver induction pays off
+The two-domain plus real historical linguistics scope is deliberate. Solver induction pays off
 precisely where a fast, exact verifier exists, since that is what lets the agent test
 and refine a solver offline. And these are not easy domains: PBEBench-Hard (cascades
 up to length 20, a search space around 10^206) and SLR-Hard are where LLM scaling
 collapses and ReaComp does best.
 
-On ARC-AGI, which reviewer orXJ suggests, we think it is genuinely out of scope for
-offline solver induction, for a principled reason. ReaComp compiles the reasoning of
-one shared task distribution into a single reusable solver over a fixed DSL. ARC-AGI
-is open-world by design: its tasks are separated so that each can require novel
-primitives, and there is no DSL or task family shared across them. State of the art
-work on ARC bears this out. Li et al. (2025) deliberately avoid a fixed DSL, arguing
-it "restricts the class of allowed programs," and instead allow arbitrary Python to
-cover ARC's long tail, reaching about 54% only after expanding 160 human seeds into
-400k synthetic problems and fine-tuning an 8B model. A method built around a shared
-DSL is the wrong tool there. We will scope our claims to the verifier-backed PBE and
-ILP setting we actually evaluate, and list ARC-family and List-Functions benchmarks
-as future work.
+ARC (raised by reviewer orXJ), draws a useful boundary around what ReaComp assumes. 
+ReaComp compiles the reasoning of one shared task distribution into a single reusable solver
+over a fixed DSL, so it fits domains that are effectively DSL-complete: a compact
+shared vocabulary covers the task family, and a fast exact verifier is available. 
+ARC was designed to violate exactly this assumption. 
+Its tasks are deliberately separated so that each can call for novel primitives, and there is no single DSL or task family
+shared across them.
+
+The ARC literature reflects this boundary. DSL-based program search was central to
+early ARC progress and remains competitive: the 2020 Kaggle winner (Wind, 2020) was a
+hand-built DSL of grid operations with brute-force search, and Hodel's arc-dsl is a
+widely used reference DSL. What has changed is that the strongest recent approaches
+generalize the search space beyond any fixed DSL. Li et al. (2024) keep a shared
+primitive library but "still allow arbitrary Python code, which helps cover the long
+tail of diverse tasks," reaching about 54% by expanding roughly 160 human seeds into
+400k synthetic problems; others rely on test-time training. 
+Notably, ever since ARC-AGI-2 the data has been constructed to remove the tasks
+solvable by DSL-searching approaches, which suggests that a fixed DSL alone plateaus on
+ARC.
+
+However, we still read this as a promising next step.
+Extending induction to domains that are not DSL-complete, ARC among them, is promising future work, and we
+suspect a fixed DSL will not suffice on its own there but could still serve as a useful backbone inside a broader arbitrary-program synthesizer (much as Li et al.'s shared library sits under arbitrary Python). 
+For the current paper we will scope our claims to the verifier-backed PBE and SLR setting we actually evaluate, and list the ARC-family, MiniSCAN, and List Functions benchmarks as future work (with a List Functions pilot reported in our reply to orXJ below).
 
 ---
 
 # 2. Response to the Meta-Review
 
-We appreciate the summary and the specific conditions in point (d). Most of them are
-already supported by results in the submission (mainly Appendices F.2 and F.4), which
-we will move into the main text so they are easier to find.
+We thank the Area Chair for the summary and for the specific conditions in point (d).
+We address each below and point to where the evidence lives in the paper.
 
-- **(d.1) Trace-quality sensitivity:** see G3 (no-CoT drops Hard from 74.7% to 24.8%).
-- **(d.2) Induction variance:** see G3 (53-79% across identical-data runs, recovered
-  by ensembling).
-- **(d.3) Generalization:** see G2 (zero-shot transfer to real IPA data, 80.1%).
-- **(d.4) Reusable abstractions vs. task-specific heuristics:** the induced solvers
-  are documented general algorithms (App. F.2), and the new TroVE baseline is the
-  contrast case, where library learning memorizes instead (G1).
-- **(d.5) Stronger baselines:** see G1 (TroVE in the matched harness).
-- **(d.6) Broader benchmarks and verifiability:** see G4.
+- **(d.1) Trace-quality sensitivity:** §4 ("Solver induction ablations") reports that
+  removing chain-of-thought drops PBEBench-Hard from 74.7% to 24.8%, and §5 draws out
+  the implication; the full ablation grid is in App. F.2. For more details see G3 in the general response.
+- **(d.2) Induction variance:** §4 (same paragraph) reports 53.4-79.2% on Lite and
+  51.8-74.7% on Hard across runs on identical data, and §5 frames induction as a search
+  over algorithms rather than a data-scaling problem. Ensembling recovers the spread
+  (details in G3 in the general response).
+- **(d.3) Generalization:** §4 ("Real-world case study") reports zero-shot transfer to
+  real IPA data at up to 80.1% by union, and §5 discusses it; setup and qualitative
+  examples are in App. F.4. See G2.
+- **(d.4) Reusable abstractions vs. task-specific heuristics:** the induced solvers run
+  documented general algorithms (the SLR solver's ascending-complexity search is named
+  in §4), and the new TroVE baseline is the contrast case, where library learning
+  memorizes instead (G1). Per-solver mechanism analysis is in App. F.2.
+- **(d.5) Stronger baselines:** see G1 from the genral response (TroVE in the matched harness).
+- **(d.6) Broader benchmarks and verifiability:** see G4 from the general response.
 
 On the point about lacking theory: we agree the contribution is empirical. We will
 frame the regularities we observe as conditions under which induction is expected to
 work (the traces carry reasoning, the target shares the DSL's structure, and the
 verifier is fast and exact) rather than claim more than we can show. We will also
-narrow the paper's claims to the verifier-backed PBE and ILP setting.
+narrow the paper's claims to the verifier-backed PBE and SLR setting.
+
+The two items that currently live only in the appendix are the per-solver mechanism
+analysis (App. F.2) and the generalization setup and qualitative examples (App. F.4).
+For the revision we will move these into the main text so the body carries the
+argument on its own, keeping the appendix for the fuller breakdowns.
 
 ---
 
 # 3. Reviewer ggna (Rating: 4, Borderline Accept)
 
 **W1/Q1 (trace quality), W2/W3 (generalization and failed traces), Q2 (baselines):**
-answered in G3, G2, and G1.
+answered in General response (G3, G2, and G1).
 
 **W4, Table 1 showing lower tokens but higher cost.** This is a presentation problem
 and we will fix it. The token column counts only LLM fallback tokens, so tasks the
@@ -158,7 +199,13 @@ the abstract symbol P appears in §2, about a page earlier. We will give the con
 DSL at that first mention and add a short boxed definition in §3.
 
 **Clarity, highlighting:** we will use one consistent "best per column" convention
-across Tables 1-3.
+across Tables 1-3, bolding the best value in each column across all rows (reported
+baselines included, not only our own methods). On the primary accuracy metric a
+ReaComp method is the best in every table and every SLR tier. On the efficiency
+columns (tokens, cost) the standalone symbolic solvers are best, and on the hard
+splits the symbolic solvers lead on mean reward and edit similarity while the hybrids
+lead on accuracy, so the column-best is a ReaComp method throughout even though it is
+not always the hybrid.
 
 ---
 
@@ -176,7 +223,7 @@ that they only work on the training tasks themselves.
 **Q1, trace model:** gpt-oss-120b, and it is the same across all runs and ablations.
 It is a separate model from the coding agent that writes the solver (Claude Code with
 claude-sonnet-4-6, or Qwen3.6-35B-A3B via OpenHands). We will state this distinction
-clearly.
+more clearly.
 
 **Q2, solver form and bias:** the solver is constrained at the interface, not in its
 algorithm. The prompt (App. D.1) fixes the function signature, read-only verifier
@@ -217,7 +264,7 @@ success and failure), which is exactly the regime the reviewer describes. The on
 degree of freedom is which unlabeled instances provide the traces. It is also
 practical, since induction needs very little data: our 12-example ablation induces a
 usable solver from just 12 traces (App. F.2, Table 13). The one cost to weigh, as the
-reviewer notes, is the coding agent's construction run. We will make this label-free
+reviewer notes, is the coding agent's construction run. We will make this **label-free**
 framing explicit in the paper.
 
 **Suggestions:** we will tighten the candidate-set notation (C = {p_k}, and C_S,
@@ -232,22 +279,37 @@ Vision-Language Programs [1] and ActivationReasoning [2] to Related Work.
 
 # 5. Reviewer orXJ (Rating: 2, Reject, Confidence: 5)
 
-**Concern 1, "generated from a simple one-paragraph prompt":** we think this is a
-misreading. That sentence is the task line of a longer specification (App. D.1) that
-fixes the interface, gives read-only verifier access, states the DSL, and lists
-behavioral requirements. The solver is not produced in one shot; it comes out of a
-multi-step agentic loop (49 to 102 turns per run; Alg. 1, Table 14). Its quality is
-established by the verifier, not asserted: every solved task scores reward 1.0 under
-exact execution, with per-length, per-tier, and per-BFCC breakdowns and significance
-tests (App. F.5). Each solver's algorithm is also documented and can be read directly
-(App. F.2). The code and agent-generated documentation for each solver are included in the supplementary material.
+**Concern 1, "generated from a simple one-paragraph prompt":** the solvers are not
+produced from a one-paragraph prompt. The paragraph the reviewer quotes is the task
+line of a longer specification (App. D.1) that also fixes the function interface, grants
+read-only verifier access, states the DSL, and lists behavioral requirements, and the
+solver is built through a multi-step agentic loop of 49 to 102 turns per run in which
+the agent proposes, executes, and revises code against the verifier. That is the
+process the paper evaluates, not a single generation. We accept that the body did not
+make this visible enough, since the loop and the interface constraints sit in the
+appendix (Alg. 1 and Table 14), and we will try to move them into the main method section so
+this reads correctly without the appendix. Solver quality is then established by the
+verifier, not asserted: every solved task scores reward 1.0 under exact execution, and
+we report per-length, per-tier, and per-BFCC breakdowns with significance tests. The
+induced solvers are also legible as algorithms rather than opaque blobs, and they
+arrive at genuinely different strategies. For PBEBench, one run learns a safety-first
+greedy search with a hard constraint against modifying already-correct examples plus
+2-step lookahead for interaction effects; another separates forced from optional edit
+operations and enumerates permutations over the forced ones before greedy search;
+another runs a two-phase beam search with candidates extracted from
+difflib.SequenceMatcher, where a safe phase precedes an unrestricted one. For SLR the
+solver searches in ascending complexity layers, trying one-literal rules, then two, and
+so on until the verifier accepts. These are strategies a human synthesis expert would
+recognize, not a single memorized answer, and the code and agent-generated
+documentation for every solver are in the supplementary material (App. F.2) so they can
+be read directly.
 
 **Concern 2, comparison with other symbolic solvers:** added, see G1. ReaComp is now
 placed against both per-task agentic solving and cross-task library learning in the
 same harness.
 
 **Concern 3, making better use of the solver's output in the fallback:** a fair
-point. The solver already returns its top-K scored near-misses, but today the
+point. The solver already returns its top-K scored near-misses, but right now the
 fallback ignores them: it is invoked independently and we simply pick the best
 answer by reward. Warm-starting the fallback from those near-misses, i.e. having
 the LLM refine the solver's partial output rather than start from scratch, is a
@@ -255,35 +317,66 @@ natural extension, and promising because solver failures are mostly near-misses
 (reward 0.987 on Hard). [TBD: a solver-seeded fallback ablation, otherwise Future
 Work.]
 
-**On the strength and framing of the contribution (the "MDP [1] / latent-reasoning
-[2]" point).** We would gently reframe what ReaComp is claiming. The contribution is
-not a symbolic solver hand-built for two particular domains, nor a prompt that
-refines solver outputs with an LLM. It is a demonstration that end-to-end, automatic
-induction of novel symbolic solvers is feasible for domains that admit a constrained
-DSL and a fast, exact verifier, done entirely from LLM reasoning traces and without
-any ground-truth programs (§2.2). The finding is that this is possible at all, and
-that the induced solvers are both cheap (they run at zero per-task LLM cost, §2.3)
-and strong (they outperform LLM test-time scaling on hard instances, Tables 2-3).
-Combined with an LLM in the hybrid setting, they are Pareto-optimal on cost versus
-accuracy and set the best results we are aware of on the domains we study. We read
-this as a methodological result about a class of problems, DSL-complete domains with
-perfect verifiers, rather than a solver for a specific benchmark. We would also
-gently correct one point: the LLM does not refine the solver's output; it is invoked
-only as an independent fallback on the residual tasks the solver does not resolve
-(§2.3).
+**On the strength and framing of the contribution (the "MDP [1] / latent-reasoning [2]" point).** The reviewer is right that these are the relevant lines of work to
+situate against, and we should have positioned ReaComp among them explicitly. Doing so
+also clarifies what the contribution is: not a hand-built solver for two domains, but a
+demonstration that novel symbolic solvers can be induced automatically, from LLM
+reasoning traces and without ground-truth programs (§2.2), for domains that admit a
+constrained DSL and a fast exact verifier.
 
-On more advanced formulations like [1] and [2]: we agree they are worth exploring. 
-But we would gently note that "more complex" and "stronger contribution" are not the same thing. 
-What ReaComp demonstrates, that novel symbolic solvers can be induced by coding agents from unlabeled tasks augmented with LLM
-reasoning traces, for DSL-complete and verifiable domains, is to our knowledge
-genuinely new, and the fact that it can be done this simply is part of the result
-rather than a shortcoming. A simpler method that induces cheap, standalone solvers
-which outperform test-time scaling might not be weaker than a more elaborate one; we
-would argue the simplicity is a merit given what it achieves.
+The MDP formulation (ARCLE [1]) casts solving as a sequence of grid-edit actions
+learned with RL. ReaComp keeps the idea of search over a structured action space but
+moves it offline: the coding agent searches over whole programs, scored by a verifier,
+and compiles the result into a standalone solver that then runs the task distribution
+at zero per-task cost. This is a real design difference, and ARCLE's own finding that
+RL over the raw action space is hard supports the point that the leverage comes from
+verifier-scored program-level search rather than step-by-step exploration. Where a
+verifier is not available, the RL formulation has the advantage, and we do not claim
+otherwise.
 
-**ARC-AGI and other benchmarks [3]:** see G4. In short, ARC-AGI lacks the shared
-cross-task structure that offline solver induction relies on, so we treat it as out
-of scope and add the ARC-family and List-Functions benchmarks to future work.
+The latent-reasoning line (GRAM [2] and the recursive-reasoning models it builds on)
+amortizes reasoning into a latent trajectory and predicts the answer directly. That
+buys a smooth, trainable representation and needs no DSL, which is a genuine strength on
+open-world tasks. ReaComp makes the opposite trade: it externalizes reasoning as an
+explicit program, giving up differentiability but gaining an artifact that is
+inspectable, reusable, and basically free to run at test time. 
+Our results show that for DSL-complete, verifiable domains this trade pays off, the induced solvers outperform LLM test-time scaling on hard instances (Tables 2-3) at zero per-task LLM cost. 
+We read the two as complementary rather than competing, and combining an induced symbolic backbone with
+latent reasoning on the residual is a direction worth pursuing.
+
+We would push back on one framing, that a more complex formulation is automatically a
+stronger contribution. What ReaComp shows is new to our knowledge, and that it works
+with a simple recipe is part of the finding: it sets a concrete baseline that richer
+MDP or latent-reasoning methods can be measured against on these domains. We do not
+offer simplicity as a substitute for those formulations, only as evidence of how far
+verifier-backed induction with a coding agent and LLM reasoning traces already gets. 
+One factual clarification: in the hybrid setting the LLM does not refine the solver's output, it is an independent fallback on the tasks the solver leaves unresolved (§2.3); we will make this clearer in the text.
+
+**ARC-AGI and other benchmarks [3]:** see G4 for the ARC-specific discussion. On the
+broader list the reviewer raises (Mini-ARC, ARC-AGI-1/2, MiniSCAN, List Functions,
+ACRE), it is worth separating them by whether they fit the setting ReaComp assumes, a
+symbolic input-to-output transformation with a fast exact verifier. List Functions and
+MiniSCAN do: both are symbolic (integer-list to integer-list, and compositional
+word-to-symbol-sequence) with exact-match verifiers and compact primitives. The
+ARC-family is verifiable too (grid equality is exact) but is deliberately not
+DSL-complete, which is the boundary we discuss in G4. ACRE is the one genuine mismatch:
+it is a visual abductive-causal benchmark (CLEVR-style rendered scenes with a Blicket
+detector) that requires perception and causal inference rather than a string-to-string
+transformation, and it has no exact program verifier of the kind we rely on, so it sits
+outside the setting regardless of DSL-completeness.
+
+To put weight behind this rather than argue it on paper, we ran a pilot of ReaComp on
+List Functions during the rebuttal period: we induce a solver from LLM reasoning traces
+on a small set of tasks and evaluate it on held-out inputs of the same functions.
+[TBD: List Functions pilot result, with the induced solver's strategy.] We were not
+able to extend this to MiniSCAN and Mini-ARC within the rebuttal window, and we will add
+them, along with the full 250-task List Functions evaluation, in revision.
+
+We would also note that [3] is in fact convergent with our approach: it finds that LLMs
+are strong hypothesis proposers but weak rule appliers, and that pairing them with a
+symbolic interpreter that applies and filters rules is what works, which is the same
+division of labor ReaComp automates by compiling the reasoning into an executable
+solver.
 
 We hope the corrected account of how the solver is built (Concern 1) and the new
 matched baseline (Concern 2) address the main reservations, and we would be glad to
@@ -294,6 +387,10 @@ run additional analyses during discussion.
 [2] Generative Recursive Reasoning, 2026 
 
 [3] Phenomenal Yet Puzzling: Testing Inductive Reasoning Capabilities of Language Models with Hypothesis Refinement, 2023
+
+[4] Li et al. Combining Induction and Transduction for Abstract Reasoning, 2024 (BARC; arXiv 2411.02272).
+
+[5] Wind. 1st place solution, 2020 ARC Kaggle challenge, 2020. Hodel, arc-dsl (github.com/michaelhodel/arc-dsl).
 
 ---
 
@@ -311,6 +408,7 @@ run additional analyses during discussion.
 6. Add a Limitations paragraph on trace quality, and clarify the trace model vs. the
    coding agent, the interface-vs-algorithm constraint, and the execution bounds.
 7. Add related work and positioning: Vision-Language Programs, ActivationReasoning,
-   ARCLE, latent reasoning, and Li et al. (2025) on ARC.
-8. Narrow the claims to the verifier-backed PBE/ILP setting, with ARC-family
-   benchmarks, solver-seeded fallback, and per-instance induction as future work.
+   ARCLE, latent reasoning, and Li et al. (2024) on ARC.
+8. Narrow the claims to the verifier-backed PBE/SLR setting, with a List Functions
+   pilot in the rebuttal and the ARC-family and MiniSCAN benchmarks, solver-seeded
+   fallback, and per-instance induction as future work.
