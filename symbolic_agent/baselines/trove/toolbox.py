@@ -114,7 +114,7 @@ class TroVEToolbox:
     # Trimming
     # ------------------------------------------------------------------
 
-    def trim(self, n_processed: int, C: float = 0.5) -> set:
+    def trim(self, n_processed: int, C: float = 1.0) -> set:
         """
         Remove functions whose frequency is below the threshold
             C * log_{20}(n_processed)
@@ -122,7 +122,7 @@ class TroVEToolbox:
 
         Faithful to trim_library() in run_trove.py:
             threshold = math.log(n, 20)   # log base 20
-        C defaults to 0.5, matching the paper (§3.3): λ = ½ · log_{10}(n).
+        C defaults to 1.0, matching the original implementation (C·log_{20}(n)).
         Note: the original uses log base-20 not base-10; we keep base-20.
         """
         if n_processed <= 1:

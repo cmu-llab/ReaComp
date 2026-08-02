@@ -13,12 +13,12 @@ ts=$(date +%Y%m%d_%H%M%S)
 #   --reasoning-parser openai_gptoss  routes analysis-channel content into
 #                                     message.reasoning_content
 nohup python -m vllm.entrypoints.openai.api_server \
-  --model "openai/gpt-oss-120b" \
-  --tokenizer "openai/gpt-oss-120b" \
+  --model "openai/gpt-oss-20b" \
+  --tokenizer "openai/gpt-oss-20b" \
   --dtype auto \
   --port ${1} \
   --gpu-memory-utilization 0.95 \
-  --tensor-parallel-size 2 \
+  --tensor-parallel-size 1 \
   --enable-auto-tool-choice \
   --tool-call-parser openai \
   --reasoning-parser openai_gptoss \

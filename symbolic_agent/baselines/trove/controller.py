@@ -37,10 +37,17 @@ import logging
 from collections import Counter
 from typing import Callable, Dict, List, Optional
 
+from . import tools_api
 from .executor import run_solution
 from .llm import TroVELLMClient
-from .parse import count_ast_nodes, parse_response
-from .prompts import build_create_prompt, build_import_prompt, build_skip_prompt, get_question
+from .parse import count_ast_nodes, imported_callsites, parse_response
+from .prompts import (
+    build_create_prompt,
+    build_import_prompt,
+    build_import_with_tools_prompt,
+    build_skip_prompt,
+    get_question,
+)
 from .toolbox import TroVEToolbox
 
 logger = logging.getLogger(__name__)
@@ -61,18 +68,34 @@ class TroVEController:
     model : str
         LLM model identifier.
     base_url : str, optional
-        For OpenAI-compatible (vLLM) backends.
+        For OpenAI-compatible (vLLM) backends. When set, ``self.backend`` is
+        ``"openai"``; otherwise ``"anthropic"``. Native tool-calling IMPORT
+        requires the openai backend.
     debug_dir : str, optional
     k : int
         Number of samples per mode (paper default: 5).
     trim_every : int
         Trim toolbox every N tasks (paper default: 500).
     trim_C : float
-        Trimming threshold multiplier: threshold = C·log₂₀(n). Default: 0.5.
+        Trimming threshold multiplier: threshold = C·log₂₀(n). Default: 1.0
+        (matches the original TroVE implementation).
     temperature : float
         Sampling temperature. Default: 0.3 (TroVE paper).
     top_p : float
         Nucleus sampling top-p. Default: 0.95 (TroVE paper).
+    task_family : str
+        Prompt/parsing family. ``"default"`` (generic) or ``"pbebench"``
+        (PBEBench-shaped few-shots; strict ``**Solution**`` parsing).
+    selection : str
+        Candidate selection strategy. ``"reward"`` (default) uses the
+        reward function when available and falls back to consistency;
+        ``"consistency"`` always uses the original TroVE majority-vote.
+    max_tool_iters : int
+        Maximum tool-call rounds per IMPORT trajectory in the native
+        tool-calling path. Default: 8.
+    tool_schema_topk : int
+        Number of top-frequency toolbox functions exposed as OpenAI tool
+        schemas in the native IMPORT path. Default: 10.
     """
 
     def __init__(
@@ -83,18 +106,26 @@ class TroVEController:
         debug_dir: Optional[str] = None,
         k: int = DEFAULT_K,
         trim_every: int = DEFAULT_TRIM_EVERY,
-        trim_C: float = 0.5,
+        trim_C: float = 1.0,
         temperature: float = 0.3,
         top_p: float = 0.95,
+        task_family: str = "default",
+        selection: str = "reward",
+        max_tool_iters: int = 8,
+        tool_schema_topk: int = 10,
     ):
         self.model = model
         self.k = k
         self.trim_every = trim_every
         self.trim_C = trim_C
+        self.task_family = task_family
+        self.selection = selection
+        self.max_tool_iters = max_tool_iters
+        self.tool_schema_topk = tool_schema_topk
 
-        backend = "openai" if base_url else "anthropic"
+        self.backend = "openai" if base_url else "anthropic"
         self.llm = TroVELLMClient(
-            backend=backend,
+            backend=self.backend,
             base_url=base_url,
             api_key=api_key,
             temperature=temperature,
@@ -252,33 +283,52 @@ class TroVEController:
         toolbox_str = self.toolbox.format_toolbox()
 
         # --- IMPORT mode ---
-        import_candidates = []
-        if toolbox_str:
+        toolbox_nonempty = bool(toolbox_str)
+        use_tools_branch = toolbox_nonempty and self.backend == "openai"
+
+        if use_tools_branch:
+            import_candidates = self._generate_import_with_tools(
+                question, example_idx, reward_fn=reward_fn, entry=entry
+            )
+            best_import_idx, best_import_score = self._select_best(
+                import_candidates, reward_fn=reward_fn, entry=entry
+            )
+            best_import = import_candidates[best_import_idx]
+            best_import["_reward_score"] = best_import_score
+        elif toolbox_nonempty:
+            # Legacy text-based IMPORT (Anthropic or unforeseen non-OpenAI path).
+            import_candidates = []
             for _ in range(self.k):
-                prompt = build_import_prompt(question, toolbox_str)
+                prompt = build_import_prompt(question, toolbox_str, task_family=self.task_family)
                 raw = self.llm.call(prompt, self.model, max_tokens=DEFAULT_MAX_TOKENS, tag="trove_import")
-                parsed = parse_response(raw)
+                parsed = parse_response(raw, task_family=self.task_family)
                 is_ok, out = run_solution(
                     parsed["solution_code"],
                     parsed["tools_code"],
                     self.toolbox.get_full_code(),
                 )
-                import_candidates.append({**parsed, "is_success": is_ok, "exec_output": out})
+                import_candidates.append(
+                    {**parsed, "is_success": is_ok, "exec_output": out, "tool_calls": [], "stopped_reason": "legacy"}
+                )
             best_import_idx, best_import_score = self._select_best(
                 import_candidates, reward_fn=reward_fn, entry=entry
             )
             best_import = import_candidates[best_import_idx]
             best_import["_reward_score"] = best_import_score
         else:
-            best_import = {"solution_code": "", "tools_code": "", "functions": [],
-                           "is_success": False, "exec_output": "", "_reward_score": None}
+            best_import = {
+                "solution_code": "", "tools_code": "", "functions": [],
+                "is_success": False, "exec_output": "",
+                "tool_calls": [], "stopped_reason": "empty_toolbox",
+                "_reward_score": None,
+            }
 
         # --- CREATE mode ---
         create_candidates = []
         for _ in range(self.k):
-            prompt = build_create_prompt(question)
+            prompt = build_create_prompt(question, task_family=self.task_family)
             raw = self.llm.call(prompt, self.model, max_tokens=DEFAULT_MAX_TOKENS, tag="trove_create")
-            parsed = parse_response(raw)
+            parsed = parse_response(raw, task_family=self.task_family)
             is_ok, out = run_solution(
                 parsed["solution_code"],
                 parsed["tools_code"],
@@ -294,9 +344,9 @@ class TroVEController:
         # --- SKIP mode ---
         skip_candidates = []
         for _ in range(self.k):
-            prompt = build_skip_prompt(question)
+            prompt = build_skip_prompt(question, task_family=self.task_family)
             raw = self.llm.call(prompt, self.model, max_tokens=DEFAULT_MAX_TOKENS, tag="trove_skip")
-            parsed = parse_response(raw)
+            parsed = parse_response(raw, task_family=self.task_family)
             is_ok, out = run_solution(
                 parsed["solution_code"],
                 parsed["tools_code"],
@@ -334,6 +384,54 @@ class TroVEController:
         )
         return winning_mode, best_resp, best_score
 
+    def _generate_import_with_tools(
+        self,
+        question: str,
+        example_idx: int,
+        reward_fn: Optional[Callable] = None,
+        entry: Optional[dict] = None,
+    ) -> List[dict]:
+        """
+        IMPORT-mode generation using native OpenAI tool calling.
+        Builds K trajectories; each trajectory may invoke toolbox functions
+        via tool_calls during the multi-turn loop. Returns K candidate dicts
+        compatible with _select_best.
+        """
+        prompt = build_import_with_tools_prompt(question, task_family=self.task_family)
+        tools_schema = tools_api.toolbox_to_openai_tools(self.toolbox, topk=self.tool_schema_topk)
+
+        candidates: List[dict] = []
+        for i in range(self.k):
+            tag = f"trove_import_t{example_idx}_{i}"
+            messages = [{"role": "user", "content": prompt}]
+            on_tc = lambda tc: tools_api.dispatch_tool_call(self.toolbox, tc)
+            traj = self.llm.chat_with_tools(
+                messages=messages,
+                tools=tools_schema,
+                model=self.model,
+                max_tokens=DEFAULT_MAX_TOKENS,
+                max_tool_iters=self.max_tool_iters,
+                on_tool_call=on_tc,
+                tag=tag,
+            )
+            parsed = parse_response(traj["final_text"], task_family=self.task_family)
+            is_ok, out = run_solution(
+                parsed["solution_code"],
+                parsed["tools_code"],
+                self.toolbox.get_full_code(),
+            )
+            candidates.append(
+                {
+                    **parsed,
+                    "is_success": is_ok,
+                    "exec_output": out,
+                    "tool_calls": traj["tool_calls"],
+                    "stopped_reason": traj["stopped_reason"],
+                    "iterations": traj["iterations"],
+                }
+            )
+        return candidates
+
     def _select_best(
         self,
         candidates: List[dict],
@@ -344,18 +442,15 @@ class TroVEController:
         Select the best candidate from a list of response dicts.
 
         Returns (best_index, score_or_None) where score is (reward, message)
-        when reward-based selection is used, or None for majority-vote mode.
+        when reward-based selection is used, or None otherwise.
 
-        Two selection strategies:
-        1. Reward-based (when reward_fn + entry provided):
-           Score all K candidates with reward_fn; pick highest reward,
-           tiebreak by minimum AST node count (simplest solution).
-           This is reliable for PBEBench (program lists rarely match exactly
-           as strings) and equally good for reasoning_gym.
-        2. Majority-vote fallback (original TroVE algorithm):
-           Filter successes → majority vote on stdout → min AST tiebreak.
-           Used when no reward function is available (e.g. bare solve()).
+        Selection strategy is governed by self.selection:
+          - "reward" (default): reward-based when reward_fn+entry provided,
+            falls back to consistency when not.
+          - "consistency": original TroVE majority-vote algorithm.
         """
+        if self.selection == "consistency":
+            return self._select_best_by_consistency(candidates), None
         if reward_fn is not None and entry is not None:
             return self._select_best_by_reward(candidates, reward_fn, entry)
         return self._select_best_by_consistency(candidates), None
@@ -369,6 +464,7 @@ class TroVEController:
         """Reward-based candidate selection. Returns (best_index, (reward, message))."""
         best_idx = 0
         best_reward = -1.0
+        best_reuse = -1
         best_ast = float("inf")
         best_message = ""
         for i, c in enumerate(candidates):
@@ -380,12 +476,35 @@ class TroVEController:
                 logger.debug("Reward scoring error for candidate %d: %s", i, exc)
                 score, msg = 0.0, str(exc)
             ast_size = count_ast_nodes(c.get("solution_code", ""))
-            if score > best_reward or (score == best_reward and ast_size < best_ast):
+            reuse_signal = self._reuse_signal(c)
+            if (
+                score > best_reward
+                or (
+                    score == best_reward
+                    and (
+                        reuse_signal > best_reuse
+                        or (reuse_signal == best_reuse and ast_size < best_ast)
+                    )
+                )
+            ):
                 best_idx = i
                 best_reward = score
+                best_reuse = reuse_signal
                 best_ast = ast_size
                 best_message = msg
         return best_idx, (best_reward, best_message)
+
+    @staticmethod
+    def _reuse_signal(candidate: dict) -> int:
+        """Tie-break signal for candidates that support TroVE's toolbox."""
+        functions = candidate.get("functions") or []
+        tool_calls = candidate.get("tool_calls") or []
+        unique_tool_names = {
+            (tc.get("name") or "").split("<|", 1)[0].strip()
+            for tc in tool_calls
+            if isinstance(tc, dict) and tc.get("name")
+        }
+        return len(functions) + len({name for name in unique_tool_names if name})
 
     def _select_best_by_consistency(self, candidates: List[dict]) -> int:
         """
@@ -419,13 +538,25 @@ class TroVEController:
     def _update_library(self, mode: str, resp: dict, example_idx: int) -> None:
         """Update toolbox based on winning mode (faithful to run_trove.py)."""
         if mode == "import":
-            # IMPORT: credit existing functions that were used
-            for func_dict in resp.get("functions", []):
-                name = func_dict.get("name", "")
-                if name:
-                    self.toolbox.update_frequency(name, example_idx)
+            tool_calls = resp.get("tool_calls") or []
+            if tool_calls:
+                # Native tool-calling path: credit by unique tool_call.function.name
+                # (defensive: sanitize and let toolbox.update_frequency filter unknowns).
+                unique_names = {
+                    tc["name"].split("<|", 1)[0].strip()
+                    for tc in tool_calls
+                    if tc.get("name")
+                }
+                for name in unique_names:
+                    if name:
+                        self.toolbox.update_frequency(name, example_idx)
+            else:
+                # Legacy text-based IMPORT: credit functions parsed from **Tools**.
+                for func_dict in resp.get("functions", []):
+                    name = func_dict.get("name", "")
+                    if name:
+                        self.toolbox.update_frequency(name, example_idx)
         elif mode == "create" and resp.get("is_success"):
-            # CREATE: add new functions only when execution succeeded
             for func_dict in resp.get("functions", []):
                 self.toolbox.add(func_dict, example_idx)
 
@@ -447,8 +578,29 @@ class TroVEController:
     ) -> dict:
         """
         Build a result dict compatible with main.py's _print_result() and
-        _append_task_output().
+        _append_task_output(). Adds passive TroVE telemetry fields.
         """
+        tool_calls = best_resp.get("tool_calls") or []
+        tools_called = sorted({
+            tc["name"].split("<|", 1)[0].strip()
+            for tc in tool_calls
+            if tc.get("name")
+        })
+        candidate_names = {e["name"] for e in self.toolbox.snapshot()}
+        actually_called = sorted(
+            imported_callsites(
+                solution_code=best_resp.get("solution_code", ""),
+                tools_code=best_resp.get("tools_code", ""),
+                candidate_names=candidate_names,
+            )
+        )
+        import_eligible = len(self.toolbox) > 0  # state AFTER this task's update
+        # Note: import_eligible reflects the current toolbox state after
+        # _update_library has already run for this task. The analyzer should
+        # interpret this as "a non-empty toolbox existed at some point during
+        # this task's processing". For pre-task eligibility, infer from
+        # toolbox snapshots in adjacent tasks.
+
         return {
             "task_type": task_type,
             "original_prompt": str(task_input),
@@ -464,7 +616,7 @@ class TroVEController:
             ],
             "solution": best_resp.get("solution_code", ""),
             "library_snapshot": self.toolbox.snapshot(),
-            "cost_summary": {},  # TroVE has no cost model
+            "cost_summary": {},
             "final_output": {
                 "answer": output,
                 "explanation": f"TroVE mode={best_mode}",
@@ -475,6 +627,14 @@ class TroVEController:
             "reward_history": [],
             "best_reward": None,
             "final_reward": None,
-            # Cached score from reward-based selection; consumed and removed by solve_with_reward.
             "_best_reward_score": best_reward_score,
+            # TroVE native-tool-calling telemetry
+            "won_mode": best_mode,
+            "import_eligible": import_eligible,
+            "import_was_winner": best_mode == "import",
+            "tool_calls": tool_calls,
+            "tool_call_count": len(tool_calls),
+            "tools_called": tools_called,
+            "actually_called": actually_called,
+            "trove_stopped_reason": best_resp.get("stopped_reason", ""),
         }
