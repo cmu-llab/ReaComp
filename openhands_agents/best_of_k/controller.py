@@ -81,15 +81,23 @@ async def _generate_one(
             data = await resp.json()
             raw = data["choices"][0]["message"]["content"] or ""
             code = _extract_code(raw)
+            u = data.get("usage") or {}
+            usage = {
+                "input": u.get("prompt_tokens", 0) or 0,
+                "output": u.get("completion_tokens", 0) or 0,
+                "reasoning": ((u.get("completion_tokens_details") or {}).get("reasoning_tokens", 0) or 0),
+            }
             return {
                 "task_idx": task_idx,
                 "attempt_idx": attempt_idx,
                 "raw": raw,
                 "code": code,
+                "usage": usage,
             }
     except Exception as exc:
         logger.warning("best_of_k generate failed (task=%d, attempt=%d): %s", task_idx, attempt_idx, exc)
-        return {"task_idx": task_idx, "attempt_idx": attempt_idx, "raw": "", "code": None}
+        return {"task_idx": task_idx, "attempt_idx": attempt_idx, "raw": "", "code": None,
+                "usage": {"input": 0, "output": 0, "reasoning": 0}}
 
 
 def _build_prompt(task_input: Any) -> str:
@@ -128,6 +136,7 @@ class BestOfKController:
         max_tokens: int = 4096,
         temperature: float = 0.8,
         max_concurrent: int = 64,
+        request_timeout: float = 120,
     ):
         self.base_url = base_url
         self.model = model
@@ -136,6 +145,9 @@ class BestOfKController:
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.max_concurrent = max_concurrent
+        # Per-request aiohttp timeout (seconds). Default 120 preserves prior
+        # behavior; raise for long reasoning generations (e.g. gpt-oss @ 32K tokens).
+        self.request_timeout = request_timeout
 
     async def generate_all(self, task_inputs: list[Any]) -> list[list[dict]]:
         """
@@ -151,7 +163,7 @@ class BestOfKController:
                 return await coro
 
         connector = aiohttp.TCPConnector(limit=self.max_concurrent)
-        timeout = aiohttp.ClientTimeout(total=120)
+        timeout = aiohttp.ClientTimeout(total=self.request_timeout)
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             tasks = []
             for i, task_input in enumerate(task_inputs):
