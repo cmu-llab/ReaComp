@@ -83,7 +83,7 @@ def _make_executable(code: str) -> str:
     return stripped
 
 
-def parse_response(text: str) -> dict:
+def parse_response(text: str, task_family: str = "default") -> dict:
     """
     Parse a TroVE-format LLM response.
 
@@ -95,20 +95,17 @@ def parse_response(text: str) -> dict:
         "functions":     list[dict],  # parsed tool dicts from the Tools block
     }
 
-    Fallback behaviour
-    ------------------
-    Tasks like PBEBench embed their own format instructions (e.g. "output a
-    **Program Sequence** block") that can override the TroVE **Solution**
-    header.  When no **Solution** block is found we grab the first ```python```
-    block in the response and, if it is a bare list/string literal, wrap it
-    in print() so it can be executed and its stdout captured as the answer.
+    task_family
+    -----------
+    "default": if no **Solution** block is found, falls back to the first
+    ```python``` block anywhere (legacy behaviour).
+    "pbebench": no fallback. Strict **Solution**-block-only parsing avoids
+    accidentally promoting CoT scratchpad to the answer.
     """
     solution_code = _extract_code_block(text, "Solution") or ""
     tools_code = _extract_code_block(text, "Tools") or ""
 
-    # Fallback: model followed the task's own format (e.g. **Program Sequence**)
-    # instead of the TroVE **Solution** header.
-    if not solution_code:
+    if not solution_code and task_family != "pbebench":
         raw = _extract_any_python_block(text)
         if raw:
             solution_code = _make_executable(raw)
@@ -267,3 +264,40 @@ def count_ast_nodes(code: str) -> int:
         return sum(1 for _ in ast.walk(tree))
     except SyntaxError:
         return 99_999
+
+
+def imported_callsites(
+    solution_code: str,
+    tools_code: str,
+    candidate_names: set,
+) -> set:
+    """
+    Return the subset of `candidate_names` that appear as call-sites in
+    `solution_code`. Used for the `actually_called` telemetry field.
+
+    Detects two callee shapes:
+      - bare Name:        find_replace_chain(...)
+      - Attribute(name):  toolbox.find_replace_chain(...)
+
+    `tools_code` is currently unused (kept in the signature so callers can
+    pass through the **Tools** block context if we later want to filter by
+    what was actually imported).
+
+    Returns an empty set on empty input or SyntaxError.
+    """
+    if not solution_code or not candidate_names:
+        return set()
+    try:
+        tree = ast.parse(solution_code)
+    except SyntaxError:
+        return set()
+    found: set = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id in candidate_names:
+            found.add(func.id)
+        elif isinstance(func, ast.Attribute) and func.attr in candidate_names:
+            found.add(func.attr)
+    return found

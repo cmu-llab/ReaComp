@@ -1,0 +1,55 @@
+"""Regression tests for PBEBench-shaped TroVE prompts."""
+
+from symbolic_agent.baselines.trove.prompts import (
+    build_create_prompt,
+    build_import_with_tools_prompt,
+    build_skip_prompt,
+)
+
+
+def _assert_pbebench_prompt_prints_program_sequence(prompt: str) -> None:
+    assert "print(programs)" in prompt
+    assert "\"replace(' ', '_')\"" in prompt
+    assert "\"replace('h', 'H')\"" in prompt
+    assert "print(result)" not in prompt
+    assert "print(s)" not in prompt
+
+
+def test_pbebench_create_prompt_models_replace_program_list_stdout():
+    prompt = build_create_prompt("Task", task_family="pbebench")
+
+    _assert_pbebench_prompt_prints_program_sequence(prompt)
+    assert "must define at least one reusable helper function" in prompt
+    assert "**Tools**" in prompt
+
+
+def test_pbebench_create_prompt_suggests_pbebench_helper_signatures():
+    prompt = build_create_prompt("Task", task_family="pbebench")
+
+    assert "Reusable helper signatures" in prompt
+    assert "def apply_programs(s, programs): ..." in prompt
+    assert "def score_programs(programs, examples): ..." in prompt
+    assert "def search_candidate_programs(examples, max_programs=5): ..." in prompt
+    assert "def debug_program_failure(programs, examples): ..." in prompt
+    assert "def find_replace_chain" not in prompt
+    assert "import ast" not in prompt
+    assert "ast.parse" not in prompt
+    assert "return correct / len(examples)" not in prompt
+
+
+def test_pbebench_create_prompt_warns_against_duplicating_existing_tools():
+    prompt = build_create_prompt("Task", task_family="pbebench")
+
+    assert "already exists" in prompt or "duplicate" in prompt.lower()
+
+
+def test_pbebench_skip_prompt_models_replace_program_list_stdout():
+    prompt = build_skip_prompt("Task", task_family="pbebench")
+
+    _assert_pbebench_prompt_prints_program_sequence(prompt)
+
+
+def test_pbebench_import_with_tools_prompt_models_replace_program_list_stdout():
+    prompt = build_import_with_tools_prompt("Task", task_family="pbebench")
+
+    _assert_pbebench_prompt_prints_program_sequence(prompt)

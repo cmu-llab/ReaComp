@@ -16,7 +16,7 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT = 10  # seconds, matching TroVE's original
+DEFAULT_TIMEOUT = 60  # seconds — generous for PBEBench replace() chains and multi-turn dispatch
 
 
 def run_solution(

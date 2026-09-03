@@ -1,122 +1,85 @@
-# TroVE Baseline — Deviations from the Original Paper
+# TroVE Implementation: Deviations and Faithful Elements
 
-This document records all intentional and unavoidable deviations between our
-reimplementation (`symbolic_agent/baselines/trove/`) and the original TroVE
-codebase (`original_baseline_repos/trove/`).
+This document tracks how this port differs from — and where it stays
+faithful to — the original TroVE algorithm
+([Wang et al., 2024](https://arxiv.org/abs/2401.12869),
+[zorazrw/trove](https://github.com/zorazrw/trove)).
 
----
+## 1. Algorithmic deviations
 
-## 1. Chat API instead of Local Model Completion
+### 1.1 Native OpenAI tool calling for IMPORT mode
+The original TroVE shows the model a `**Toolbox**` markdown block
+listing top-k function signatures and asks it to write a `**Solution**`
+plus `**Tools**` block referencing those functions by name. We replace
+this for the IMPORT mode (when `backend == "openai"` and the toolbox is
+non-empty) with **native OpenAI tool calling**: the toolbox is exposed
+via the `tools=[...]` parameter of `chat.completions.create`, the model
+emits structured `tool_calls` during its reasoning, and `dispatch_tool_call`
+runs each one in the sandboxed executor and returns the stdout. This
+makes function usage observable and credit-able from the trajectory
+itself.
 
-**Original:** TroVE uses a HuggingFace `transformers.pipeline` with a locally
-loaded model (e.g. CodeLlama-7b-Instruct) in **completion** mode. The prompt
-is a plain string prefix; the model generates continuation text.
+### 1.2 Reward-based candidate selection (default)
+The paper uses self-consistency (majority vote on stdout, AST tie-break)
+to pick the best of K samples per mode. We default to **reward-based
+selection**: every candidate is scored by the per-task reward function,
+ties broken by minimum AST node count. This is more reliable on
+PBEBench (program-list outputs rarely tie as strings). The original
+self-consistency selector remains available via `--trove-selection consistency`.
 
-**Ours:** We use Anthropic's Messages API or an OpenAI-compatible chat API
-(vLLM). The prompt is sent as a `user` message; the model generates a reply
-that includes the **Solution** and **Tools** blocks.
+### 1.3 PBEBench-shaped few-shot examples
+For `task_family="pbebench"` we replace the generic CREATE / SKIP / IMPORT
+example pairs with PBEBench-shaped pairs that demonstrate `replace()`
+chains. CREATE mode also shows signature-only examples of reusable helper
+shapes (apply, score, search, prune, debug, end-to-end solve) instead of
+full function definitions, to reduce anchoring on a single copied helper.
+The legacy default examples remain for `task_family="default"`.
 
-**Impact:** Minimal. The prompt structure (ending with `**Solution**`) signals
-to chat models what to generate, and empirically they comply. No JSON mode is
-used (`TroVELLMClient` vs the main `LLMClient`).
+### 1.4 Strict **Solution** parsing for PBEBench
+The legacy parser falls back to "first ```python``` block anywhere" when
+no `**Solution**` block is present. For `task_family="pbebench"` this
+fallback is disabled, preventing CoT scratchpad from being accidentally
+promoted to the answer.
 
----
+## 2. Faithful elements
 
-## 2. Domain-Generic Few-Shot Examples
+- 3-mode generation (IMPORT, CREATE, SKIP).
+- K samples per mode (default K=5, paper).
+- AST-tie-breaking by node count (simplest solution wins).
+- Periodic toolbox trimming with threshold `C·log_{20}(n)`, default
+  `C=1.0`, matching the original implementation.
+- Frequency-based top-k retrieval for the toolbox view.
+- Dict-keyed toolbox structure mirroring `utils/code.py`.
+- Library updates: IMPORT credits frequency, CREATE adds new functions
+  on success, SKIP makes no library changes.
 
-**Original:** TroVE uses domain-specific few-shot examples for each task
-(TabMWP coin-collection table examples, MATH algebra examples, etc.)
+## 3. Infrastructural patches
 
-**Ours:** We use generic string-manipulation examples that apply to both
-PBEBench and ReasoningGym string tasks (replace_char, extract_digits,
-lowercase examples). Domain-specific examples for other task families
-should be added to `prompts.py` as needed.
+- **JSONL-per-task checkpointing** via `--output-file`, with crash
+  resumption.
+- **`reasoning_content` fallback** in `_call_openai` for `gpt-oss` Harmony
+  channel splits where the answer text lives in `message.reasoning_content`.
+- **Executor timeout 60s** (vs. 10s in earlier versions of this port),
+  closer to the original's ~100s.
+- **`<|`-truncation sanitizer** in `dispatch_tool_call` and
+  `_update_library`. Defensive workaround for the open vLLM
+  [PR #35906](https://github.com/vllm-project/vllm/pull/35906) covering
+  Harmony control-token leakage into tool names. When that PR lands
+  upstream the sanitizer becomes a no-op and is left in place.
 
-**Impact:** May slightly reduce self-consistency accuracy for tasks where the
-original examples provide strong in-context guidance. The structural format
-is preserved exactly.
+## 4. Backend coverage caveat
 
----
+Anthropic backend code paths exist and are exercised by CREATE / SKIP and
+the legacy text-based IMPORT fallback, but **the smoke run and reported
+numbers are vLLM-served `gpt-oss` only**. IMPORT-with-tools requires
+the OpenAI/vLLM backend and is the only path we test end-to-end.
 
-## 3. K Calls Rather Than Batched n=K
+## 5. vLLM version requirement
 
-**Original:** TroVE passes `num_return_sequences=K` to the HuggingFace
-pipeline, which generates K sequences in one forward pass.
-
-**Ours:** We call the LLM API K times independently (temperature sampling).
-The Anthropic API does not support `n` parameter; the OpenAI-compatible API
-does but we call separately for simplicity and identical code paths.
-
-**Impact:** K API calls instead of 1; slightly slower but statistically
-equivalent since each call is an independent sample.
-
----
-
-## 4. AST Node Count Instead of AST Depth Sum
-
-**Original:** TroVE tie-breaks by `sum(depth of each AST expression node)`
-across the solution (referenced in §3.2 and Appendix B).
-
-**Ours:** `count_ast_nodes()` counts total AST nodes via `ast.walk()`.
-Total nodes is monotonically related to total expression depth: simpler
-programs have fewer nodes AND lower total depth. The tie-breaking effect
-is identical in practice.
-
-**Impact:** Negligible. Both metrics rank programs by complexity; the ranking
-rarely differs for programs with the same stdout.
-
----
-
-## 5. No Re-Generation of Trimmed Examples
-
-**Original:** After trimming the toolbox, `run_trove.py` re-generates
-solutions for all affected examples using IMPORT|SKIP (not CREATE), then
-reports updated accuracy.
-
-**Ours:** We record the set of affected task indices in the trim log but do
-not replay them. This is because we process tasks in a single stream and do
-not store the original task inputs for re-processing. For a complete
-faithful comparison, task inputs should be saved and re-processed on trim.
-
-**Impact:** In practice, trimming only fires after 500 tasks with the default
-setting. For our 100-task pilot runs, trimming is disabled by setting
-`--trove-trim-every 9999`.
-
----
-
-## 6. Reward Loop Compatibility Wrapper
-
-**Original:** TroVE has no concept of a reward function or iterative
-refinement loop. It is one-shot per example.
-
-**Ours:** `solve_with_reward()` wraps `solve()` for compatibility with
-`main.py`'s `--default-reward` and `--max-reward-iters` flags. No retry
-loop is performed; the reward is computed once and stored in `reward_history`
-for eval script compatibility.
-
-**Impact:** None on TroVE's actual behavior. Only affects output format.
-
----
-
-## 7. `trim_every` Default Differs for Small Runs
-
-**Original:** Default `--trim_steps=500` (trimming every 500 examples).
-For a 100-task dataset this fires 0 times.
-
-**Ours:** Same default (500), but users running small pilots should pass
-`--trove-trim-every 9999` to make it explicit that no trimming happens.
-
-**Impact:** None unless running >500 tasks.
-
----
-
-## Summary Table
-
-| Aspect | Original | Ours | Impact |
-|--------|----------|------|--------|
-| LLM backend | Local HF model (completion) | Chat API (messages) | Minimal |
-| Few-shot examples | Domain-specific (TabMWP/MATH) | Generic string-manipulation | Minor |
-| K sampling | Batched (n=K in one call) | K independent API calls | Latency only |
-| Complexity metric | Sum of AST expression depths | Total AST node count | Negligible |
-| Trim replay | Re-generates affected examples | Records but does not replay | Evaluation accuracy |
-| Reward loop | Not in original | Wrapper for main.py compat | None |
+- Minimum vLLM: **v0.16.0** (branch-cut 2026-02-08).
+- Required upstream change: [PR #28729](https://github.com/vllm-project/vllm/pull/28729)
+  ("Multiple fixes for gpt-oss Chat Completion prompting"), merged
+  2025-12-12. v0.16.0 is the first stable release branch-cut after the merge.
+- Known open caveat: [PR #35906](https://github.com/vllm-project/vllm/pull/35906)
+  ("Sanitize leaked Harmony control tokens"), still open as of late
+  March 2026 — see §3 for the sanitizer mitigation.

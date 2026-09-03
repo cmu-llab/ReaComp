@@ -156,6 +156,22 @@ def _append_task_output(result: dict, task_index: int, output_file: str) -> None
         "token_usage": result.get("token_usage", {}),
         "agent_messages": result.get("agent_messages", []),
     }
+    # TroVE telemetry: passthrough when present so scripts/analyze_trove_run.py
+    # (and any other post-hoc analyzer) can read per-task tool-use stats and the
+    # final library state from the JSONL. Keys are absent on non-TroVE runs.
+    for key in (
+        "won_mode",
+        "import_eligible",
+        "import_was_winner",
+        "tool_calls",
+        "tool_call_count",
+        "tools_called",
+        "actually_called",
+        "trove_stopped_reason",
+        "library_snapshot",
+    ):
+        if key in result:
+            record[key] = result[key]
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, default=str) + "\n")
@@ -808,6 +824,23 @@ def main() -> None:
         help="[TroVE] Trim low-frequency toolbox functions every N tasks. "
              "Paper default: 500. Set to 9999 to disable for small datasets. (default: 500)",
     )
+    parser.add_argument(
+        "--trove-selection",
+        choices=["reward", "consistency"],
+        default="reward",
+        help="[TroVE] Candidate selection strategy. 'reward' (default) uses "
+             "the per-task reward function with AST tie-breaking. "
+             "'consistency' uses the original TroVE majority-vote algorithm. "
+             "(default: reward)",
+    )
+    parser.add_argument(
+        "--trove-task-family",
+        choices=["default", "pbebench"],
+        default="default",
+        help="[TroVE] Task family for prompt selection and parser strictness. "
+             "'pbebench' uses PBEBench-shaped few-shots and strict **Solution** "
+             "parsing (no fallback to any python block). (default: default)",
+    )
     # ReGAL-specific flags
     parser.add_argument(
         "--regal-train-file",
@@ -1007,8 +1040,13 @@ def main() -> None:
             debug_dir=args.debug_dir,
             k=args.trove_k,
             trim_every=args.trove_trim_every,
+            task_family=args.trove_task_family,
+            selection=args.trove_selection,
         )
-        logger.info("Framework: TroVE (k=%d, trim_every=%d)", args.trove_k, args.trove_trim_every)
+        logger.info(
+            "Framework: TroVE (k=%d, trim_every=%d, task_family=%s, selection=%s)",
+            args.trove_k, args.trove_trim_every, args.trove_task_family, args.trove_selection,
+        )
     elif args.framework == "regal":
         from pathlib import Path as _Path
         controller = ReGALController(
