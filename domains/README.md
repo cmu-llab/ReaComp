@@ -12,6 +12,7 @@ solver evaluation, hybrid inference, metrics) is generic.
 | `slr_bench` | inductive Prolog rules over train descriptions | official partial score | `solve_slr(examples)` |
 | `list_functions` | integer-list functions, held-out generalisation | exact list equality on held-out pairs | `solve_listfn(examples)` |
 | `envsetup` | SetupBench (93) + EnvBench-Python (329): bootstrap a container | hidden success command / pyright | `solve_envsetup(task, shell)` |
+| `kinder_<family>` | KinDER robot TAMP families (5): 100 train + 100 test scenes each, test counts beyond train | exact replay of the executed actions | `GeneratedApproach` (policy class) |
 
 ```python
 from domains import get_domain
@@ -61,3 +62,6 @@ a regression test for a new domain.
 
 `domains/envsetup/` is the reference implementation of a domain whose solver acts in
 an external environment (a Docker container) rather than returning a program.
+`domains/kinder/` is one whose solver is a closed-loop policy run against a simulator; it
+shows a domain bringing its own trace runner and solver-builder sandbox
+(`Domain.solver_builder_sandbox`) and registering several domains from one class.

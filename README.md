@@ -91,9 +91,48 @@ python scripts/eval_domain_solver.py --domain pbebench --split lite --solver bui
 python scripts/hybrid_gate.py --domain pbebench --solver <solver results.jsonl> --fallback <LLM results.jsonl> --out <hybrid.jsonl>  # hybrid
 ```
 
-Registered domains: `pbebench`, `slr_bench`, `list_functions`, and `envsetup` (environment
-bootstrapping on SetupBench and EnvBench-Python, where the solver acts in a Docker container).
-See `domains/README.md` for the contract and `domains/envsetup/README.md` for the new domain.
+Registered domains: `pbebench`, `slr_bench`, `list_functions`, `envsetup` (environment
+bootstrapping on SetupBench and EnvBench-Python, where the solver acts in a Docker container),
+and five KinDER robotics domains `kinder_<family>` (below).
+See `domains/README.md` for the contract and `domains/envsetup/README.md`, `domains/kinder/README.md`
+for the new domains.
+
+---
+
+## KinDER Robotics Domains
+
+ReaComp on robot task and motion planning. A per-instance LLM agent solves single scenes of a
+[KinDER](https://github.com/Princeton-Robot-Planning-and-Learning/kindergarden) environment family by
+writing and testing a policy against a simulator of that scene; a coding agent compiles those reasoning
+traces into **one policy program for the whole family**; the program is evaluated on 100 held-out scenes
+with zero LLM calls, alone and as the first stage of a solver-first hybrid with the agent as fallback.
+The protocol is AgenticGenTAMP's ([tomsilver/robocode](https://github.com/tomsilver/robocode)): same
+environments and instance generator, same object-count schedule (test counts go beyond the training
+counts: the hard tier), step budgets, 60 s policy-time limit, `GeneratedApproach` interface and strict
+black-box access (standard library, numpy, scipy; no simulator inside the program).
+
+| Family (domain) | Goal | Train counts | Test counts (extrapolation) |
+|-----------------|------|--------------|-----------------------------|
+| `kinder_obstruction2d` | place the target block on an obstructed surface | 0–2 | 0–4 (3, 4) |
+| `kinder_clutteredretrieval2d` | retrieve the target block from clutter | 1, 3, 5, 10 | up to 25 (15, 20, 25) |
+| `kinder_clutteredstorage2d` | put all blocks inside the shelf | 1, 3, 7 | up to 15 (11, 15) |
+| `kinder_motion2d` | reach the target through narrow passages | 0–3 | 0–5 (4, 5) |
+| `kinder_stickbutton2d` | touch every button, using a stick for far ones | 1–3 | up to 10 (5, 10) |
+
+Implemented: task files (100 train + 100 test instances per family, `data/kinder/`, verified against
+KinDER's registered environments), exact replay verifier (`rewards/kinder.py`), the per-task agent
+(`openhands_agents/kinder_direct_solve/`, traces + LLM baseline + hybrid fallback), solver induction with
+the OpenHands builder or with Claude Code (`scripts/kinder_workspace.py`), solver evaluation and hybrid
+through the generic domain scripts, and a report by regime and object count (`scripts/kinder_report.py`).
+Everything except the LLM runs on CPU; no Docker or Apptainer is needed.
+
+```bash
+python -m domains.tests.test_kinder        # local checks (mock LLM, CPU), ~30 s
+```
+
+GPU runs, step by step: **[COMMANDS.md §7](COMMANDS.md#7-kinder-robotics-domains)**. Protocol details,
+verification and caveats (different test seeds from AgenticGenTAMP's private suite, unregistered counts,
+harness differences, scope): **[domains/kinder/README.md](domains/kinder/README.md)**.
 
 ---
 
@@ -282,7 +321,8 @@ python scripts/compute_trajectory_tokens.py \
 .
 ├── building_prompts/
 │   ├── SOLVER_BUILDING_PROMPT_PBE.md   # spec given to coding agent for PBEBench solver
-│   └── SOLVER_BUILDING_PROMPT_SLR.md   # spec given to coding agent for SLR-Bench solver
+│   ├── SOLVER_BUILDING_PROMPT_SLR.md   # spec given to coding agent for SLR-Bench solver
+│   └── SOLVER_BUILDING_PROMPT_KINDER.md # spec for a KinDER family policy (+ the family's env description)
 ├── demos/
 │   ├── DEMOS_PBEBENCH_seed_42_100_examples.json              # 100 PBEBench traces (no CoT)
 │   ├── DEMOS_PBEBENCH_seed_42_100_examples_with_CoT.json    # 100 PBEBench traces + CoT — default
@@ -294,7 +334,11 @@ python scripts/compute_trajectory_tokens.py \
 │   └── qwen3.6_35b_a3b/      # solvers induced by Qwen via OpenHands
 ├── data/
 │   ├── pbebench/             # PBEBench task files
-│   └── slr_bench/            # SLR-Bench task files
+│   ├── slr_bench/            # SLR-Bench task files
+│   └── kinder/               # KinDER task files (<family>_{train,test}.jsonl) + env descriptions
+├── data_generation/
+│   └── kinder_generator.py   # build / check / verify the KinDER task files
+├── domains/                  # domain registry; domains/kinder/ = KinDER simulator, sandbox, domain
 ├── evals/
 │   ├── solver_results/       # per-task JSONL from eval_solver.py
 │   ├── findings.md           # consolidated results
@@ -305,7 +349,8 @@ python scripts/compute_trajectory_tokens.py \
 ├── metrics/                  # quick_eval JSON summaries
 ├── rewards/
 │   ├── pbebench.py           # PBEBench reward + cascade_complexity
-│   └── slrbench.py           # SLR-Bench reward + rule_complexity
+│   ├── slrbench.py           # SLR-Bench reward + rule_complexity
+│   └── kinder.py             # KinDER reward: exact replay of an action sequence
 ├── scripts/
 │   ├── eval_solver.py                  # evaluate SOLVER.py; writes quick_eval-compatible JSONL
 │   ├── quick_eval.py                   # pass rate, mean reward, token usage, complexity
@@ -319,9 +364,16 @@ python scripts/compute_trajectory_tokens.py \
 │   ├── run_direct_feedback_vllm.sh     # run Direct Feedback baseline via vLLM
 │   ├── run_direct_solve_openhands.sh   # run DirectSolve baseline (one OH conversation/task); supports sharding via START_INDEX/END_INDEX
 │   ├── merge_direct_solve_shards.py    # merge shard JSONLs + checkpoints into one file
-│   └── run_solver_builder_openhands.sh # run SolverBuilder agent via OpenHands
+│   ├── run_solver_builder_openhands.sh # run SolverBuilder agent via OpenHands
+│   ├── run_kinder_direct_solve_openhands.sh    # KinDER per-task agent (traces / baseline)
+│   ├── run_kinder_solver_builder_openhands.sh  # KinDER SolverBuilder (no Apptainer needed)
+│   ├── run_all_kinder_evals.sh         # KinDER solver eval + hybrid + report
+│   ├── kinder_workspace.py             # working directory + simulator for Claude Code induction
+│   └── kinder_report.py                # pass rate by regime / object count, tokens
 ├── openhands_agents/
-│   └── solver_builder/       # SolverBuilder agent (controller + tools)
+│   ├── solver_builder/       # SolverBuilder agent (controller + tools)
+│   ├── kinder_direct_solve/  # KinDER per-task agent (controller + tools)
+│   └── run_kinder_direct_solve.py  # its entry point
 ├── COMMANDS.md               # full reproduction commands
 └── main.py                   # legacy CLI (multi-agent system — not used in paper)
 ```
