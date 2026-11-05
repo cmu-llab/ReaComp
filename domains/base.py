@@ -72,6 +72,33 @@ def load_traces(path: str) -> List[dict]:
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
+def wait_for_child_result(proc, queue, timeout: Optional[float], poll: float = 0.5) -> Tuple[Any, str]:
+    """Read the single result a child process puts on ``queue``.
+
+    The queue is read while the child runs: a child whose result is larger than the pipe
+    buffer cannot exit before the parent reads it, so joining first would deadlock.
+    Returns ``(result, "ok")``, ``(None, "timeout")`` once ``timeout`` seconds have passed
+    (None or inf: no limit), or ``(None, "died")`` if the child exited without a result.
+    The caller kills and joins the child.
+    """
+    import queue as queue_mod
+    import time
+    deadline = None if timeout is None or timeout == float("inf") else time.time() + float(timeout)
+    while True:
+        wait = poll if deadline is None else max(0.0, min(poll, deadline - time.time()))
+        try:
+            return queue.get(timeout=wait), "ok"
+        except queue_mod.Empty:
+            pass
+        if not proc.is_alive():
+            try:  # a result flushed just before the child exited
+                return queue.get(timeout=poll), "ok"
+            except queue_mod.Empty:
+                return None, "died"
+        if deadline is not None and time.time() >= deadline:
+            return None, "timeout"
+
+
 def balanced_sample(demos: List[dict], n: int, key_fn: Callable[[dict], Tuple], seed: int = 42) -> List[dict]:
     """Round-robin over the groups induced by ``key_fn`` (e.g. difficulty x success)
     until ``n`` demos are chosen; groups are shuffled with ``seed``."""
@@ -220,7 +247,9 @@ class Domain:
 
     def solver_builder_spec(self) -> dict:
         """What the solver-building coding agent needs:
-        {"system_prompt": str, "file_note": str, "solver_filename": str, "algorithm_filename": str}."""
+        {"system_prompt": str, "file_note": str, "solver_filename": str, "algorithm_filename": str}
+        and optionally "prompt_suffix" (appended after the building prompt) and
+        "execute_code_description" (the execute_code tool's description)."""
         entry = self.solver_entrypoints[0] if self.solver_entrypoints else "solve"
         sf, af = self.solver_filename, self.algorithm_filename
         system_prompt = (
@@ -263,6 +292,12 @@ class Domain:
         )
         return {"system_prompt": system_prompt, "file_note": file_note,
                 "solver_filename": sf, "algorithm_filename": af}
+
+    def solver_builder_sandbox(self, demos_path: str, output_dir: str, timeout: Optional[float] = None):
+        """A sandbox for the solver builder's execute_code tool (``run_code(code, lib_dir=None,
+        timeout=None, extra_binds=None) -> (ok, stdout, stderr)``), or None to use the default
+        Apptainer sandbox with DEMOS.json and rewards/ mounted under /workspace."""
+        return None
 
     # ----------------------------------------------------------------- demos
     @staticmethod

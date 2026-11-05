@@ -71,7 +71,7 @@ class SBExecuteCodeExecutor(ToolExecutor[SBExecuteCodeAction, SBExecuteCodeObser
         ok, stdout, stderr = self._sandbox.run_code(
             preamble + action.code,
             lib_dir=None,
-            timeout=60,
+            timeout=None,  # the sandbox's own limit (ApptainerSandbox: --sandbox-timeout, default 60 s)
             extra_binds=self._extra_binds,
         )
         return SBExecuteCodeObservation(ok=ok, stdout=stdout, stderr=stderr)
@@ -79,9 +79,10 @@ class SBExecuteCodeExecutor(ToolExecutor[SBExecuteCodeAction, SBExecuteCodeObser
 
 class SBExecuteCodeTool(ToolDefinition[SBExecuteCodeAction, SBExecuteCodeObservation]):
     @classmethod
-    def create(cls, sandbox, workspace_dir: str, extra_binds: list) -> "list[SBExecuteCodeTool]":
+    def create(cls, sandbox, workspace_dir: str, extra_binds: list,
+               description: str | None = None) -> "list[SBExecuteCodeTool]":
         return [cls(
-            description=(
+            description=description or (
                 "Execute Python code in the sandbox. "
                 "Use this to inspect DEMOS.json, test logic snippets, or "
                 "validate a candidate program against the verifier. "

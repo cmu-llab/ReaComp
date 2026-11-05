@@ -38,13 +38,23 @@ def load_ckpt(path: str) -> dict:
 
 
 def ckpt_path_for(jsonl_path: str) -> str:
-    return jsonl_path + ".ckpt.json"
+    """The checkpoint the runners write and read (openhands_agents.run: <output>.ckpt.json)."""
+    return jsonl_path.replace(".jsonl", ".ckpt.json")
 
 
-def sort_key(row: dict) -> int:
+def shard_ckpt(jsonl_path: str) -> dict:
+    """A shard's checkpoint, under the runners' name or the older <output>.jsonl.ckpt.json."""
+    return load_ckpt(ckpt_path_for(jsonl_path)) or load_ckpt(jsonl_path + ".ckpt.json")
+
+
+def sort_key(row: dict) -> tuple:
     if "task_index" in row:
-        return int(row["task_index"])
-    return int(row.get("task_id", 0))
+        return (0, int(row["task_index"]), "")
+    task_id = row.get("task_id", 0)
+    try:
+        return (0, int(task_id), "")
+    except (TypeError, ValueError):   # string ids, e.g. KinDER's "motion2d-test-007"
+        return (1, 0, str(task_id))
 
 
 def main():
@@ -53,16 +63,15 @@ def main():
     parser.add_argument("--output", required=True, help="Output .jsonl path")
     args = parser.parse_args()
 
-    merged: dict[int, dict] = {}
+    merged: dict = {}
     all_completed_ids: set = set()
 
     for shard_path in args.shards:
         rows = load_jsonl(shard_path)
         for row in rows:
-            key = int(row.get("task_id", row.get("task_index", 0)))
-            merged[key] = row
+            merged[row.get("task_id", row.get("task_index", 0))] = row
 
-        ckpt = load_ckpt(ckpt_path_for(shard_path))
+        ckpt = shard_ckpt(shard_path)
         all_completed_ids.update(ckpt.get("completed_ids", []))
 
     sorted_rows = sorted(merged.values(), key=sort_key)

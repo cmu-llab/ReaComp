@@ -17,7 +17,7 @@ sys.path.insert(0, REPO_ROOT)
 
 from domains import get_domain  # noqa: E402
 from domains.envsetup.agent import EnvSetupAgentRunner  # noqa: E402
-from domains.envsetup.tests.mock_llm import MockLLMServer  # noqa: E402
+from domains.tests.mock_llm import MockLLMServer  # noqa: E402
 
 SCRIPT = [
     ("bash", {"command": "ls -a && sed -n 1,5p setup.py", "reason": "inspect the repository"}),

@@ -31,7 +31,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
 from domains import get_domain, list_domains  # noqa: E402
-from domains.base import SplitSpec  # noqa: E402
+from domains.base import SplitSpec, wait_for_child_result  # noqa: E402
 
 _FAILED = {"success": False, "program": None, "score": 0.0, "extras": {}}
 
@@ -66,24 +66,24 @@ def _run_task(args):
                                    args=(domain_name, split_dict, solver_path, rec, queue), daemon=True)
     t0 = time.time()
     proc.start()
-    proc.join(timeout=None if task_timeout == float("inf") else task_timeout)
-    elapsed = round(time.time() - t0, 3)
-    timed_out = False
+    result, status = wait_for_child_result(proc, queue, task_timeout)
     if proc.is_alive():
         proc.kill()
-        proc.join()
-        timed_out = True
+    proc.join()
+    elapsed = round(time.time() - t0, 3)
+    if status == "timeout":
         try:
             get_domain(domain_name).cleanup_after_timeout(rec, SplitSpec(**split_dict))
         except Exception:  # noqa: BLE001
             pass
-    result = queue.get_nowait() if not queue.empty() else dict(_FAILED)
-    error = result.pop("error", None)
-    result.pop("traceback", None)
-    if error:
-        result = dict(_FAILED, extras={"error": error})
-    if timed_out:
         result = dict(_FAILED, extras={"error": f"timeout after {task_timeout}s"})
+    elif status == "died":
+        result = dict(_FAILED, extras={"error": f"solver process exited with code {proc.exitcode} without a result"})
+    else:
+        error = result.pop("error", None)
+        result.pop("traceback", None)
+        if error:
+            result = dict(_FAILED, extras={"error": error})
     return task_index, rec, result, elapsed
 
 

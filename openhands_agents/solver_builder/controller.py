@@ -229,6 +229,7 @@ class SolverBuilderController:
                 self.sandbox,
                 workspace_dir="/workspace",
                 extra_binds=self._extra_binds(),
+                description=(self._spec or {}).get("execute_code_description"),
             ),
             *SBWriteFileTool.create(self.output_dir, allowed=self._output_filenames() if self._spec else None),
             *SBFinishTool.create(done_path),
@@ -254,7 +255,7 @@ class SolverBuilderController:
     def user_message(self, building_prompt: str) -> str:
         """The @-reference guide for the domain followed by the building prompt."""
         if self._spec is not None:
-            return self._spec["file_note"] + building_prompt
+            return self._spec["file_note"] + building_prompt + self._spec.get("prompt_suffix", "")
         file_note = _FILE_NOTE_SLR if self.solver_type == "slr" else _FILE_NOTE_PBE
         return file_note + building_prompt
 
