@@ -122,6 +122,25 @@ Do NOT produce placeholder code. Write a complete, working implementation.
 # Default to PBE for backwards compatibility; SLR selected via solver_type param.
 _SYSTEM_PROMPT = _SYSTEM_PROMPT_PBE
 
+_FILE_NOTE_SLR = (
+    "File path reference guide (for @-references in the spec below):\n"
+    "  @DEMOS.json              → /workspace/DEMOS.json   (use execute_code to read)\n"
+    "  @rewards/slr_bench.py    → importable as: from rewards.slr_bench import reward, parse_prompt_examples, rule_complexity\n"
+    "  @SOLVER_SLR.py           → write via write_file(filename='SOLVER_SLR.py', content=...)\n"
+    "  @SOLVER_SLR_ALGORITHM.md → write via write_file(filename='SOLVER_SLR_ALGORITHM.md', content=...)\n"
+    "\n"
+    "---\n\n"
+)
+_FILE_NOTE_PBE = (
+    "File path reference guide (for @-references in the spec below):\n"
+    "  @DEMOS_PBEBENCH.json → /workspace/DEMOS.json   (use execute_code to read)\n"
+    "  @rewards/pbebench.py → importable as: from rewards.pbebench import reward\n"
+    "  @SOLVER.py          → write via write_file(filename='SOLVER.py', content=...)\n"
+    "  @SOLVER_ALGORITHM.md → write via write_file(filename='SOLVER_ALGORITHM.md', content=...)\n"
+    "\n"
+    "---\n\n"
+)
+
 
 class SolverBuilderController:
     """
@@ -155,6 +174,7 @@ class SolverBuilderController:
         max_steps: int = 200,
         max_tokens: int = 16384,
         solver_type: str = "pbe",
+        domain=None,
     ):
         self.base_url = base_url
         self.model = model
@@ -174,7 +194,14 @@ class SolverBuilderController:
             max_tokens=max_tokens,
         )
 
-        system_prompt = _SYSTEM_PROMPT_SLR if solver_type == "slr" else _SYSTEM_PROMPT_PBE
+        # A registered domain (domains.get_domain) supplies prompts and output file names;
+        # without one the historical pbe/slr behaviour is unchanged.
+        self.domain = domain
+        self._spec = domain.solver_builder_spec() if domain is not None else None
+        if self._spec is not None:
+            system_prompt = self._spec["system_prompt"]
+        else:
+            system_prompt = _SYSTEM_PROMPT_SLR if solver_type == "slr" else _SYSTEM_PROMPT_PBE
 
         # Write system prompt to a temp .j2 file (SDK requires a file path).
         fd, self._system_prompt_file = tempfile.mkstemp(
@@ -203,7 +230,7 @@ class SolverBuilderController:
                 workspace_dir="/workspace",
                 extra_binds=self._extra_binds(),
             ),
-            *SBWriteFileTool.create(self.output_dir),
+            *SBWriteFileTool.create(self.output_dir, allowed=self._output_filenames() if self._spec else None),
             *SBFinishTool.create(done_path),
         ]
         agent = Agent(
@@ -216,6 +243,20 @@ class SolverBuilderController:
         agent.__pydantic_private__["_initialized"] = True
         logger.info("SolverBuilder agent tools: %s", list(agent.tools_map.keys()))
         return agent
+
+    def _output_filenames(self):
+        if self._spec is not None:
+            return (self._spec["solver_filename"], self._spec["algorithm_filename"])
+        if self.solver_type == "slr":
+            return ("SOLVER_SLR.py", "SOLVER_SLR_ALGORITHM.md")
+        return ("SOLVER.py", "SOLVER_ALGORITHM.md")
+
+    def user_message(self, building_prompt: str) -> str:
+        """The @-reference guide for the domain followed by the building prompt."""
+        if self._spec is not None:
+            return self._spec["file_note"] + building_prompt
+        file_note = _FILE_NOTE_SLR if self.solver_type == "slr" else _FILE_NOTE_PBE
+        return file_note + building_prompt
 
     def build(self, building_prompt: str) -> dict:
         """
@@ -234,28 +275,7 @@ class SolverBuilderController:
         task_dir = tempfile.mkdtemp(prefix="oh_sb_task_")
         done_path = os.path.join(task_dir, "done.txt")
 
-        # Prepend path resolution note so the agent knows where @-referenced files live.
-        if self.solver_type == "slr":
-            file_note = (
-                "File path reference guide (for @-references in the spec below):\n"
-                "  @DEMOS.json              → /workspace/DEMOS.json   (use execute_code to read)\n"
-                "  @rewards/slr_bench.py    → importable as: from rewards.slr_bench import reward, parse_prompt_examples, rule_complexity\n"
-                "  @SOLVER_SLR.py           → write via write_file(filename='SOLVER_SLR.py', content=...)\n"
-                "  @SOLVER_SLR_ALGORITHM.md → write via write_file(filename='SOLVER_SLR_ALGORITHM.md', content=...)\n"
-                "\n"
-                "---\n\n"
-            )
-        else:
-            file_note = (
-                "File path reference guide (for @-references in the spec below):\n"
-                "  @DEMOS_PBEBENCH.json → /workspace/DEMOS.json   (use execute_code to read)\n"
-                "  @rewards/pbebench.py → importable as: from rewards.pbebench import reward\n"
-                "  @SOLVER.py          → write via write_file(filename='SOLVER.py', content=...)\n"
-                "  @SOLVER_ALGORITHM.md → write via write_file(filename='SOLVER_ALGORITHM.md', content=...)\n"
-                "\n"
-                "---\n\n"
-            )
-        user_message = file_note + building_prompt
+        user_message = self.user_message(building_prompt)
 
         agent = self._make_agent(task_dir)
         conversation = Conversation(
@@ -277,10 +297,7 @@ class SolverBuilderController:
             logger.warning("solver_builder conversation error: %s\n%s",
                            exc, traceback.format_exc())
 
-        if self.solver_type == "slr":
-            solver_fname, algo_fname = "SOLVER_SLR.py", "SOLVER_SLR_ALGORITHM.md"
-        else:
-            solver_fname, algo_fname = "SOLVER.py", "SOLVER_ALGORITHM.md"
+        solver_fname, algo_fname = self._output_filenames()
         solver_path = os.path.join(self.output_dir, solver_fname)
         algorithm_path = os.path.join(self.output_dir, algo_fname)
         summary = ""

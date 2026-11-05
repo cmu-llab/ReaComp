@@ -77,6 +77,26 @@ Solver variance (run1 vs run2): CC solver 99.6% per-task agreement (Δ=0.09pp), 
 
 ---
 
+## Domains (reusable layer)
+
+Task families are packaged as *domains* (`domains/`): tasks, agent-visible fields, verifier,
+solver entry point, building prompt and demo traces. The historical scripts below are
+unchanged; two generic entry points work for every registered domain:
+
+```bash
+python -m openhands_agents.run --framework direct_solve --domain pbebench --split lite --output-path outputs/traces.jsonl ...   # traces
+python scripts/build_demos.py --domain pbebench --split hard --traces outputs/traces.jsonl --n 100 --out demos/DEMOS_new.json     # demos
+python -m openhands_agents.build_solver --domain pbebench --output-dir built_solvers/<run> ...                                     # induction
+python scripts/eval_domain_solver.py --domain pbebench --split lite --solver built_solvers/<run>/SOLVER.py --output-dir evals/...  # evaluation
+python scripts/hybrid_gate.py --domain pbebench --solver <solver results.jsonl> --fallback <LLM results.jsonl> --out <hybrid.jsonl>  # hybrid
+```
+
+Registered domains: `pbebench`, `slr_bench`, `list_functions`, and `envsetup` (environment
+bootstrapping on SetupBench and EnvBench-Python, where the solver acts in a Docker container).
+See `domains/README.md` for the contract and `domains/envsetup/README.md` for the new domain.
+
+---
+
 ## Setup
 
 ```bash

@@ -118,14 +118,15 @@ class SBWriteFileObservation(Observation):
 
 
 class SBWriteFileExecutor(ToolExecutor[SBWriteFileAction, SBWriteFileObservation]):
-    def __init__(self, output_dir: str):
+    def __init__(self, output_dir: str, allowed=None):
         self._output_dir = output_dir
+        self._allowed = set(allowed) if allowed else {"SOLVER.py", "SOLVER_ALGORITHM.md"}
 
     def __call__(self, action: SBWriteFileAction, conversation=None) -> SBWriteFileObservation:
         filename = os.path.basename(action.filename.strip())
         if not filename:
             return SBWriteFileObservation(ok=False, message="filename must not be empty.")
-        allowed = {"SOLVER.py", "SOLVER_ALGORITHM.md"}
+        allowed = self._allowed
         if filename not in allowed:
             return SBWriteFileObservation(
                 ok=False,
@@ -143,16 +144,21 @@ class SBWriteFileExecutor(ToolExecutor[SBWriteFileAction, SBWriteFileObservation
 
 class SBWriteFileTool(ToolDefinition[SBWriteFileAction, SBWriteFileObservation]):
     @classmethod
-    def create(cls, output_dir: str) -> "list[SBWriteFileTool]":
+    def create(cls, output_dir: str, allowed=None) -> "list[SBWriteFileTool]":
+        names = sorted(allowed) if allowed else ["SOLVER.py", "SOLVER_ALGORITHM.md"]
         return [cls(
             description=(
+                "Write a file to the output directory. "
+                f"Use filename='{names[0]}' for the solver implementation and "
+                f"'{names[-1]}' for the algorithm description."
+            ) if allowed else (
                 "Write a file to the output directory. "
                 "Use filename='SOLVER.py' for the solver implementation and "
                 "'SOLVER_ALGORITHM.md' for the algorithm description."
             ),
             action_type=SBWriteFileAction,
             observation_type=SBWriteFileObservation,
-            executor=SBWriteFileExecutor(output_dir),
+            executor=SBWriteFileExecutor(output_dir, allowed),
         )]
 
 

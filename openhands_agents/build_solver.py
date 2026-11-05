@@ -31,10 +31,13 @@ def main():
     parser = argparse.ArgumentParser(description="SolverBuilder — OpenHands agent that writes SOLVER.py")
 
     # Required
-    parser.add_argument("--building-prompt", required=True,
-                        help="Path to SOLVER_BUILDING_PROMPT.md")
-    parser.add_argument("--demos-path", required=True,
-                        help="Path to DEMOS.json")
+    parser.add_argument("--building-prompt", default=None,
+                        help="Path to SOLVER_BUILDING_PROMPT.md (default: the domain's, with --domain)")
+    parser.add_argument("--demos-path", default=None,
+                        help="Path to DEMOS.json (default: the domain's first demo file, with --domain)")
+    parser.add_argument("--domain", default=None,
+                        help="Registered domain (domains/): prompts, file names and defaults come from it. "
+                             "Without it the historical --solver-type behaviour applies.")
     parser.add_argument("--rewards-dir", required=True,
                         help="Path to rewards/ directory (contains pbebench.py)")
     parser.add_argument("--output-dir", required=True,
@@ -65,6 +68,17 @@ def main():
     if not args.sif_path:
         parser.error("--sif-path required (or set SANDBOX_SIF env var)")
 
+    domain = None
+    if args.domain:
+        from domains import get_domain
+        domain = get_domain(args.domain)
+        if not args.building_prompt and domain.building_prompt:
+            args.building_prompt = domain.abspath(domain.building_prompt)
+        if not args.demos_path and domain.demos:
+            args.demos_path = domain.abspath(next(iter(domain.demos.values())))
+    if not args.building_prompt or not args.demos_path:
+        parser.error("--building-prompt and --demos-path are required (or pass --domain)")
+
     # Validate inputs
     for label, path in [
         ("building-prompt", args.building_prompt),
@@ -91,11 +105,13 @@ def main():
         max_steps=args.max_steps,
         max_tokens=args.max_tokens,
         solver_type=args.solver_type,
+        domain=domain,
     )
 
     logger.info("Starting SolverBuilder conversation...")
     logger.info("  building_prompt : %s", args.building_prompt)
     logger.info("  solver_type     : %s", args.solver_type)
+    logger.info("  domain          : %s", args.domain)
     logger.info("  demos_path      : %s", args.demos_path)
     logger.info("  rewards_dir     : %s", args.rewards_dir)
     logger.info("  output_dir      : %s", args.output_dir)
