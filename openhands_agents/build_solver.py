@@ -31,10 +31,13 @@ def main():
     parser = argparse.ArgumentParser(description="SolverBuilder — OpenHands agent that writes SOLVER.py")
 
     # Required
-    parser.add_argument("--building-prompt", required=True,
-                        help="Path to SOLVER_BUILDING_PROMPT.md")
-    parser.add_argument("--demos-path", required=True,
-                        help="Path to DEMOS.json")
+    parser.add_argument("--building-prompt", default=None,
+                        help="Path to SOLVER_BUILDING_PROMPT.md (default: the domain's, with --domain)")
+    parser.add_argument("--demos-path", default=None,
+                        help="Path to DEMOS.json (default: the domain's first demo file, with --domain)")
+    parser.add_argument("--domain", default=None,
+                        help="Registered domain (domains/): prompts, file names and defaults come from it. "
+                             "Without it the historical --solver-type behaviour applies.")
     parser.add_argument("--rewards-dir", required=True,
                         help="Path to rewards/ directory (contains pbebench.py)")
     parser.add_argument("--output-dir", required=True,
@@ -42,8 +45,10 @@ def main():
 
     # Sandbox
     parser.add_argument("--sif-path", default=os.environ.get("SANDBOX_SIF", ""),
-                        help="Path to sandbox.sif (or set SANDBOX_SIF env var)")
-    parser.add_argument("--sandbox-timeout", type=int, default=60)
+                        help="Path to sandbox.sif (or set SANDBOX_SIF env var); not needed for domains "
+                             "with their own sandbox (kinder_*)")
+    parser.add_argument("--sandbox-timeout", type=int, default=None,
+                        help="seconds per execute_code call (default: 60, or the domain sandbox's own default)")
 
     # LLM
     parser.add_argument("--base-url", default="http://localhost:8000/v1")
@@ -61,9 +66,20 @@ def main():
                         help="Directory for debug JSON (trajectory, summary)")
 
     args = parser.parse_args()
+    args.sandbox_timeout_set = args.sandbox_timeout is not None
+    if args.sandbox_timeout is None:
+        args.sandbox_timeout = 60
 
-    if not args.sif_path:
-        parser.error("--sif-path required (or set SANDBOX_SIF env var)")
+    domain = None
+    if args.domain:
+        from domains import get_domain
+        domain = get_domain(args.domain)
+        if not args.building_prompt and domain.building_prompt:
+            args.building_prompt = domain.abspath(domain.building_prompt)
+        if not args.demos_path and domain.demos:
+            args.demos_path = domain.abspath(next(iter(domain.demos.values())))
+    if not args.building_prompt or not args.demos_path:
+        parser.error("--building-prompt and --demos-path are required (or pass --domain)")
 
     # Validate inputs
     for label, path in [
@@ -76,8 +92,18 @@ def main():
 
     building_prompt = open(args.building_prompt).read()
 
-    from .sandbox import ApptainerSandbox
-    sandbox = ApptainerSandbox(sif_path=args.sif_path, timeout=args.sandbox_timeout)
+    # A domain may bring its own execute_code sandbox (e.g. KinDER: a simulator server
+    # instead of the Apptainer image); otherwise the Apptainer sandbox is used.
+    sandbox = None
+    if domain is not None:
+        sandbox = domain.solver_builder_sandbox(
+            demos_path=os.path.abspath(args.demos_path), output_dir=os.path.abspath(args.output_dir),
+            timeout=args.sandbox_timeout if args.sandbox_timeout_set else None)
+    if sandbox is None:
+        if not args.sif_path:
+            parser.error("--sif-path required (or set SANDBOX_SIF env var)")
+        from .sandbox import ApptainerSandbox
+        sandbox = ApptainerSandbox(sif_path=args.sif_path, timeout=args.sandbox_timeout)
 
     from .solver_builder.controller import SolverBuilderController
     controller = SolverBuilderController(
@@ -91,11 +117,13 @@ def main():
         max_steps=args.max_steps,
         max_tokens=args.max_tokens,
         solver_type=args.solver_type,
+        domain=domain,
     )
 
     logger.info("Starting SolverBuilder conversation...")
     logger.info("  building_prompt : %s", args.building_prompt)
     logger.info("  solver_type     : %s", args.solver_type)
+    logger.info("  domain          : %s", args.domain)
     logger.info("  demos_path      : %s", args.demos_path)
     logger.info("  rewards_dir     : %s", args.rewards_dir)
     logger.info("  output_dir      : %s", args.output_dir)

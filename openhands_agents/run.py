@@ -62,7 +62,12 @@ def _load_reward(name: str):
     return mod.reward
 
 
+_DOMAIN = None   # set from --domain; widens the agent-visible keys to the domain's
+
+
 def _task_input(rec: dict) -> dict:
+    if _DOMAIN is not None:
+        return _DOMAIN.task_input(rec)
     _AGENT_KEYS = {"question", "prompt", "task"}
     return {k: v for k, v in rec.items() if k in _AGENT_KEYS}
 
@@ -355,6 +360,8 @@ def run_direct_solve(args, records, reward_fn, sandbox, ckpt_path):
         max_tokens=args.max_tokens,
         task_type=getattr(args, "task_type", "auto"),
         max_programs=getattr(args, "max_programs", None) or 5,
+        domain=_DOMAIN,
+        split=getattr(args, "_split_spec", None),
     )
 
     ckpt = _load_checkpoint(ckpt_path)
@@ -463,9 +470,13 @@ def run_best_of_k(args, records, reward_fn, sandbox, ckpt_path):
 def main():
     parser = argparse.ArgumentParser(description="openhands_agents — sandboxed baselines")
     parser.add_argument("--framework", required=True, choices=["react_library", "trove", "best_of_k", "static_library", "direct_solve"])
-    parser.add_argument("--dataset-path", required=True)
+    parser.add_argument("--dataset-path", default=None, help="task JSONL (default: the domain split's file, with --domain)")
     parser.add_argument("--output-path", required=True)
-    parser.add_argument("--default-reward", required=True, help="Reward module name (e.g. reasoning_gym)")
+    parser.add_argument("--default-reward", default=None, help="Reward module name (e.g. reasoning_gym); implied by --domain")
+    parser.add_argument("--domain", default=None,
+                        help="Registered domain (domains/): reward, agent-visible fields and direct_solve prompts "
+                             "come from it. Without it the historical --default-reward behaviour applies.")
+    parser.add_argument("--split", default=None, help="domain split name (with --domain), e.g. lite")
 
     # Sandbox
     parser.add_argument("--sif-path", default=os.environ.get("SANDBOX_SIF", ""),
@@ -521,6 +532,23 @@ def main():
 
     if not args.sif_path:
         parser.error("--sif-path required (or set SANDBOX_SIF env var)")
+
+    global _DOMAIN
+    if args.domain:
+        from domains import get_domain
+        _DOMAIN = get_domain(args.domain)
+        if _DOMAIN.trace_runner:
+            parser.error(f"domain {args.domain!r} uses its own trace runner: python -m {_DOMAIN.trace_runner}")
+        if args.split:
+            args._split_spec = _DOMAIN.split(args.split)
+            if not args.dataset_path:
+                args.dataset_path = args._split_spec.path
+            if getattr(args, "max_programs", None) is None and "max_programs" in args._split_spec.params:
+                args.max_programs = args._split_spec.params["max_programs"]
+        if not args.default_reward:
+            args.default_reward = _DOMAIN.reward_module
+    if not args.dataset_path or not args.default_reward:
+        parser.error("--dataset-path and --default-reward are required (or pass --domain [--split])")
 
     ckpt_path = args.checkpoint_path or args.output_path.replace(".jsonl", ".ckpt.json")
 

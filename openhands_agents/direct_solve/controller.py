@@ -196,6 +196,8 @@ class DirectSolveController:
         max_tokens: int = 16384,
         task_type: str = "auto",
         max_programs: int = 5,
+        domain=None,
+        split=None,
     ):
         self.base_url = base_url
         self.model = model
@@ -220,6 +222,15 @@ class DirectSolveController:
             with os.fdopen(fd, "w") as f:
                 f.write(prompt)
             self._system_prompt_files[ttype] = path
+        # A registered domain supplies its own prompts (task_type is then ignored).
+        self.domain = domain
+        self._domain_spec = None
+        if domain is not None:
+            self._domain_spec = domain.direct_solve_spec(split, max_programs=max_programs)
+            fd, path = tempfile.mkstemp(suffix=".j2", prefix=f"ds_system_{domain.name}_")
+            with os.fdopen(fd, "w") as f:
+                f.write(self._domain_spec["system_prompt"])
+            self._system_prompt_files["domain"] = path
 
     def _extra_binds(self) -> list:
         return [(self.rewards_dir, "/workspace/rewards", "ro")]
@@ -227,7 +238,9 @@ class DirectSolveController:
     def solve(self, record: dict, reward_fn, reward_name: str = "") -> dict:
         """Run one agent conversation to solve a single task."""
         task_type = self.task_type
-        if task_type == "auto":
+        if self._domain_spec is not None:
+            task_type = "domain"
+        elif task_type == "auto":
             task_type = _infer_task_type(record, reward_name)
 
         task_dir = tempfile.mkdtemp(prefix="oh_ds_task_")
@@ -255,7 +268,9 @@ class DirectSolveController:
             max_iteration_per_run=self.max_steps,
         )
 
-        if task_type == "slr":
+        if task_type == "domain":
+            user_message = self._domain_spec["task_message"](record)
+        elif task_type == "slr":
             user_message = _build_task_message_slr(record)
         else:
             user_message = _build_task_message_pbe(record)
