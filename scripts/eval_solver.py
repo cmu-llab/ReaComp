@@ -111,14 +111,33 @@ def _solve_in_child(solver_path, cfg, rec, queue):
             if ratio is not None:
                 import math
                 max_programs = max(2, math.ceil(len(examples) / ratio))
-            kwargs = {"max_programs": max_programs}
+            # Only pass the budget kwargs a solver actually accepts (the building prompt fixes
+            # just solve_pbe(examples); some solvers do not take max_programs).
+            kwargs = {}
+            if "max_programs" in sig_params:
+                kwargs["max_programs"] = max_programs
             if "max_pred_len" in sig_params:
                 kwargs["max_pred_len"] = cfg["max_pred_len"]
             if "max_transform_len" in sig_params:
                 kwargs["max_transform_len"] = cfg["max_transform_len"]
             result = solve_fn(examples, **kwargs)
-            score = result.get("score", max(result["scores"]) if result.get("scores") else (1.0 if result["success"] else 0.0))
-            queue.put({"success": result["success"], "program": result.get("program"), "score": score})
+            self_score = result.get("score", max(result["scores"]) if result.get("scores") else (1.0 if result["success"] else 0.0))
+            # Re-verify the returned program with the official verifier under the dataset budget
+            # instead of trusting the solver's self-reported success.
+            from rewards.pbebench import reward as _pbe_reward
+            prog = result.get("program")
+            if isinstance(prog, list) and prog and isinstance(prog[0], (list, tuple)):
+                prog = [f"replace({a!r}, {b!r})" for a, b in prog]
+            if isinstance(prog, list) and len(prog) == 0:
+                # Empty cascade (identity tasks, e.g. some Real-FR pairs): the verifier cannot
+                # parse "[]", so score it directly as the fraction of unchanged examples.
+                pairs = list(zip(rec["inputs"], rec["outputs"]))
+                score = sum(i == o for i, o in pairs) / max(1, len(pairs))
+            else:
+                prog_text = prog if isinstance(prog, str) else (json.dumps(prog) if prog else None)
+                score = _pbe_reward(prog_text, True, rec, max_programs=max_programs)["value"] if prog_text else 0.0
+            queue.put({"success": score >= 1.0, "program": result.get("program"), "score": score,
+                       "self_reported_success": bool(result.get("success")), "self_reported_score": self_score})
     except Exception as e:
         queue.put({"error": str(e)})
 
@@ -226,6 +245,8 @@ def evaluate(dataset_key, solver_path, output_dir=None, limit=None, workers=1, t
             "reward_history": [{"iteration": 0, "reward": reward}],
             "token_usage": {"input": 0, "output": 0, "reasoning": 0},
             "cost_summary": {"elapsed_s": elapsed_task},
+            "self_reported_success": result.get("self_reported_success"),
+            "self_reported_score": result.get("self_reported_score"),
             # extra context fields
             "dataset": cfg["label"],
             # PBEBench-specific (absent for SLR)
