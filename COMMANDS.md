@@ -203,3 +203,149 @@ python scripts/quick_eval.py \
     evals/solver_results/claude_code/Thu_Apr_23_807_PM/run2/hard.jsonl \
     --tasks-file data/pbebench/tasks_full_og.jsonl
 ```
+
+---
+
+## 7. Autoresearch HPO (nanochat pre-training)
+
+Hyperparameter optimisation of nanochat pre-training, the benchmark of [arXiv:2603.24647](https://arxiv.org/abs/2603.24647). Background, status and caveats are in the [README](README.md#autoresearch-hpo-nanochat-pre-training). Every trial on the real objective trains for 300 s on one GPU: the pilot task (1 h budget) takes a bit over an hour per policy, a task of `tasks_full.jsonl` (the paper's 24 h budget) 24 h per seed. The task files describe the paper's hardware (one H200, 141 GB, training capped to ~76 GB); the runners refuse another GPU unless `--allow-unpinned` is passed, which labels the results as not verified.
+
+### CPU checks (no GPU, no model server)
+
+```bash
+# Unit and end-to-end tests (synthetic objective, fake LLM server, stand-in sandbox)
+python -m unittest discover -s tests -t .
+
+# Search space, starting configuration and train.py handling vs. the pinned upstream sources
+python data/autoresearch_hpo/check_upstream_fidelity.py
+# → PASS   (fetches three files from GitHub; --offline-dir <dir> reads local copies)
+
+# Regenerate the task files (deterministic; the fidelity check compares them with the generator)
+python data_generation/autoresearch_hpo_generator.py
+# → data/autoresearch_hpo/{tasks_full,pilot_tasks,synthetic_tasks}.jsonl
+```
+
+Every launcher below also runs on the synthetic objective when `TASKS=data/autoresearch_hpo/synthetic_tasks.jsonl` is set. This is a stand-in landscape for dry runs, not nanochat: its results are labelled `synthetic (NOT benchmark)`.
+
+```bash
+POLICY=random TASKS=data/autoresearch_hpo/synthetic_tasks.jsonl bash scripts/run_hpo_eval.sh
+python scripts/summarize_hpo_results.py outputs/autoresearch_hpo_synthetic_tasks_random
+```
+
+### Training environment (one CUDA GPU)
+
+```bash
+# Clones ferreirafabio/autoresearch at the pinned commit into original_baseline_repos/autoresearch,
+# checks train.py / prepare.py against the pinned hashes, runs `uv sync` and prepare.py
+bash scripts/setup_autoresearch_hpo.sh
+
+# Other checkout location (export it for the runners too) / other prepare.py arguments
+AUTORESEARCH_DIR=/scratch/$USER/autoresearch PREPARE_ARGS="--num-shards 10" \
+    bash scripts/setup_autoresearch_hpo.sh
+```
+
+Sanity check of the objective: trial 0 of every episode trains the default configuration, which the paper reports at `val_bpb` ≈ 0.991 on an H200. The random-search pilot is the cheapest episode to see it:
+
+```bash
+POLICY=random bash scripts/run_hpo_eval.sh
+head -2 outputs/autoresearch_hpo_pilot_tasks_random/autoresearch_hpo_1h_seed0.jsonl   # header row, then trial 0
+```
+
+### LLM HPO agent: baseline and reasoning traces
+
+```bash
+# Model server and training need separate GPUs
+bash scripts/launch_vllm_qwen3.6_35b_a3b.sh <PORT> <NUM_GPUS>
+
+# Pilot (1 h budget)
+PORT=<PORT> TRAIN_GPU=<GPU> bash scripts/run_hpo_traces_vllm.sh
+
+# Paper protocol (24 h budget, seeds 0-2), one seed per GPU
+for s in 0 1 2; do
+  PORT=<PORT> TRAIN_GPU=$s TASKS=data/autoresearch_hpo/tasks_full.jsonl \
+    bash scripts/run_hpo_traces_vllm.sh --task-id autoresearch_hpo_24h_seed$s &
+done; wait
+```
+
+Output: `outputs/autoresearch_hpo_<tasks>_hpo_agent_qwen3.6_35b_a3b/<task_id>.jsonl` (episode log: prompt, reasoning, configuration and outcome of every trial) and `<task_id>.result.json`. Re-running a command resumes unfinished episodes.
+
+The default prompt asks for step-by-step reasoning before the answer (the traces the solver is induced from). The prompt and settings of the paper's "Karpathy Agent (14 HPs)" baseline:
+
+```bash
+PORT=<PORT> TRAIN_GPU=<GPU> TASKS=data/autoresearch_hpo/tasks_full.jsonl \
+PROMPT_STYLE=paper MAX_TOKENS=2048 \
+    bash scripts/run_hpo_traces_vllm.sh --parse-retries 0
+```
+
+Output: `outputs/autoresearch_hpo_tasks_full_hpo_agent_qwen3.6_35b_a3b_paper/`
+
+### Demos
+
+```bash
+python -m openhands_agents.build_hpo_balanced_demos \
+    --episodes outputs/autoresearch_hpo_tasks_full_hpo_agent_qwen3.6_35b_a3b \
+    --n 100 --seed 42
+```
+
+Output: `demos/DEMOS_AUTORESEARCH_HPO_seed_42_<count>_examples_with_CoT.json`, balanced between decisions that improved the best `val_bpb` so far and decisions that did not. `<count>` is below 100 when the episodes contain fewer than 50 decisions of either kind (a 1 h pilot episode has about 12 trials); the building prompt and the OpenHands launcher name the 100-example file, so adjust the file name in the instruction or set `DEMOS_PATH` otherwise.
+
+### Solver induction
+
+Claude Code:
+
+```bash
+# Open a Claude Code session in the project root, then instruct it:
+# "Read building_prompts/SOLVER_BUILDING_PROMPT_HPO.md and
+#  demos/DEMOS_AUTORESEARCH_HPO_seed_42_100_examples_with_CoT.json,
+#  then implement the solver as described."
+claude
+```
+
+Output: `built_solvers/claude_code/<timestamp>/SOLVER_HPO.py` and `SOLVER_HPO_ALGORITHM.md`
+
+Qwen3.6 via OpenHands (needs the model server and the Apptainer sandbox from `scripts/build_sandbox_openhands.sh`; no training GPU):
+
+```bash
+bash scripts/run_solver_builder_hpo_openhands.sh <PORT>
+
+# Other demos file / sandbox image
+DEMOS_PATH=demos/DEMOS_AUTORESEARCH_HPO_seed_42_24_examples_with_CoT.json \
+SIF_PATH=/scratch/$USER/sif_images/sandbox.sif \
+    bash scripts/run_solver_builder_hpo_openhands.sh <PORT>
+```
+
+Output: `built_solvers/qwen3.6_35b_a3b/<timestamp>_hpo/SOLVER_HPO.py` and `SOLVER_HPO_ALGORITHM.md` (the directory name also carries the demos file name when `DEMOS_PATH` is set). The launcher exits non-zero unless both files were written and the solver completes the synthetic practice episodes.
+
+### Evaluating solvers and classical baselines
+
+```bash
+# Pilot (1 h budget)
+SOLVER=built_solvers/claude_code/<timestamp>/SOLVER_HPO.py bash scripts/run_hpo_eval.sh
+POLICY=random bash scripts/run_hpo_eval.sh
+POLICY=tpe    bash scripts/run_hpo_eval.sh     # tpe, cmaes: pip install "optuna>=4.0" "cmaes>=0.12"
+POLICY=cmaes  bash scripts/run_hpo_eval.sh
+
+# Paper protocol (24 h budget, seeds 0-2), one seed per GPU
+for s in 0 1 2; do
+  TRAIN_GPU=$s TASKS=data/autoresearch_hpo/tasks_full.jsonl \
+  SOLVER=built_solvers/claude_code/<timestamp>/SOLVER_HPO.py \
+    bash scripts/run_hpo_eval.sh --task-id autoresearch_hpo_24h_seed$s &
+done; wait
+```
+
+Output: `evals/solver_results/<model>/<timestamp>/autoresearch_hpo_<tasks>/` for a solver (`<model>/<timestamp>` taken from the solver's path) and `outputs/autoresearch_hpo_<tasks>_<policy>/` for a baseline; `OUTPUT_DIR=` overrides both. An episode log is tied to the run that wrote it (task record, objective and policy): resuming with a solver file whose content changed, with other LLM-agent settings or with an edited task file is refused with a message naming what differs, so a new solver or setting needs a new output directory. Solvers run with the caller's permissions (one process per decision, no sandbox); read an induced solver before evaluating it.
+
+### Results table
+
+```bash
+python scripts/summarize_hpo_results.py \
+    evals/solver_results/claude_code/<timestamp>/autoresearch_hpo_tasks_full \
+    evals/solver_results/qwen3.6_35b_a3b/<timestamp>_hpo/autoresearch_hpo_tasks_full \
+    outputs/autoresearch_hpo_tasks_full_hpo_agent_qwen3.6_35b_a3b \
+    outputs/autoresearch_hpo_tasks_full_random \
+    outputs/autoresearch_hpo_tasks_full_tpe \
+    outputs/autoresearch_hpo_tasks_full_cmaes \
+    --json metrics/autoresearch_hpo_tasks_full.json
+```
+
+One block per objective, hardware and budget, one row per policy: mean ± std over seeds of the best `val_bpb`, the number of trials and the share of failed trials. Only blocks whose objective is plain `nanochat` are benchmark results.
