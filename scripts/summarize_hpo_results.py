@@ -10,7 +10,7 @@ the runs of the group (the seeds of a task file).
 Rows are only comparable within one block (same objective, hardware and budget).
 Results measured on the synthetic objective, on unpinned sources or on a GPU other
 than the one the task record states are labelled as such and never share a block
-with benchmark results.
+with benchmark results; runs on different GPUs never share a block either.
 
 Usage (from the project root):
     python scripts/summarize_hpo_results.py outputs/autoresearch_hpo_tasks_full_* \\
@@ -26,6 +26,7 @@ import sys
 
 RESULT_GLOB = "*.result.json"
 BENCHMARK_KIND = "nanochat"
+OTHER_HARDWARE = "hardware differs from the task"
 UNKNOWN_FILE = "<not read from a file>"    # rows passed to summarize() directly
 
 
@@ -63,7 +64,9 @@ def objective_label(objective):
     caveats = []
     if not objective.get("pinned"):
         caveats.append("unpinned sources")
-    if objective.get("hardware_matches") is not True:
+    if objective.get("hardware_matches") is False and objective.get("device"):
+        caveats.append(OTHER_HARDWARE)
+    elif objective.get("hardware_matches") is not True:
         caveats.append("hardware not verified")
     return kind if not caveats else f"{kind} ({', '.join(caveats)})"
 
@@ -180,6 +183,10 @@ def main(argv=None):
           f"without a val_bpb.")
     if any(group["objective"] != BENCHMARK_KIND for group in summary):
         print("Blocks whose objective is not plain 'nanochat' are not benchmark results.")
+    if any(OTHER_HARDWARE in group["objective"] for group in summary):
+        print(f"'{OTHER_HARDWARE}': measured on another GPU than the task record states. "
+              f"A trial is a fixed training time, so these numbers are comparable with "
+              f"runs on the same GPU only (README, 'Running on another GPU').")
     if args.json:
         os.makedirs(os.path.dirname(os.path.abspath(args.json)), exist_ok=True)
         with open(args.json, "w", encoding="utf-8") as f:

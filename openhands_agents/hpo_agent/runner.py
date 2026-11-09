@@ -11,6 +11,10 @@ Re-running the same command resumes unfinished episodes. Every task has its own 
 so the tasks of one run directory can be split over several processes (one per GPU,
 selected with ``--task-id``) without them overwriting each other;
 ``scripts/summarize_hpo_results.py`` collects the result files.
+
+Real tasks train on whatever GPU the training environment sees. When that is not the
+GPU the task record states, the run prints a warning, and its results carry the
+device and a label that keeps them apart from the benchmark's in every summary.
 """
 from __future__ import annotations
 
@@ -44,8 +48,10 @@ def add_task_args(parser) -> None:
                              "$AUTORESEARCH_TRAIN_COMMAND or 'uv run python')")
     parser.add_argument("--allow-unpinned", action="store_true",
                         help="Run even if train.py / prepare.py differ from the pinned "
-                             "sources or the GPU differs from the one the task record "
-                             "states (results are marked as not verified)")
+                             "sources (results are labelled 'unpinned sources') or the "
+                             "GPU cannot be identified ('hardware not verified'). Not "
+                             "needed for a GPU other than the task's: that is accepted, "
+                             "recorded and labelled")
 
 
 def load_tasks(path: str, task_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
@@ -142,6 +148,8 @@ def run_tasks(entries: List[Dict[str, Any]], make_policy: Callable[[Dict[str, An
         objective = make_objective(entry, **(objective_kwargs or {}))
         if objective.kind == "synthetic":
             print(SYNTHETIC_BANNER, flush=True)
+        if objective.hardware_warning:
+            print(f"WARNING: {objective.hardware_warning}", flush=True)
         log_path = os.path.join(run_dir, f"{entry['task_id']}.jsonl")
         episode = run_episode(make_policy(entry), entry, objective=objective,
                               log_path=log_path, policy_name=policy_name,

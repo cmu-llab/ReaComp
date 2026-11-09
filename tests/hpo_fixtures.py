@@ -189,6 +189,7 @@ os.execv(sys.executable, [sys.executable] + args)
 
 H200 = {"gpu": "NVIDIA H200", "total_vram_gb": 139.8}
 SMALL_GPU = {"gpu": "NVIDIA RTX 4090", "total_vram_gb": 23.99}
+A100_80GB = {"gpu": "NVIDIA A100-SXM4-80GB", "total_vram_gb": 79.25}
 
 
 def sha256_of(path):

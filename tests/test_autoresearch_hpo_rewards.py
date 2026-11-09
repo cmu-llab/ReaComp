@@ -18,7 +18,7 @@ import unittest
 from unittest import mock
 
 from tests.hpo_fixtures import (
-    H200, PROJECT_ROOT, SMALL_GPU, STUB_PREPARE, STUB_TRAIN, device_env, generator,
+    A100_80GB, H200, PROJECT_ROOT, SMALL_GPU, STUB_PREPARE, STUB_TRAIN, device_env, generator,
     make_stub_repo, nanochat_entry, read_jsonl, stub_launcher, synthetic_entry,
 )
 
@@ -241,6 +241,7 @@ class NanochatObjectiveTests(unittest.TestCase):
     def objective(self, device=H200, mode="ok", **kwargs):
         kwargs.setdefault("cuda_mem_fraction", 0.54)
         kwargs.setdefault("expected_total_vram_gb", 141.0)
+        kwargs.setdefault("training_vram_gb", 76.0)
         extra_env = device_env(device, STUB_MODE=mode, **kwargs.pop("env", {}))
         return NanochatObjective(self.repo, run_command=self.launcher, extra_env=extra_env,
                                  **kwargs)
@@ -366,28 +367,86 @@ class NanochatObjectiveTests(unittest.TestCase):
         with self.assertRaises(InjectionError):
             NanochatObjective(other, run_command=self.launcher, extra_env=device_env(H200))
 
-    def test_hardware_check(self):
-        described = self.objective().describe()
+    def test_the_task_gpu_runs_without_a_warning(self):
+        objective = self.objective()
+        described = objective.describe()
         self.assertEqual(described["device"], H200)
         self.assertIs(described["hardware_matches"], True)
+        self.assertEqual(described["cuda_mem_fraction"], 0.54)     # the task's own fraction
         self.assertEqual(described["kind"], "nanochat")
+        self.assertIsNone(objective.hardware_warning)
 
-        with self.assertRaisesRegex(ObjectiveUnavailable, r"141 GB.*RTX 4090 \(23.99 GB\)"):
-            self.objective(device=SMALL_GPU)
+        # a task record that states another GPU is the benchmark of that GPU
+        own = self.objective(device=SMALL_GPU, expected_total_vram_gb=24.0,
+                             training_vram_gb=24.0, cuda_mem_fraction=None)
+        self.assertIs(own.describe()["hardware_matches"], True)
+        self.assertIsNone(own.hardware_warning)
+
+        # no claim in the task record: nothing to compare, the fraction is used as given
+        no_claim = self.objective(device=SMALL_GPU, expected_total_vram_gb=None)
+        self.assertIsNone(no_claim.describe()["hardware_matches"])
+        self.assertEqual(no_claim.describe()["cuda_mem_fraction"], 0.54)
+        self.assertIsNone(no_claim.hardware_warning)
+
+    def test_another_gpu_is_accepted_and_recorded(self):
+        # more memory than the task trains with: the cap stays at the task's 76 GB
+        objective = self.objective(device=A100_80GB)
+        described = objective.describe()
+        self.assertEqual((described["device"], described["hardware_matches"], described["pinned"]),
+                         (A100_80GB, False, True))
+        self.assertEqual(described["cuda_mem_fraction"], 0.96)     # 76 / 79.25
+        self.assertRegex(objective.hardware_warning,
+                         r"defined for a GPU with 141 GB; training runs on NVIDIA "
+                         r"A100-SXM4-80GB \(79.25 GB\)\. Results are labelled 'hardware differs "
+                         r"from the task': a trial is 300 s of whatever this GPU computes.*"
+                         r"capped to the 76 GB the task states \(CUDA_MEM_FRACTION=0.96\)\. "
+                         r"Task records that state this GPU can be generated with "
+                         r"data_generation/autoresearch_hpo_generator.py "
+                         r"\(README, 'Running on another GPU'\)\.$")
+        result = objective.evaluate(STARTING_CONFIG)
+        self.assertEqual(result["status"], STATUS_OK)
+        self.assertEqual(result["metrics"]["mfu_percent"], 0.96)   # what training was given
+
+        # less memory than the task trains with: no cap, and the warning says what follows
+        objective = self.objective(device=SMALL_GPU)
+        described = objective.describe()
+        self.assertEqual((described["device"], described["hardware_matches"]), (SMALL_GPU, False))
+        self.assertIsNone(described["cuda_mem_fraction"])
+        self.assertRegex(objective.hardware_warning,
+                         r"NVIDIA RTX 4090 \(23.99 GB\).*less than the 76 GB of training memory "
+                         r"the task states: training uses the whole device, and policies, which "
+                         r"are told 76 GB, will propose configurations that run out of memory\. "
+                         r"Task records that state this GPU can be generated with "
+                         r"data_generation/autoresearch_hpo_generator.py")
+        result = objective.evaluate(STARTING_CONFIG)
+        self.assertNotIn("mfu_percent", result["metrics"])         # CUDA_MEM_FRACTION not set
+
+        # a device with the task's training memory and nothing to spare needs no cap
+        for total in (76.0, 76.3):
+            objective = self.objective(device={"gpu": "other", "total_vram_gb": total})
+            self.assertIsNone(objective.describe()["cuda_mem_fraction"])
+            self.assertRegex(objective.hardware_warning, "whole device, which is about the 76 GB")
+
+        # a larger device than the task's gets the same amount of memory, not the same share
+        big = self.objective(device={"gpu": "other", "total_vram_gb": 190.0})
+        self.assertEqual(big.describe()["cuda_mem_fraction"], 0.4)
+
+        # a task without a statement about training memory: the fraction is used as given
+        unstated = self.objective(device=SMALL_GPU, training_vram_gb=None)
+        self.assertEqual(unstated.describe()["cuda_mem_fraction"], 0.54)
+        self.assertRegex(unstated.hardware_warning, r"other hardware\. Task records that state")
+
+    def test_a_gpu_is_required(self):
         with self.assertRaisesRegex(ObjectiveUnavailable, "no CUDA device visible.*no NVIDIA driver"):
             self.objective(device=None)
-
-        other_gpu = self.objective(device=SMALL_GPU, verify_pin=False).describe()
-        self.assertEqual((other_gpu["device"], other_gpu["hardware_matches"], other_gpu["pinned"]),
-                         (SMALL_GPU, False, True))
-        no_gpu = self.objective(device=None, verify_pin=False).describe()
-        self.assertEqual((no_gpu["device"], no_gpu["hardware_matches"]), (None, False))
-
-        # a task record that states the GPU it runs on is accepted on that GPU
-        matching = self.objective(device=SMALL_GPU, expected_total_vram_gb=24.0)
-        self.assertIs(matching.describe()["hardware_matches"], True)
-        # no claim in the task record: nothing to compare, but a device is still required
-        self.assertIsNone(self.objective(expected_total_vram_gb=None).describe()["hardware_matches"])
+        # --allow-unpinned runs on whatever is there; the result says the GPU is unknown
+        objective = self.objective(device=None, verify_pin=False)
+        described = objective.describe()
+        self.assertEqual((described["device"], described["hardware_matches"]), (None, False))
+        self.assertEqual(described["cuda_mem_fraction"], 0.54)
+        self.assertRegex(objective.hardware_warning,
+                         r"could not be identified \(.*no NVIDIA driver.*\); the task is defined "
+                         r"for one with 141 GB\. Results are labelled 'hardware not verified'\.")
 
     def test_launcher_that_cannot_start(self):
         with self.assertRaisesRegex(ObjectiveUnavailable, "no CUDA device visible"):
@@ -406,9 +465,14 @@ class NanochatObjectiveTests(unittest.TestCase):
         self.assertEqual(objective.describe(), {
             "kind": "nanochat", "pinned": True, **self.hashes, "cuda_mem_fraction": 0.54,
             "trial_time_budget_s": 300.0, "device": H200, "hardware_matches": True})
-        os.environ["STUB_DEVICE"] = json.dumps(SMALL_GPU)
-        with self.assertRaisesRegex(ObjectiveUnavailable, "141 GB"):
-            make_objective(entry, autoresearch_dir=self.repo, run_command=self.launcher)
+        self.assertIsNone(objective.hardware_warning)
+        # another GPU: the task's training memory decides the cap, not the task's fraction
+        os.environ["STUB_DEVICE"] = json.dumps(A100_80GB)
+        objective = make_objective(entry, autoresearch_dir=self.repo, run_command=self.launcher)
+        self.assertEqual(objective.describe(), {
+            "kind": "nanochat", "pinned": True, **self.hashes, "cuda_mem_fraction": 0.96,
+            "trial_time_budget_s": 300.0, "device": A100_80GB, "hardware_matches": False})
+        self.assertIn("hardware differs from the task", objective.hardware_warning)
 
     def test_the_pin_is_not_taken_from_the_task_record(self):
         os.environ["STUB_DEVICE"] = json.dumps(H200)

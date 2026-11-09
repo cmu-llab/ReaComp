@@ -13,14 +13,16 @@ import os
 import socket
 import tempfile
 import unittest
+from unittest import mock
 
 from tests.hpo_fixtures import (
-    FakeLLMClient, FakeLLMServer, cot_answer, exit_status, quiet, read_jsonl, sampled_answer,
-    synthetic_entry, write_tasks,
+    A100_80GB, H200, FakeLLMClient, FakeLLMServer, cot_answer, exit_status, make_stub_repo,
+    nanochat_entry, quiet, read_jsonl, sampled_answer, stub_launcher, synthetic_entry,
+    write_tasks,
 )
 
 from rewards.autoresearch_hpo import (
-    HISTORY_KEYS, HP_NAMES, STARTING_CONFIG, STATUS_INVALID, STATUS_OK, STATUS_OOM,
+    HISTORY_KEYS, HP_NAMES, STARTING_CONFIG, STATUS_INVALID, STATUS_OK, STATUS_OOM, UPSTREAM,
     BaselineFailed, EpisodeInterrupted, EpisodeLogMismatch, InvalidConfig,
     ObjectiveUnavailable, make_objective,
     normalize_config, public_task_view, run_episode,
@@ -608,6 +610,38 @@ class RunnerTests(unittest.TestCase):
             status, _, err = quiet(runner.run_tasks_cli, self.entries, failing,
                                    os.path.join(self._tmp.name, "third"), "x")
             self.assertEqual((status, err), (1, f"ERROR: {error}\n"))
+
+    def test_real_tasks_run_on_any_gpu_and_say_which(self):
+        repo = os.path.join(self._tmp.name, "autoresearch")
+        patcher = mock.patch.dict(UPSTREAM, make_stub_repo(repo))   # the stand-in is the pin
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        options = {"autoresearch_dir": repo, "verify_pin": True,
+                   "run_command": stub_launcher(os.path.join(self._tmp.name, "bin"))}
+        entries = [nanochat_entry(hours=0.25)]              # the task states an H200
+        self.addCleanup(os.environ.pop, "STUB_DEVICE", None)
+
+        labels = {}
+        for name, device in (("task_gpu", H200), ("other_gpu", A100_80GB)):
+            os.environ["STUB_DEVICE"] = json.dumps(device)
+            run_dir = os.path.join(self._tmp.name, name)
+            rows, out, err = quiet(runner.run_tasks, entries, lambda entry: random_search,
+                                   run_dir, "random", options)
+            self.assertEqual(err, "")
+            self.assertEqual(rows[0]["stop_reason"], "time_budget")
+            self.assertEqual(rows[0]["objective"]["device"], device)
+            labels[name] = (out.count("WARNING: "), rows[0]["objective"]["hardware_matches"],
+                            rows[0]["objective"]["cuda_mem_fraction"])
+            if name == "other_gpu":
+                self.assertIn("WARNING: the task is defined for a GPU with 141 GB; training "
+                              "runs on NVIDIA A100-SXM4-80GB (79.25 GB).", out)
+        self.assertEqual(labels, {"task_gpu": (0, True, 0.54), "other_gpu": (1, False, 0.96)})
+
+        # an episode started on one GPU is not continued on another
+        os.environ["STUB_DEVICE"] = json.dumps(H200)
+        with self.assertRaisesRegex(EpisodeLogMismatch, "objective"):
+            quiet(runner.run_tasks, entries, lambda entry: random_search,
+                  os.path.join(self._tmp.name, "other_gpu"), "random", options)
 
     def test_real_tasks_need_the_checkout(self):
         shipped = runner.load_tasks("data/autoresearch_hpo/pilot_tasks.jsonl")

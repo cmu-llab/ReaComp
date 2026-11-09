@@ -143,7 +143,7 @@ class ObjectiveUnavailable(RuntimeError):
 
 
 class BaselineFailed(RuntimeError):
-    """The starting configuration failed, so the environment is not the benchmark's."""
+    """The starting configuration failed: the environment cannot run the benchmark."""
 
 
 class EpisodeLogMismatch(ValueError):
@@ -316,6 +316,7 @@ class SyntheticObjective:
     """
 
     kind = "synthetic"
+    hardware_warning = None       # no hardware is involved
     OOM_WALL_TIME_S = 37.0
     DIVERGED_WALL_TIME_S = 45.0
 
@@ -479,21 +480,32 @@ class NanochatObjective:
     ``training_seconds``; a failed one costs the wall time until the process ended.
 
     ``repo_dir`` must be a checkout of ``UPSTREAM["train_repo"]`` prepared with
-    ``scripts/setup_autoresearch_hpo.sh``. Two things are checked before any trial:
+    ``scripts/setup_autoresearch_hpo.sh``.
 
-      * sources: the sha256 of train.py and prepare.py must match the pinned ones
-        (``UPSTREAM``), and the files must not change afterwards: they are hashed
-        again before every trial;
-      * hardware: the GPU the training environment sees must have the total memory
-        the task record states (``expected_total_vram_gb``). train.py caps its memory
-        to a *fraction* of the device (``CUDA_MEM_FRACTION``), and a trial is a fixed
-        300 s of whatever the device computes, so the same task record on another GPU
-        is a different benchmark.
+    Sources. The sha256 of train.py and prepare.py must match the pinned ones
+    (``UPSTREAM``), and the files must not change afterwards: they are hashed again
+    before every trial. With ``verify_pin=False`` other sources do not stop the run;
+    ``describe()`` then reports ``pinned`` as false. The same switch lets a run start
+    when the GPU cannot be identified (``device`` is then None).
 
-    With ``verify_pin=False`` a failed check does not stop the run; ``describe()``
-    then reports ``pinned`` / ``hardware_matches`` as false and the results are
-    labelled accordingly. ``describe()`` is part of the episode-log header, so an
-    episode is never resumed on other sources or another device.
+    Hardware. A task record states the GPU its trials run on. Training runs on
+    whatever GPU the training environment sees, but that GPU is recorded, and
+    ``describe()`` reports ``hardware_matches`` as false when its total memory is not
+    the one the task states (``expected_total_vram_gb``); ``hardware_warning`` then
+    says what this means for the results. The same task on another GPU is a different
+    benchmark: a trial is a fixed 300 s of whatever the device computes, and the
+    memory that is available decides which configurations can be trained at all.
+
+    Memory cap. train.py caps its memory to a *fraction* of the device
+    (``CUDA_MEM_FRACTION``). On the hardware the task states, the fraction is the
+    task's own (``cuda_mem_fraction``; upstream's 0.54 on the H200). On other hardware
+    that fraction would stand for another amount of memory, so it is replaced by the
+    one that gives the task's ``training_vram_gb`` on the device at hand, and by no
+    cap when the device has no more memory than that. ``describe()`` reports the
+    fraction that is applied.
+
+    ``describe()`` is part of the episode-log header, so an episode is never resumed
+    on other sources or another device.
     """
 
     kind = "nanochat"
@@ -518,12 +530,13 @@ class NanochatObjective:
                  verify_pin: bool = True,
                  extra_env: Optional[Dict[str, str]] = None,
                  job_id: Optional[str] = None,
-                 expected_total_vram_gb: Optional[float] = None):
+                 expected_total_vram_gb: Optional[float] = None,
+                 training_vram_gb: Optional[float] = None):
         self.repo_dir = os.path.abspath(repo_dir)
         self.run_command = list(run_command)
         self.trial_time_budget_s = float(trial_time_budget_s)
-        self.cuda_mem_fraction = cuda_mem_fraction
         self.expected_total_vram_gb = expected_total_vram_gb
+        self.training_vram_gb = training_vram_gb
         self.extra_env = dict(extra_env or {})
         self.job_id = job_id or f"{os.getpid()}_{uuid.uuid4().hex[:8]}"
 
@@ -543,7 +556,7 @@ class NanochatObjective:
                 f"train.py / prepare.py in {self.repo_dir} differ from the pinned upstream "
                 f"sources ({UPSTREAM['train_repo']}@{UPSTREAM['train_commit'][:12]}). "
                 f"Check out the pinned commit, or pass verify_pin=False / --allow-unpinned "
-                f"to run anyway (results are then marked unpinned).")
+                f"to run anyway (results are then labelled 'unpinned sources').")
 
         with open(train_py, encoding="utf-8") as f:
             self._source = f.read()
@@ -560,24 +573,60 @@ class NanochatObjective:
         inject_config(self._source, STARTING_CONFIG)   # fail now, not at trial 0
 
         self.device, probe_error = self._probe_device()
+        if verify_pin and self.device is None:
+            raise ObjectiveUnavailable(
+                f"no CUDA device visible to {' '.join(self.run_command)!r} in "
+                f"{self.repo_dir}: {probe_error}")
         if self.expected_total_vram_gb is None:
             self.hardware_matches = None        # the task record makes no claim
         else:
             self.hardware_matches = self.device is not None and (
                 abs(self.device["total_vram_gb"] - self.expected_total_vram_gb)
                 <= self._VRAM_TOLERANCE * self.expected_total_vram_gb)
-        if verify_pin and self.device is None:
-            raise ObjectiveUnavailable(
-                f"no CUDA device visible to {' '.join(self.run_command)!r} in "
-                f"{self.repo_dir}: {probe_error}")
-        if verify_pin and self.hardware_matches is False:
-            raise ObjectiveUnavailable(
-                f"the task is defined for a GPU with {self.expected_total_vram_gb:g} GB, "
-                f"training would run on {self.device['gpu']} "
-                f"({self.device['total_vram_gb']:g} GB). Generate task records that "
-                f"describe this machine (data_generation/autoresearch_hpo_generator.py "
-                f"--gpu-name / --total-vram-gb / --training-vram-gb); they define a "
-                f"benchmark of their own, not the paper's.")
+        self.cuda_mem_fraction = self._applied_mem_fraction(cuda_mem_fraction)
+        self.hardware_warning = self._hardware_warning(probe_error)
+
+    def _applied_mem_fraction(self, task_fraction: Optional[float]) -> Optional[float]:
+        """``CUDA_MEM_FRACTION`` for the device training runs on (None: no cap)."""
+        if (self.hardware_matches is not False or self.device is None
+                or self.training_vram_gb is None):
+            return task_fraction
+        if self.training_vram_gb >= self.device["total_vram_gb"]:
+            return None
+        fraction = round(self.training_vram_gb / self.device["total_vram_gb"], 2)
+        return fraction if fraction < 1.0 else None
+
+    def _hardware_warning(self, probe_error: Optional[str]) -> Optional[str]:
+        """What a reader of the results has to know when the GPU is not the task's."""
+        if self.hardware_matches is not False:
+            return None
+        if self.device is None:
+            return (f"the GPU training runs on could not be identified ({probe_error}); "
+                    f"the task is defined for one with {self.expected_total_vram_gb:g} GB. "
+                    f"Results are labelled 'hardware not verified'.")
+        total = self.device["total_vram_gb"]
+        text = (f"the task is defined for a GPU with {self.expected_total_vram_gb:g} GB; "
+                f"training runs on {self.device['gpu']} ({total:g} GB). Results are "
+                f"labelled 'hardware differs from the task': a trial is "
+                f"{self.trial_time_budget_s:g} s of whatever this GPU computes, so val_bpb "
+                f"is comparable between runs on this GPU only, not with the paper's "
+                f"numbers or with runs on other hardware.")
+        if self.training_vram_gb is None:
+            memory = ""
+        elif self.cuda_mem_fraction is not None:
+            memory = (f" Training memory is capped to the {self.training_vram_gb:g} GB the "
+                      f"task states (CUDA_MEM_FRACTION={self.cuda_mem_fraction:g}).")
+        elif self.training_vram_gb <= total:
+            memory = (f" Training uses the whole device, which is about the "
+                      f"{self.training_vram_gb:g} GB the task states.")
+        else:
+            memory = (f" This GPU has less than the {self.training_vram_gb:g} GB of "
+                      f"training memory the task states: training uses the whole device, "
+                      f"and policies, which are told {self.training_vram_gb:g} GB, will "
+                      f"propose configurations that run out of memory.")
+        return (f"{text}{memory} Task records that state this GPU can be generated with "
+                f"data_generation/autoresearch_hpo_generator.py (README, 'Running on "
+                f"another GPU').")
 
     def _env(self) -> Dict[str, str]:
         env = dict(os.environ)
@@ -726,7 +775,8 @@ def make_objective(entry: Dict[str, Any], autoresearch_dir: Optional[str] = None
             trial_time_budget_s=trial_budget,
             cuda_mem_fraction=hardware.get("cuda_mem_fraction"),
             verify_pin=verify_pin, job_id=job_id,
-            expected_total_vram_gb=hardware.get("total_vram_gb"))
+            expected_total_vram_gb=hardware.get("total_vram_gb"),
+            training_vram_gb=hardware.get("training_vram_gb"))
     raise ValueError(f"unknown objective kind {spec['kind']!r}")
 
 
@@ -898,7 +948,9 @@ def run_episode(policy: Callable[[Dict[str, Any], List[Dict[str, Any]]], Any],
         if result["status"] != STATUS_OK:
             raise BaselineFailed(
                 f"starting configuration failed ({result['status']}: {result['error']}); "
-                f"the environment does not reproduce the benchmark. {result['detail'] or ''}".strip())
+                f"this environment cannot run the task (on a GPU with less memory than "
+                f"the default configuration needs, no run is possible). "
+                f"{result['detail'] or ''}".strip())
         record(trial_row(baseline, result, meta={"source": "starting_config"}))
 
     while True:

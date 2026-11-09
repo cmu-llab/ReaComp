@@ -880,6 +880,10 @@ class SummaryTests(TempDirTestCase):
         self.assertEqual(label(SYNTHETIC), "synthetic (NOT benchmark)")
         self.assertEqual(label(dict(NANOCHAT, pinned=False)), "nanochat (unpinned sources)")
         self.assertEqual(label(dict(NANOCHAT, hardware_matches=False)),
+                         "nanochat (hardware differs from the task)")
+        self.assertEqual(label(dict(NANOCHAT, hardware_matches=False, pinned=False)),
+                         "nanochat (unpinned sources, hardware differs from the task)")
+        self.assertEqual(label(dict(NANOCHAT, hardware_matches=False, device=None)),
                          "nanochat (hardware not verified)")
         self.assertEqual(label(dict(NANOCHAT, hardware_matches=None, pinned=False)),
                          "nanochat (unpinned sources, hardware not verified)")
@@ -990,6 +994,29 @@ class SummaryTests(TempDirTestCase):
         self.write_rows("synthetic", [result_row("tpe", 0, 0.96, objective=SYNTHETIC)])
         _, out, _ = quiet(summarizer.main, [self.tmp])
         self.assertIn("are not benchmark results.", out)
+        self.assertNotIn("another GPU", out)
+
+    def test_runs_on_another_gpu_are_blocks_of_their_own(self):
+        a100 = dict(NANOCHAT, device={"gpu": "NVIDIA A100-SXM4-80GB", "total_vram_gb": 79.25},
+                    cuda_mem_fraction=0.96, hardware_matches=False)
+        a6000 = dict(NANOCHAT, device={"gpu": "NVIDIA RTX A6000", "total_vram_gb": 47.54},
+                     cuda_mem_fraction=None, hardware_matches=False)
+        self.write_rows("h200", [result_row("tpe", s, 0.9768) for s in range(2)])
+        self.write_rows("a100", [result_row("tpe", s, 0.9850, objective=a100) for s in range(2)])
+        self.write_rows("a6000", [result_row("tpe", 0, 0.9990, objective=a6000)])
+        status, out, _ = quiet(summarizer.main, [self.tmp])
+        self.assertEqual(status, 0)
+        headers = [line for line in out.splitlines() if line.startswith("## ")]
+        self.assertEqual(headers, [
+            "## autoresearch_hpo | objective: nanochat | "
+            "device: NVIDIA H200 139.8 GB x 0.54 | budget: 24 h",
+            "## autoresearch_hpo | objective: nanochat (hardware differs from the task) | "
+            "device: NVIDIA A100-SXM4-80GB 79.25 GB x 0.96 | budget: 24 h",
+            "## autoresearch_hpo | objective: nanochat (hardware differs from the task) | "
+            "device: NVIDIA RTX A6000 47.54 GB | budget: 24 h"])
+        self.assertIn("are not benchmark results.", out)
+        self.assertIn("'hardware differs from the task': measured on another GPU than the task "
+                      "record states.", out)
 
     def test_command_line_errors(self):
         os.makedirs(self.path("empty"))

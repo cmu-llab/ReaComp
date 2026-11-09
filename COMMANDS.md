@@ -208,7 +208,7 @@ python scripts/quick_eval.py \
 
 ## 7. Autoresearch HPO (nanochat pre-training)
 
-Hyperparameter optimisation of nanochat pre-training, the benchmark of [arXiv:2603.24647](https://arxiv.org/abs/2603.24647). Background, status and caveats are in the [README](README.md#autoresearch-hpo-nanochat-pre-training). Every trial on the real objective trains for 300 s on one GPU: the pilot task (1 h budget) takes a bit over an hour per policy, a task of `tasks_full.jsonl` (the paper's 24 h budget) 24 h per seed. The task files describe the paper's hardware (one H200, 141 GB, training capped to ~76 GB); the runners refuse another GPU unless `--allow-unpinned` is passed, which labels the results as not verified.
+Hyperparameter optimisation of nanochat pre-training, the benchmark of [arXiv:2603.24647](https://arxiv.org/abs/2603.24647). Background, status and caveats are in the [README](README.md#autoresearch-hpo-nanochat-pre-training). Every trial on the real objective trains for 300 s on one GPU: the pilot task (1 h budget) takes a bit over an hour per policy, a task of `tasks_full.jsonl` (the paper's 24 h budget) 24 h per seed. The task files describe the paper's hardware (one H200, 141 GB, training capped to ~76 GB). The commands below run on any CUDA GPU, but numbers from another GPU are not comparable with the paper's or with runs on other hardware: see [Another GPU than the task states](#another-gpu-than-the-task-states) before using one.
 
 ### CPU checks (no GPU, no model server)
 
@@ -250,6 +250,37 @@ Sanity check of the objective: trial 0 of every episode trains the default confi
 POLICY=random bash scripts/run_hpo_eval.sh
 head -2 outputs/autoresearch_hpo_pilot_tasks_random/autoresearch_hpo_1h_seed0.jsonl   # header row, then trial 0
 ```
+
+### Another GPU than the task states
+
+The runners do not refuse a GPU. When the one the training environment sees does not have the memory the task record states (141 GB for the shipped files, within 5 %), every task prints a line like
+
+```
+WARNING: the task is defined for a GPU with 141 GB; training runs on NVIDIA A100-SXM4-80GB (79.25 GB). Results are labelled 'hardware differs from the task': ...
+```
+
+and the run continues. What this changes (details in the [README](README.md#running-on-another-gpu)):
+
+* **Comparability.** A trial is 300 s of wall-clock training, so `val_bpb` depends on the GPU's speed. Compare runs on the same GPU model only: not with the paper's numbers (the ≈ 0.991 sanity check above holds on an H200), and not across GPU types. Run the solver, the LLM agent, the baselines and all seeds of one table on the same GPU model; with `TRAIN_GPU=$s` on a node with mixed GPUs, check that the seeds do not land on different models.
+* **Memory limit.** With more than 76 GB the harness caps training at the task's 76 GB (it sets `CUDA_MEM_FRACTION` for the device at hand, e.g. 0.96 on an 80 GB card, instead of the H200's 0.54). With less, training uses the whole device while policies are still told 76 GB, so they propose configurations that run out of memory (failed trials, `val_bpb = 100`).
+* **Minimum.** Trial 0 trains the default configuration (a peak of about 45 GB in upstream's example output). If it fails, the episode stops with `ERROR: starting configuration failed`; such a GPU cannot run these tasks.
+* **Bookkeeping.** Result files record the device, the applied `cuda_mem_fraction` and `hardware_matches: false`; the results table lists such runs in separate blocks per device, labelled `nanochat (hardware differs from the task)`. An episode log is not resumed on another GPU.
+
+To use another GPU on purpose, generate task files that state it (policies are then told the real memory limit, task ids carry the GPU, and the label is plain `nanochat` for that device). `--total-vram-gb` is the device's total memory, `--training-vram-gb` the part training may use:
+
+```bash
+python data_generation/autoresearch_hpo_generator.py --preset pilot \
+    --gpu-name A100 --total-vram-gb 80 --training-vram-gb 76 \
+    --out data/autoresearch_hpo/pilot_tasks_a100.jsonl
+python data_generation/autoresearch_hpo_generator.py --preset full \
+    --gpu-name A100 --total-vram-gb 80 --training-vram-gb 76 \
+    --out data/autoresearch_hpo/tasks_full_a100.jsonl
+
+# then pass the file to any launcher of this section
+TASKS=data/autoresearch_hpo/pilot_tasks_a100.jsonl POLICY=random bash scripts/run_hpo_eval.sh
+```
+
+These files define a benchmark of their own on that GPU. A comparison with the paper needs an H200 and the shipped task files.
 
 ### LLM HPO agent: baseline and reasoning traces
 
@@ -348,4 +379,4 @@ python scripts/summarize_hpo_results.py \
     --json metrics/autoresearch_hpo_tasks_full.json
 ```
 
-One block per objective, hardware and budget, one row per policy: mean ± std over seeds of the best `val_bpb`, the number of trials and the share of failed trials. Only blocks whose objective is plain `nanochat` are benchmark results.
+One block per objective, hardware and budget, one row per policy: mean ± std over seeds of the best `val_bpb`, the number of trials and the share of failed trials. Only blocks whose objective is plain `nanochat` are benchmark results; the header of a block names the GPU it was measured on, and only H200 blocks of the shipped task files can be set against the paper.
