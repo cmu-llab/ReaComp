@@ -22,6 +22,7 @@ A coding agent reads LLM reasoning traces and induces a reusable symbolic solver
 | **PBEBench-Lite** | 1,008 | Cascade length 2–5 | Induce `replace(A,B)` cascade programs from I/O examples |
 | **PBEBench-Hard** | 1,216 | Cascade length 2–20 | Same, harder cascades |
 | **SLR-Bench** | 1,000 | Curriculum tier (basic/easy/medium/hard) | Induce Prolog rules `eastbound(T) :- Body.` |
+| **Autoresearch HPO** | 3 runs (24 h each, seeds 0–2) + 1 pilot run (1 h) | — | Tune 14 hyperparameters of nanochat pre-training to minimise `val_bpb` within a training-time budget (sequential; needs a GPU). See [Autoresearch HPO](#autoresearch-hpo-nanochat-pre-training) |
 
 ---
 
@@ -74,6 +75,83 @@ Key result on **PBEBench-Hard** (cascade length 2–20):
 | BoK + CC Solver ensemble | best combined |
 
 Solver variance (run1 vs run2): CC solver 99.6% per-task agreement (Δ=0.09pp), Qwen 97.0% (Δ=1.0pp) — essentially deterministic.
+
+---
+
+## Autoresearch HPO (nanochat pre-training)
+
+A ReaComp setup for the benchmark of *Can LLMs Beat Classical Hyperparameter Optimization Algorithms? A Study on autoresearch* ([arXiv:2603.24647](https://arxiv.org/abs/2603.24647)): tune 14 hyperparameters of the nanochat `train.py` from Karpathy's autoresearch to minimise `val_bpb` (validation bits per byte). Every trial trains for a fixed 300 s on one GPU, a run has a cumulative training-time budget (24 h in the paper), a failed trial (out of memory, divergence) is recorded with `val_bpb = 100`, and every method starts from the default configuration as trial 0.
+
+Unlike the other benchmarks, a task is a sequential decision problem, so the induced solver is a search *policy* rather than a one-shot program synthesiser:
+
+```python
+def solve_hpo(task, history):      # SOLVER_HPO.py — standard library only, no LLM calls
+    return {"config": {...}}       # the next configuration to train
+```
+
+| Stage | Autoresearch HPO |
+|-------|------------------|
+| **Reasoning traces** | An LLM HPO agent (one call per trial; the paper's "Karpathy Agent (14 HPs)") runs episodes; every decision is logged with its prompt, reasoning and outcome (`scripts/run_hpo_traces_vllm.sh`) |
+| **Demos** | `openhands_agents/build_hpo_balanced_demos.py` selects decisions balanced between successes (improved the best `val_bpb` so far) and failures (no improvement, OOM, divergence, …) across early/mid/late phases of the search |
+| **Solver induction** | A coding agent reads the demos and `building_prompts/SOLVER_BUILDING_PROMPT_HPO.md` and writes `SOLVER_HPO.py` + `SOLVER_HPO_ALGORITHM.md` (Claude Code, or Qwen via `scripts/run_solver_builder_hpo_openhands.sh`) |
+| **Evaluation** | `scripts/run_hpo_eval.sh` runs the solver as the policy of an episode: the harness trains every proposed configuration itself and reads `val_bpb` from the training output. Nothing a policy reports about its own results is used (see *What the grading relies on*) |
+| **Baselines** | The LLM agent above, plus random search, TPE and CMA-ES (`POLICY=random|tpe|cmaes`; TPE and CMA-ES use Optuna as upstream does) |
+
+Commands for every step are in [COMMANDS.md](COMMANDS.md#7-autoresearch-hpo-nanochat-pre-training).
+
+**Status.** The domain is implemented and tested on CPU (see *Tests* below). No episode on the real objective has been run in this repository yet, so there are no demos, induced solvers or results for it: `demos/`, `built_solvers/` and `evals/` contain no HPO files. For orientation, the paper reports (24 h, 3 seeds, one H200; numbers copied from the paper, not reproduced here) a default-configuration `val_bpb` of about 0.991 and best values of 0.9739 ± 0.0012 for its best method (Centaur), 0.9768 ± 0.0019 for TPE, 0.9873 for random search and 0.9904 for the LLM agent with a 27B open model.
+
+### Fidelity to the original benchmark
+
+`data/autoresearch_hpo/check_upstream_fidelity.py` compares this implementation with the upstream sources at pinned commits (`ferreirafabio/autoresearch-automl@150cd14`, `ferreirafabio/autoresearch@b4180f8`): names, order, types, bounds, log scales and choices of the 14 hyperparameters, the power-of-two set, the starting configuration, the sha256 of `train.py` / `prepare.py`, the 300 s trial budget, and that writing a configuration into `train.py` changes the hyperparameter lines only and round-trips exactly. It passes at the pinned commits. What it cannot check is that training reproduces the paper's numbers; that needs the GPU run in COMMANDS.md §7 (the default configuration should give `val_bpb` ≈ 0.991 on an H200).
+
+Caveats and deliberate differences:
+
+* **Hardware is part of the benchmark.** A trial is 300 s of whatever the GPU computes, and the memory available to training decides which configurations run at all. The task files describe the paper's hardware (one H200, training capped to ~76 GB). Runs on any other GPU are accepted, recorded with the device they ran on and labelled; what that means for the numbers is in [*Running on another GPU*](#running-on-another-gpu) below.
+* **Training sources are pinned.** Before the first trial the harness checks that `train.py` / `prepare.py` are the pinned files (the pin is a constant of `rewards/autoresearch_hpo.py`, not something a task file can change), and it hashes both files again before every trial, so sources that change during a run stop the run. `--allow-unpinned` turns this check into a label: the results are then marked `nanochat (unpinned sources)` in every summary and are not benchmark results. (The same flag lets a run start when the GPU cannot be identified; such results are marked `hardware not verified`.)
+* **Training data.** `scripts/setup_autoresearch_hpo.sh` runs the pinned `prepare.py` with its defaults (10 training shards of climbmix-400b-shuffle plus the pinned validation shard). The upstream README does not state how many shards its runs used; `PREPARE_ARGS` overrides the default.
+* **LLM agent.** `PROMPT_STYLE=paper MAX_TOKENS=2048` with `--parse-retries 0` gives the upstream agent's prompt and settings. The default style (`cot`) shows the same context but asks for step-by-step reasoning before the JSON answer, so that the traces contain reasoning for models without a separate reasoning channel. The two styles read answers differently: `paper` uses upstream's rule (the first fenced block, or the whole answer, must be the JSON object), `cot` takes the last JSON object that names a hyperparameter and does not use an answer that was cut off by the token limit. In both styles the search-space lines are formatted by this repository, a `WINDOW_PATTERN` outside the listed choices or a non-numeric value is rejected (upstream passes the former to `train.py` and casts strings), and requests carry a seed. As upstream, an unusable answer falls back to a random configuration; the result file counts these (`suggestion_sources`). Model, prompt style, temperature, token limit and retries are part of the policy name (`hpo_agent[<model>|<style>|T=…|max_tokens=…|retries=…]`), so runs with different settings are separate rows of a results table and cannot continue each other's logs.
+* **Baselines.** Random search, TPE and CMA-ES are implemented. SMAC, LLAMBO and Centaur from the paper are not. A resumed TPE / CMA-ES episode replays its log through the seeded sampler and continues exactly as an uninterrupted run would; a log the sampler does not reproduce (e.g. written with another Optuna version) is refused.
+* **Budget accounting.** As upstream, a finished trial costs the training seconds `train.py` reports and a failed one the wall time until it ended. The time a policy takes to decide (LLM inference, a solver's computation) is recorded per trial (`policy_time_s`) but not charged to the budget, as in the paper, whose budget excludes LLM inference overhead. Two stopping rules are additions of this repository and only matter for a broken policy: an episode ends after `max_trials` trials (120 per budget hour, ten times the number of full trials that fit), and after 10 consecutive suggestions that cannot be read as a configuration (these are logged as `invalid` trials and train nothing).
+* **Synthetic objective.** `data/autoresearch_hpo/synthetic_tasks.jsonl` uses `SyntheticObjective`, a deterministic stand-in landscape (a memory limit, divergence at aggressive learning rates, a smooth optimum) evaluated in milliseconds. It exists for CPU tests, dry runs of every launcher and as practice episodes while a solver is being built. It is not nanochat: its numbers are labelled `synthetic (NOT benchmark)` and are never mixed with real results in a summary.
+
+### Running on another GPU
+
+The shipped task files (`tasks_full.jsonl`, `pilot_tasks.jsonl`) state the paper's hardware: one H200 with 141 GB, of which training may use ~76 GB. The runners work on any CUDA GPU. When the GPU the training environment sees does not have the memory the task states (within 5 %), the run prints a `WARNING:` line and continues. Things to know before reading or reporting numbers from such a run:
+
+* **`val_bpb` is only comparable between runs on the same GPU model.** A trial is 300 s of wall-clock training, not a fixed number of steps. A slower GPU takes fewer optimisation steps in that time, so the same configuration reaches a different `val_bpb`, and which configurations do best can shift as well (a smaller model takes more steps in the same time). Numbers from another GPU cannot be set against the paper's (default configuration ≈ 0.991, the results table) or against runs on a third GPU, and the normalised score in the result files (`value`), which uses the paper's H200 numbers as reference, is not meaningful for them. Everything that should share a results table (the induced solver, the LLM agent, the classical baselines, all seeds) has to run on the same GPU model.
+* **The memory limit follows the task where the GPU allows it.** Upstream sets the limit as a share of the device (`CUDA_MEM_FRACTION=0.54`, which is ~76 GB of an H200). On another GPU the harness keeps the amount, not the share: with more than 76 GB it sets the fraction that gives 76 GB on that device (0.96 on an 80 GB card); with 76 GB or less it sets no limit and training uses the whole device. The fraction that was applied is recorded in every result file (`objective.cuda_mem_fraction`).
+* **On a GPU with less than 76 GB, policies are told more memory than there is.** The prompt of the LLM agent and the task a solver receives quote the task record ("training capped to 76 GB"). Configurations that would fit on the task's hardware then run out of memory; they are recorded as failed trials (`val_bpb = 100`) and cost the time until the failure, so such a run measures a harder problem than the task describes, and policies are not affected equally.
+* **The default configuration has to fit.** Trial 0 of every episode trains the default configuration, for which upstream's example output shows a peak of about 45 GB. If it fails, the episode stops with an error instead of producing a table without a baseline, so GPUs well below that (24 GB cards, for example) cannot run these tasks.
+* **Results stay apart in every summary.** The result file records the GPU name, its memory and `hardware_matches: false`. `scripts/summarize_hpo_results.py` prints such runs in blocks of their own, per device, labelled `nanochat (hardware differs from the task)`; only blocks labelled plain `nanochat` were measured on the hardware their task states. An episode started on one GPU is not resumed on another.
+
+Recommended when a GPU other than an H200 is used on purpose: generate task files that state it, so that policies are told the real memory limit, the task ids carry the GPU, and the results are not labelled as a mismatch. They define a benchmark of their own on that GPU, with the same caveat about the paper's numbers:
+
+```bash
+python data_generation/autoresearch_hpo_generator.py --preset full \
+    --gpu-name A100 --total-vram-gb 80 --training-vram-gb 76 \
+    --out data/autoresearch_hpo/tasks_full_a100.jsonl
+TASKS=data/autoresearch_hpo/tasks_full_a100.jsonl POLICY=random bash scripts/run_hpo_eval.sh
+```
+
+Comparing with the paper's numbers needs an H200 and the shipped task files.
+
+### What the grading relies on
+
+The score of an episode comes from the harness alone: it trains every configuration itself, parses `val_bpb` from the output of `train.py`, and charges the budget from the same output. A policy returns a configuration; whatever else a solver returns is stored in the episode log under `solver_meta` and is never read by the scoring or the summary, and the fields the harness writes about a suggestion (`source`, `token_usage`) cannot be set by a solver.
+
+Two things are trusted and are worth knowing when reading a results table:
+
+* **Solvers are not sandboxed during evaluation.** `scripts/eval_hpo_solver.py` runs every decision of `SOLVER_HPO.py` in a fresh process (so a hang, a crash or leaked state costs the solver a trial instead of the episode), but with the caller's permissions, like the solvers of the other benchmarks. A solver written to cheat could write to the output directory or the training checkout. The per-trial hash of `train.py` / `prepare.py` catches a modified checkout, not everything; read an induced solver before running it.
+* **Files on disk.** A resumed episode continues from its log, and `scripts/summarize_hpo_results.py` reports what the `*.result.json` files say. Both are written by the harness, and a log is only continued by the run that wrote it (same task record, objective and policy, compared through the log's header), but neither is signed.
+
+### Tests
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+The tests run on a CPU in under a minute and need neither a GPU, a model server nor Apptainer: episodes use the synthetic objective or a stub `train.py` checkout, the LLM is a local fake OpenAI-compatible server, and the SolverBuilder runs a scripted conversation through its real tools with a local stand-in for the sandbox. Tests of the Optuna baselines are skipped when `optuna` / `cmaes` are not installed, and the SolverBuilder tests when the OpenHands SDK is not.
 
 ---
 
@@ -262,7 +340,8 @@ python scripts/compute_trajectory_tokens.py \
 .
 ├── building_prompts/
 │   ├── SOLVER_BUILDING_PROMPT_PBE.md   # spec given to coding agent for PBEBench solver
-│   └── SOLVER_BUILDING_PROMPT_SLR.md   # spec given to coding agent for SLR-Bench solver
+│   ├── SOLVER_BUILDING_PROMPT_SLR.md   # spec given to coding agent for SLR-Bench solver
+│   └── SOLVER_BUILDING_PROMPT_HPO.md   # spec given to coding agent for the autoresearch HPO solver
 ├── demos/
 │   ├── DEMOS_PBEBENCH_seed_42_100_examples.json              # 100 PBEBench traces (no CoT)
 │   ├── DEMOS_PBEBENCH_seed_42_100_examples_with_CoT.json    # 100 PBEBench traces + CoT — default
@@ -274,7 +353,10 @@ python scripts/compute_trajectory_tokens.py \
 │   └── qwen3.6_35b_a3b/      # solvers induced by Qwen via OpenHands
 ├── data/
 │   ├── pbebench/             # PBEBench task files
-│   └── slr_bench/            # SLR-Bench task files
+│   ├── slr_bench/            # SLR-Bench task files
+│   └── autoresearch_hpo/     # autoresearch HPO task files (full, pilot, synthetic) + upstream fidelity check
+├── data_generation/
+│   └── autoresearch_hpo_generator.py   # writes the autoresearch HPO task files
 ├── evals/
 │   ├── solver_results/       # per-task JSONL from eval_solver.py
 │   ├── findings.md           # consolidated results
@@ -285,7 +367,8 @@ python scripts/compute_trajectory_tokens.py \
 ├── metrics/                  # quick_eval JSON summaries
 ├── rewards/
 │   ├── pbebench.py           # PBEBench reward + cascade_complexity
-│   └── slrbench.py           # SLR-Bench reward + rule_complexity
+│   ├── slrbench.py           # SLR-Bench reward + rule_complexity
+│   └── autoresearch_hpo.py   # autoresearch HPO: search space, objectives, episode loop, scoring
 ├── scripts/
 │   ├── eval_solver.py                  # evaluate SOLVER.py; writes quick_eval-compatible JSONL
 │   ├── quick_eval.py                   # pass rate, mean reward, token usage, complexity
@@ -299,9 +382,20 @@ python scripts/compute_trajectory_tokens.py \
 │   ├── run_direct_feedback_vllm.sh     # run Direct Feedback baseline via vLLM
 │   ├── run_direct_solve_openhands.sh   # run DirectSolve baseline (one OH conversation/task); supports sharding via START_INDEX/END_INDEX
 │   ├── merge_direct_solve_shards.py    # merge shard JSONLs + checkpoints into one file
-│   └── run_solver_builder_openhands.sh # run SolverBuilder agent via OpenHands
+│   ├── run_solver_builder_openhands.sh # run SolverBuilder agent via OpenHands
+│   ├── setup_autoresearch_hpo.sh       # HPO: clone the pinned autoresearch checkout + prepare data
+│   ├── run_hpo_traces_vllm.sh          # HPO: LLM agent episodes (baseline + reasoning traces)
+│   ├── run_solver_builder_hpo_openhands.sh  # HPO: SolverBuilder agent via OpenHands
+│   ├── run_hpo_eval.sh                 # HPO: evaluate SOLVER_HPO.py or a classical baseline
+│   ├── eval_hpo_solver.py              # HPO: episode runner behind run_hpo_eval.sh
+│   └── summarize_hpo_results.py        # HPO: mean ± std of best val_bpb per policy
 ├── openhands_agents/
-│   └── solver_builder/       # SolverBuilder agent (controller + tools)
+│   ├── solver_builder/       # SolverBuilder agent (controller + tools; hpo_* for the HPO domain)
+│   ├── hpo_agent/            # HPO: LLM agent, classical baselines, solver-as-policy, episode runner
+│   ├── run_hpo_traces.py     # HPO: run the LLM agent on task files
+│   ├── build_hpo_balanced_demos.py     # HPO: episode logs → balanced demos file
+│   └── build_solver_hpo.py   # HPO: SolverBuilder entry point
+├── tests/                    # CPU tests of the autoresearch HPO domain
 ├── COMMANDS.md               # full reproduction commands
 └── main.py                   # legacy CLI (multi-agent system — not used in paper)
 ```
@@ -317,6 +411,8 @@ python scripts/compute_trajectory_tokens.py \
 | `scripts/ensemble_outputs.py` | Build standard or effi ensemble from multiple sources |
 | `scripts/plot_pbebench_comparison.py` | 4-way comparison figures for PBEBench-Lite or Hard |
 | `scripts/plot_slr_comparison.py` | 4-way comparison figures for SLR-Bench (tier + level) |
+| `scripts/eval_hpo_solver.py` | Run `SOLVER_HPO.py` or a classical baseline on autoresearch HPO tasks; writes one episode log + result file per task |
+| `scripts/summarize_hpo_results.py` | Best `val_bpb` (mean ± std over seeds), trials, failure rate and tokens per policy for autoresearch HPO runs |
 
 ---
 
